@@ -542,7 +542,13 @@ function updateTopbarContext() {
   <div id="load-panel" style="display:none;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);box-shadow:var(--shadow-md);margin-bottom:16px;overflow:hidden">
     <div style="padding:10px 16px;background:var(--gray-50);border-bottom:1px solid var(--gray-100);display:flex;justify-content:space-between;align-items:center">
       <div style="font-size:11px;font-weight:600;color:var(--gray-700)">Load a saved container</div>
-      <button onclick="document.getElementById('load-panel').style.display='none'" style="background:none;border:none;color:var(--gray-400);cursor:pointer;font-size:16px">&times;</button>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button id="sync-sheet-btn" onclick="loadFromSheet()" style="display:flex;align-items:center;gap:5px;padding:4px 10px;background:var(--white);border:1px solid var(--green-300);border-radius:var(--r);font-size:10px;font-weight:600;color:var(--jlz);cursor:pointer;font-family:var(--fb)">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M3 21v-5h5"/></svg>
+          Sync from Sheet
+        </button>
+        <button onclick="document.getElementById('load-panel').style.display='none'" style="background:none;border:none;color:var(--gray-400);cursor:pointer;font-size:16px">&times;</button>
+      </div>
     </div>
     <div id="load-panel-list" style="padding:8px"></div>
   </div>
@@ -3245,8 +3251,8 @@ function renderComparison() {
       +cell(avgRow(data.map(x=>x.totalCosts),fmtC))
       +cell(avgRow(data.map(x=>x.netProfit),fmtC))
       +cell(avgRow(data.map(x=>x.netMargin),fmtP))
-      +cell(avgRow(data.map(x=>x.salePriceLb),fmtLb))
-      +cell(avgRow(data.map(x=>x.trueCostLb),fmtLb))
+      +cell(avgRow(data.map(x=>x.salePriceCase),v=>'$'+parseFloat(v).toFixed(2)))
+      +cell(avgRow(data.map(x=>x.trueCostCase),v=>'$'+parseFloat(v).toFixed(2)))
       +'<td></td></tr>';
   }
 
@@ -3425,6 +3431,95 @@ function loadFromHistory(po) {
 
   switchTab('arrival');
   showBar('Loaded PO '+po+' — upload Operations documents to complete', 'ok');
+}
+
+// ── SYNC FROM GOOGLE SHEET ──
+// Fetches all containers stored in the connected Sheet and merges them into
+// localStorage. Sheet rows that already exist locally (same PO) are NOT
+// overwritten — the local snapshot is richer (allocBills, costs, etc.) than
+// what the Sheet row preserves. Only missing POs are added.
+async function loadFromSheet() {
+  const gasUrl = getGasUrl();
+  if(!gasUrl) { showBar('Configure Google Sheets first', 'err'); return; }
+
+  const btn = document.getElementById('sync-sheet-btn');
+  const originalHTML = btn ? btn.innerHTML : '';
+  if(btn){ btn.disabled = true; btn.innerHTML = 'Syncing…'; btn.style.opacity = '0.6'; }
+  showBar('Loading containers from Google Sheets…', 'info');
+
+  try {
+    const resp = await fetch(gasUrl + '?action=listContainers', { method: 'GET' });
+    if(!resp.ok) throw new Error('HTTP '+resp.status);
+    const data = await resp.json();
+    if(!data || !Array.isArray(data.containers)) {
+      throw new Error('Unexpected response format');
+    }
+
+    const local = getHistory();
+    const localPOs = new Set(local.map(x => String(x.po).trim()).filter(Boolean));
+    let added = 0, skipped = 0;
+
+    data.containers.forEach(row => {
+      const po = String(row.po || '').trim();
+      if(!po) { skipped++; return; }
+      if(localPOs.has(po)) { skipped++; return; }
+
+      // Normalize Sheet row → snapshot shape expected by loadFromHistory
+      const snap = {
+        po,
+        vendor:   row.vendor   || '',
+        lot:      row.lot      || '',
+        season:   row.season   || '',
+        incoterm: row.incoterm || '',
+        arrival:  row.arrival  || '',
+        savedAt:  row.savedAt  || row.timestamp || new Date().toISOString(),
+        days:     +row.days     || 0,
+        lbsIn:    +row.lbsIn    || 0,
+        lbsOut:   +row.lbsOut   || 0,
+        yieldPct: +row.yieldPct || 0,
+        boxes:    +row.boxes    || 0,
+        priceLb:  +row.priceLb  || 0,
+        declKg:   +row.declKg   || 0,
+        avgKg:    +row.avgKg    || 0,
+        originLoss:  +row.originLoss  || 0,
+        weightClaim: +row.weightClaim || 0,
+        whShrink:    +row.whShrink    || 0,
+        whShrinkPct: +row.whShrinkPct || 0,
+        defPct:   +row.defPct   || 0,
+        moldPct:  +row.moldPct  || 0,
+        creditCalc:   +row.creditCalc   || 0,
+        creditAgreed: +row.creditAgreed || 0,
+        netSales:   +row.netSales   || 0,
+        totalCosts: +row.totalCosts || 0,
+        netProfit:  +row.netProfit  || 0,
+        netMargin:  +row.netMargin  || 0,
+        salePriceLb: +row.salePriceLb || 0,
+        trueCostLb:  +row.trueCostLb  || 0,
+        // Cost breakdown by category (filled below from costRows)
+        costs: row.costs || {},
+        // Mark snapshot as Sheet-sourced so the user knows allocBills detail is lost
+        _source: 'sheet',
+      };
+
+      local.push(snap);
+      localPOs.add(po);
+      added++;
+    });
+
+    if(added > 0) {
+      saveHistory(local);
+      renderComparison();
+      // Re-render the load panel so the new items show up immediately
+      showLoadPanel(); showLoadPanel(); // toggle twice to stay open
+    }
+
+    showBar(`Synced from Sheet: ${added} new · ${skipped} already local`, 'ok');
+  } catch(e) {
+    showBar('Sync error: ' + e.message + ' — check Apps Script deployment', 'err');
+    console.error('loadFromSheet:', e);
+  } finally {
+    if(btn){ btn.disabled = false; btn.innerHTML = originalHTML; btn.style.opacity = ''; }
+  }
 }
 const ALLOC_CATS = ['Ocean freight','Other shipping charges','Customs & brokerage','Inland freight','Handling & inspection','Consolidation','Cleaning','Other'];
 
