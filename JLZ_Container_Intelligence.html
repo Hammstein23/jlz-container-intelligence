@@ -4103,8 +4103,32 @@ function loadFromHistory(po) {
     if(anawiAmt) anawiAmt.value = anawiLine.amt;
   }
 
+  // Mark dropzones as "loaded from saved data" so the user knows the docs
+  // were parsed before — they don't need to re-upload unless they want to.
+  // Each dropzone is marked based on whether its data is in the snapshot.
+  function markDz(dzId, label, hasData) {
+    const dz = el(dzId);
+    if(!dz || !hasData) return;
+    dz.className = 'dz done';
+    const nameEl = dz.querySelector('.dz-name');
+    const subEl  = dz.querySelector('.dz-sub');
+    const iconEl = dz.querySelector('.dz-icon');
+    if(iconEl) iconEl.textContent = '✓';
+    if(nameEl) nameEl.textContent = label + ' loaded';
+    if(subEl)  subEl.textContent  = 'from saved container · drag a new file to re-parse';
+  }
+  // RS data signal: boxes + priceLb came from the Receiving Sheet
+  markDz('dz-rs', 'Receiving Sheet', !!(snap.boxes || snap.priceLb));
+  // QR data signal: avgKg + defPct came from the Quality Report
+  markDz('dz-qr', 'Quality Report',  !!(snap.avgKg || snap.defPct || snap.moldPct));
+  // WO data signal: lbsIn + lbsOut came from the Work Order
+  markDz('dz-wo', 'Work Order',      !!(snap.lbsIn || snap.lbsOut));
+  // Profitability + Cost allocations data
+  markDz('dz-ca', 'Profitability',   !!(snap.netSales || snap.netProfit));
+  markDz('dz-alloc', 'Cost allocations', !!(snap.allocBills && snap.allocBills.length > 0));
+
   switchTab('arrival');
-  showBar('Loaded PO '+po+' — upload Operations documents to complete', 'ok');
+  showBar('Loaded PO '+po+' from saved data', 'ok');
 }
 
 // ── SYNC FROM GOOGLE SHEET ──
@@ -4602,7 +4626,16 @@ function renderClaimBills() {
 }
 
 function showBar(msg,type) {
-  const b=el('parse-bar'); b.textContent=msg; b.className='parse-bar show '+type;
+  const b=el('parse-bar'); if(!b) return;
+  b.textContent=msg; b.className='parse-bar show '+type;
+  // Auto-hide non-error messages after a few seconds (errors stay visible
+  // until user takes another action, so they don't miss them).
+  clearTimeout(window._parseBarTimer);
+  if(type === 'ok' || type === 'info') {
+    window._parseBarTimer = setTimeout(() => {
+      if(b.classList.contains('show')) b.className = 'parse-bar';
+    }, type === 'info' ? 3000 : 5000);
+  }
 }
 
 // ── WIRE UP DROP ZONES ──
@@ -5141,8 +5174,9 @@ async function saveToSheet() {
     if(pill){ pill.textContent = '✓ Saved to Sheets'; pill.className = 'save-pill show'; setTimeout(()=>pill.className='save-pill', 4000); }
     showBar(`Saved PO ${po} to Google Sheets · ${costRows.length} cost categories`, 'ok');
 
-    // Also save to localStorage for History tab
-    saveToHistory();
+    // NOTE: saveToHistory() is the caller of this function — do NOT call it back here
+    // (would create an infinite recursion loop). The localStorage write already
+    // happened in saveToHistory() before this function ran.
 
   } catch(e) {
     showBar('Sheets error: ' + e.message, 'err');
@@ -5158,11 +5192,18 @@ function clearForm() {
   const dw = el('declaredWeightKg'); if(dw) dw.value = '30';
   el('season').value=''; el('incoterm').value='';
   window._profitability={};
-  [['dz-wo','Work Order','Yield Detail Report · filtered by lot #'],
-   ['dz-qr','Quality Report','SG Inspection · defects · weights'],
-   ['dz-ca','Profitability Report','WholesaleWare · costs · margin · profit'],
-   ['dz-rs','Receiving Sheet','WholesaleWare · arrival · boxes · price']]
-    .forEach(([id,name,sub])=>{const dz=el(id);dz.className='dz';dz.querySelector('.dz-name').textContent=name;dz.querySelector('.dz-sub').textContent=sub;});
+  [['dz-wo','Work Order','Yield Detail Report · filtered by lot #','⚙'],
+   ['dz-qr','Quality Report','SG Inspection · defects · weights','🔬'],
+   ['dz-ca','Profitability Report','WholesaleWare · costs · margin · profit','💰'],
+   ['dz-alloc','Cost Allocations','Vendor invoices · landed costs · bill-back','📋'],
+   ['dz-rs','Receiving Sheet','WholesaleWare · arrival · boxes · price','📦']]
+    .forEach(([id,name,sub,icon])=>{
+      const dz=el(id); if(!dz) return;
+      dz.className='dz';
+      const nameEl=dz.querySelector('.dz-name'); if(nameEl) nameEl.textContent=name;
+      const subEl =dz.querySelector('.dz-sub');  if(subEl)  subEl.textContent =sub;
+      const iconEl=dz.querySelector('.dz-icon'); if(iconEl) iconEl.textContent=icon;
+    });
   costs=[
     {desc:'',cat:'Ocean freight',amt:''},{desc:'',cat:'Other shipping charges',amt:''},
     {desc:'',cat:'Customs & brokerage',amt:''},{desc:'',cat:'Inland freight',amt:''},
