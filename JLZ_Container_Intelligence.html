@@ -1160,7 +1160,7 @@ document.addEventListener('keydown', function(e) {
 });
 
 function switchTab(t) {
-  var ids = ['home','arrival','operations','results','history','insights','orders','planner','simulator','pricing','market','demand'];
+  var ids = ['home','arrival','operations','results','history','insights','orders','planner','simulator','pricing','market','demand','inventory'];
   // 1) Isolate panes FIRST — for every tab, before any render runs. This way a
   //    render error can never abort the loop and leave another tab's pane
   //    visible underneath the active one (the "Buy Planner stacked under Orders" bug).
@@ -1177,6 +1177,7 @@ function switchTab(t) {
     if(t==='insights'  && typeof renderInsights==='function')   renderInsights();
     if(t==='orders'    && typeof renderOrders==='function')     { window._ordersView = 'active'; renderOrders(); }
     if(t==='planner'   && typeof renderBuyPlanner==='function') renderBuyPlanner();
+    if(t==='inventory' && typeof renderInventory==='function')  renderInventory();
     if(t==='simulator' && typeof renderSimulator==='function')  renderSimulator();
     if(t==='pricing'   && typeof renderPricing==='function')    renderPricing();
     if(t==='demand'    && typeof renderDemand==='function')     renderDemand();
@@ -2375,6 +2376,10 @@ function authInjectLogo() {
     <button class="nav-item" id="tb-simulator" onclick="switchTab('simulator')">
       <svg class="nav-icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v7.31"/><path d="M14 9.3V1.99"/><path d="M8.5 2h7"/><path d="M14 9.3a6.5 6.5 0 1 1-4 0"/><path d="M5.52 16h12.96"/></svg>
       Simulator
+    </button>
+    <button class="nav-item" id="tb-inventory" onclick="switchTab('inventory')">
+      <svg class="nav-icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+      Inventory
     </button>
   </div>
 
@@ -4931,6 +4936,106 @@ function authInjectLogo() {
   <span id="pr-delivery-total" style="display:none"></span>
 
 </div><!-- end tab-pricing -->
+
+<div id="tab-inventory" class="page" style="display:none">
+<style>
+.invm-wrap{max-width:1160px}
+.invm-head{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:2px}
+.invm-head h2{font-size:18px;color:#0d5026;margin:0;letter-spacing:-.01em}
+.invm-sub{font-size:11px;color:var(--gray-400);font-family:var(--fm,monospace)}
+.invm-tabs{display:flex;gap:3px;border-bottom:2px solid var(--gray-200);margin:12px 0 14px;flex-wrap:wrap}
+.invm-tab{font-size:12.5px;font-weight:600;padding:8px 15px;border:none;background:none;color:var(--gray-500);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px}
+.invm-tab:hover{color:var(--gray-700)}
+.invm-tab.on{color:#0d5026;border-bottom-color:#0d5026}
+.invm-bar{display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:#fff;border:1px solid var(--gray-200);border-radius:8px;padding:10px 14px;margin-bottom:14px}
+.invm-grp{display:flex;align-items:center;gap:7px}
+.invm-grp label{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);font-family:var(--fm,monospace)}
+.invm-grp input{width:72px;font-family:var(--fm,monospace);padding:5px 7px;border:1px solid var(--gray-200);border-radius:5px;font-size:13px}
+.invm-toggle{display:inline-flex;border:1px solid var(--gray-200);border-radius:6px;overflow:hidden}
+.invm-toggle button{font-size:11px;font-weight:600;padding:5px 10px;border:none;background:#fff;color:var(--gray-600);cursor:pointer}
+.invm-toggle button.on{background:#0d5026;color:#fff}
+.invm-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.invm-kpi{background:#fff;border:1px solid var(--gray-200);border-radius:8px;padding:11px 13px}
+.invm-kpi .lbl{font-size:8.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-family:var(--fm,monospace);margin-bottom:5px}
+.invm-kpi .val{font-size:19px;font-weight:800;color:#111827;font-family:var(--fm,monospace);line-height:1}
+.invm-kpi .s2{font-size:9.5px;color:var(--gray-400);margin-top:4px;font-family:var(--fm,monospace)}
+.invm-kpi.acc .val{color:#0d5026}.invm-kpi.risk .val{color:#ea580c}.invm-kpi.bad .val{color:#dc2626}
+.invm-alerts{display:flex;flex-direction:column;gap:7px;margin-bottom:6px}
+.invm-al{display:flex;align-items:center;gap:9px;padding:9px 12px;border-radius:8px;font-size:12px}
+.invm-al .ic{font-size:13px}
+.invm-al.warn{background:#fffbeb;border:1px solid #fde68a;color:#92400e}
+.invm-al.bad{background:#fef2f2;border:1px solid #fecaca;color:#991b1b}
+.invm-al.info{background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af}
+.invm-al.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
+.invm-lead{font-size:11.5px;color:var(--gray-600);line-height:1.55;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:8px;padding:10px 13px;margin-bottom:12px}
+.invm-lead b{color:var(--gray-800)}
+.invm-card{background:#fff;border:1px solid var(--gray-200);border-radius:8px;overflow:hidden}
+.invm-tw{overflow-x:auto}
+.invm-table{width:100%;border-collapse:collapse;font-size:12px;min-width:880px}
+.invm-table th{font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);font-family:var(--fm,monospace);text-align:right;padding:10px 11px;border-bottom:2px solid var(--gray-200);background:var(--gray-50);white-space:nowrap}
+.invm-table th.l{text-align:left}
+.invm-table td{padding:9px 11px;text-align:right;font-family:var(--fm,monospace);border-bottom:1px solid var(--gray-100);color:var(--gray-700);white-space:nowrap}
+.invm-table td.l{text-align:left;font-family:var(--fb,sans-serif)}
+.invm-po{font-weight:700;color:#0d5026}.invm-supn{color:var(--gray-700);font-weight:600}
+.invm-muted{color:var(--gray-400);font-weight:400;font-size:10.5px}
+.invm-mc{display:inline-block;font-size:9px;font-weight:700;padding:1px 6px;border-radius:4px;font-family:var(--fb,sans-serif)}
+.invm-mc.sea{background:#e0f2fe;color:#0369a1}.invm-mc.air{background:#ede9fe;color:#6d28d9}
+.invm-cin{width:60px;font-family:var(--fm,monospace);font-size:12px;padding:4px 6px;border:1px solid var(--gray-200);border-radius:5px;text-align:right;background:#fffdf5}
+.invm-cin.lock{background:var(--gray-50);color:var(--gray-500);border-style:dashed}
+.invm-zone{display:inline-block;font-size:9px;font-weight:700;padding:2px 8px;border-radius:9px;font-family:var(--fb,sans-serif)}
+.invm-zone.healthy{background:#dcfce7;color:#15803d}.invm-zone.thin{background:#fef3c7;color:#a16207}.invm-zone.under{background:#fee2e2;color:#b91c1c}
+.invm-tot td{background:var(--gray-50);font-weight:700;color:var(--gray-800);border-top:2px solid var(--gray-200)}
+.invm-empty{padding:30px;text-align:center;color:var(--gray-500);font-size:13px}
+.invm-perp{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.invm-panel{background:#fff;border:1px solid var(--gray-200);border-radius:8px;padding:14px 16px}
+.invm-panel h3{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--gray-400);font-family:var(--fm,monospace);margin:0 0 12px}
+.invm-runway{display:flex;flex-direction:column;gap:13px}
+.invm-rr{display:flex;align-items:center;gap:11px}
+.invm-nm{width:150px;font-size:11px;font-family:var(--fm,monospace);color:var(--gray-700)}
+.invm-nm b{color:#0d5026}
+.invm-track{flex:1;height:24px;border-radius:5px;border:1px solid var(--gray-200);position:relative;background:linear-gradient(90deg,#dcfce7 0,#dcfce7 var(--t1),#fef3c7 var(--t1),#fef3c7 var(--t2),#fee2e2 var(--t2),#fee2e2 100%)}
+.invm-mark{position:absolute;top:-3px;height:30px;width:2px;background:#111827}
+.invm-mark .invm-lab{position:absolute;top:-14px;left:50%;transform:translateX(-50%);font-size:8.5px;font-family:var(--fm,monospace);color:var(--gray-700);white-space:nowrap;font-weight:700}
+.invm-verdict{width:90px;font-size:10px;font-family:var(--fm,monospace);text-align:right}
+.invm-agebars{display:flex;flex-direction:column;gap:9px}
+.invm-agerow{display:flex;align-items:center;gap:10px;font-size:11px}
+.invm-agerow .nm{width:120px;color:var(--gray-600);font-family:var(--fm,monospace);font-size:10px}
+.invm-agetrack{flex:1;height:14px;background:var(--gray-100);border-radius:7px;overflow:hidden}
+.invm-agefill{height:100%;border-radius:7px}
+.invm-agerow .amt{width:60px;text-align:right;font-family:var(--fm,monospace);font-weight:700;font-size:10.5px}
+.invm-days{display:flex;gap:5px;align-items:flex-end;height:110px}
+.invm-daycol{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;height:100%;justify-content:flex-end}
+.invm-daybar{width:100%;border-radius:4px 4px 0 0;background:linear-gradient(#127a3a,#0d5026);min-height:3px}
+.invm-daybar.today{background:linear-gradient(#16a34a,#15803d)}
+.invm-daybar.recount{background:repeating-linear-gradient(45deg,#fca5a5,#fca5a5 5px,#fecaca 5px,#fecaca 10px)}
+.invm-dayval{font-size:8.5px;font-family:var(--fm,monospace);color:var(--gray-500)}
+.invm-daylbl{font-size:9px;font-family:var(--fm,monospace);color:var(--gray-400);font-weight:600}
+.invm-cmp{width:100%;border-collapse:collapse;font-size:12px}
+.invm-cmp th,.invm-cmp td{padding:7px 9px;border-bottom:1px solid var(--gray-100);text-align:right}
+.invm-cmp th:first-child,.invm-cmp td:first-child{text-align:left;color:var(--gray-600)}
+.invm-cmp thead th{font-size:9px;text-transform:uppercase;color:var(--gray-400);font-family:var(--fm,monospace)}
+.invm-btn{font-size:11px;font-weight:600;padding:7px 12px;border:1px solid #0d5026;background:#0d5026;color:#fff;border-radius:6px;cursor:pointer}
+.invm-btn.ghost{background:#fff;color:#0d5026}
+</style>
+<div class="invm-wrap">
+  <div class="invm-head"><h2>Inventory Management</h2><span class="invm-sub" id="invm-subline">ginger</span></div>
+  <div class="invm-tabs">
+    <button class="invm-tab" id="invm-tb-ov" onclick="invmTab('ov')">Overview</button>
+    <button class="invm-tab on" id="invm-tb-lots" onclick="invmTab('lots')">Lots</button>
+    <button class="invm-tab" id="invm-tb-aging" onclick="invmTab('aging')">Aging &amp; Margin</button>
+    <button class="invm-tab" id="invm-tb-count" onclick="invmTab('count')">Cycle Count</button>
+    <button class="invm-tab" id="invm-tb-scn" onclick="invmTab('scn')">Scenarios</button>
+  </div>
+  <div class="invm-bar">
+    <div class="invm-grp"><label>Weekly demand</label><input id="invm-demand" type="number" step="25" oninput="renderInventory()"></div>
+    <div class="invm-grp"><label>Sell $/lb</label><input id="invm-sell" type="number" step="0.05" oninput="invmSaveSell();renderInventory()"></div>
+    <div class="invm-grp"><label>Target margin %</label><input id="invm-tmar" type="number" value="15" step="1" oninput="renderInventory()"></div>
+    <div class="invm-grp"><label>Shrink rate</label><div class="invm-toggle"><button id="invm-r-mean" class="on" onclick="invmSetRate('mean')">Mean</button><button id="invm-r-p75" onclick="invmSetRate('p75')">p75</button><button id="invm-r-p90" onclick="invmSetRate('p90')">p90</button></div></div>
+    <div class="invm-grp" style="margin-left:auto;font-size:10px;color:var(--gray-400);font-family:var(--fm,monospace)"><span id="invm-rateLbl"></span></div>
+  </div>
+  <div id="invm-content"></div>
+</div>
+</div>
 
 <div id="tab-market" class="page" style="display:none">
 <style>
@@ -10705,6 +10810,202 @@ function bpInvLot(id,st,hist){
   var mode=rs.mode||(o&&o.mode==='air'?'air':'sea');
   return {o:o,rs:rs,cif:cif,landed:landed,cases:cases,lbs:lbs,stored:stored,addD:addD,totD:totD,shrPct:shrPct,cln:cln,delivered:delivered,net:net,val:delivered*lbs,mode:mode};
 }
+
+
+// ============ INVENTORY MANAGEMENT MODULE (d-series, Stage 1) ============
+var INVM_TAB='lots', INVM_DAYSMODE='auto', INVM_RATEKEY='mean';
+function invmEl(id){ return document.getElementById(id); }
+function invmNum(id,def){ var e=invmEl(id); var v=e?parseFloat(e.value):NaN; return isNaN(v)?def:v; }
+function invmF(n){ return Math.round(n||0).toLocaleString('en-US'); }
+function invmMoney(n){ return (n<0?'-$':'$')+Math.abs(Math.round(n||0)).toLocaleString('en-US'); }
+function invmDemand(){
+  if(window._bpDigest && _bpDigest.weeklyDemand>0) return _bpDigest.weeklyDemand;
+  var rr=(window._dmModelG && _dmModelG.runRate13)?_dmModelG.runRate13:0;
+  var sales=rr>0?rr/30:0;
+  return sales>0 ? sales/0.92 : 1147;
+}
+function invmRate(hist){
+  if(INVM_RATEKEY==='p75') return 0.498;
+  if(INVM_RATEKEY==='p90') return 0.627;
+  return (hist && hist.shrinkDay>0) ? hist.shrinkDay : 0.439;
+}
+function invmCompute(){
+  var st=bpInvState(), hist=bpHistRates();
+  var demand=invmNum('invm-demand', invmDemand()); if(!(demand>0)) demand=1147;
+  var sell=invmNum('invm-sell', (st.sellLb||2.02)); if(!(sell>0)) sell=2.02;
+  var tmar=invmNum('invm-tmar',15)/100;
+  var shelf=(typeof BP_AGE_ZONES!=='undefined' && BP_AGE_ZONES.bad)?BP_AGE_ZONES.bad:56;
+  var rate=invmRate(hist), perDay=demand/7;
+  var clnBase=bpInvRate('cleanBase',hist,st)||0, clnDet=bpInvRate('cleanDetPctWk',hist,st)||0;
+  var lots=Object.keys(st.rows||{}).map(function(id){
+    var L=bpInvLot(id,st,hist); if(!L.o || L.cases<=0) return null;
+    return { id:id, po:String(L.o.jlzPo||id), sup:L.o.supplier||'?', mode:L.mode,
+      stored:L.stored, cases:L.cases, lbs:L.lbs, landed:L.landed,
+      addManual:(st.rows[id] && st.rows[id].days!=null)?st.rows[id].days:null, expDays:shelf-L.stored };
+  }).filter(Boolean);
+  lots.sort(function(a,b){ return a.expDays-b.expDays; });   // FEFO: soonest expiry first
+  var cum=0;
+  lots.forEach(function(l){
+    cum+=l.cases;
+    l.addAuto=cum/perDay;
+    l.add=(INVM_DAYSMODE==='manual' && l.addManual!=null)?l.addManual:l.addAuto;
+    l.total=l.stored+l.add;
+    l.shrink=Math.min(60, rate*l.total);
+    var cln=clnBase*(1+(clnDet/100)*(l.total/7));
+    l.net=(l.landed+cln)/(1-Math.min(0.59,l.shrink/100));
+    l.margin=sell>0?(sell-l.net)/sell*100:0;
+    l.atCs=l.cases*l.shrink/100;
+    l.atUsd=l.lbs*l.landed*l.shrink/100;
+    l.value=(l.landed+cln)*l.lbs;
+    l.coverDays=perDay?l.cases/perDay:0;
+    l.zone=l.margin<0?'under':(l.margin<tmar*100?'thin':'healthy');
+  });
+  return { lots:lots, demand:demand, perDay:perDay, sell:sell, tmar:tmar, rate:rate, shelf:shelf };
+}
+function invmTotals(m){
+  var t={cases:0,lbs:0,val:0,landLbs:0,netLbs:0,age:0,atCs:0,atUsd:0,oldest:0,under:0,thin:0,marginUsd:0};
+  m.lots.forEach(function(l){ t.cases+=l.cases;t.lbs+=l.lbs;t.val+=l.value;t.landLbs+=l.landed*l.lbs;t.netLbs+=l.net*l.lbs;t.age+=l.stored*l.lbs;t.atCs+=l.atCs;t.atUsd+=l.atUsd;if(l.stored>t.oldest)t.oldest=l.stored;if(l.zone==='under')t.under++;if(l.zone==='thin')t.thin++;t.marginUsd+=(m.sell-l.net)*l.lbs*(1-l.shrink/100); });
+  t.blended=t.lbs?t.landLbs/t.lbs:0; t.breakeven=t.lbs?t.netLbs/t.lbs:0; t.avgAge=t.lbs?t.age/t.lbs:0; t.coverage=m.perDay?t.cases/m.perDay:0;
+  return t;
+}
+function invmOverview(m,t){
+  var kpis=[
+    {l:'Inventory on hand', v:invmF(t.lbs)+' lb', s:invmF(t.cases)+' cases'},
+    {l:'Inventory value', v:invmMoney(t.val), s:'capital tied up', c:'acc'},
+    {l:'Break-even $/lb', v:'$'+t.breakeven.toFixed(2), s:'net of shrink + cleaning', c:'acc'},
+    {l:'Coverage (DIO)', v:t.coverage.toFixed(1)+'d', s:(t.coverage/7).toFixed(1)+' wks demand'},
+    {l:'Shrink at risk', v:invmMoney(t.atUsd), s:invmF(t.atCs)+' cs lost', c:'risk'},
+    {l:'Projected margin', v:invmMoney(t.marginUsd), s:'on current stock', c:t.marginUsd<0?'bad':'acc'},
+    {l:'Underwater lots', v:t.under+' / '+m.lots.length, s:t.thin+' thin', c:t.under?'bad':''},
+    {l:'Avg age', v:Math.round(t.avgAge)+'d', s:'oldest '+t.oldest+'d'}
+  ];
+  var h='<div class="invm-kpis">'+kpis.map(function(k){ return '<div class="invm-kpi '+(k.c||'')+'"><div class="lbl">'+k.l+'</div><div class="val">'+k.v+'</div><div class="s2">'+k.s+'</div></div>'; }).join('')+'</div>';
+  var al=[];
+  m.lots.forEach(function(l){ if(l.zone==='under') al.push({t:'bad',ic:'&#128308;',m:'<b>PO '+l.po+' is underwater</b> ('+l.margin.toFixed(0)+'% margin at sell-out) &mdash; '+l.sup+' '+String(l.mode).toUpperCase()+'. Sell first to cap the loss.'}); });
+  m.lots.forEach(function(l){ if(l.total>m.shelf) al.push({t:'warn',ic:'&#9888;',m:'<b>PO '+l.po+'</b> would pass the '+m.shelf+'d shelf life before selling.'}); });
+  al.push({t:'info',ic:'&#128197;',m:'<b>Recount Monday</b> &mdash; perpetual estimate drifts ~'+invmF(t.cases-m.perDay*5)+' cs by Friday.'});
+  if(!t.under) al.push({t:'ok',ic:'&#10003;',m:'No underwater lots. '+invmMoney(t.atUsd)+' ('+(t.val?(t.atUsd/t.val*100).toFixed(1):'0')+'% of value) at risk to shrink.'});
+  h+='<div class="invm-alerts">'+al.map(function(a){ return '<div class="invm-al '+a.t+'"><span class="ic">'+a.ic+'</span><span>'+a.m+'</span></div>'; }).join('')+'</div>';
+  return h;
+}
+function invmLots(m,t){
+  if(!m.lots.length) return '<div class="invm-card"><div class="invm-empty">No lots on hand yet. Add inventory lots in the Buy Planner &rarr; Inventory section; they appear here automatically.</div></div>';
+  var h='<div class="invm-lead"><b>Stock on hand, FEFO order</b> (soonest-expiring first). <b>+Days</b> auto from FEFO depletion at your demand &mdash; switch to Manual to override any lot. <em>Expires</em> = arrival + '+m.shelf+'d shelf life.</div>';
+  h+='<div class="invm-bar" style="margin-bottom:12px"><div class="invm-grp"><label>+Days</label><div class="invm-toggle"><button id="invm-d-auto" class="'+(INVM_DAYSMODE==='auto'?'on':'')+'" onclick="invmSetDays(\'auto\')">Auto (FEFO)</button><button id="invm-d-man" class="'+(INVM_DAYSMODE==='manual'?'on':'')+'" onclick="invmSetDays(\'manual\')">Manual</button></div></div></div>';
+  h+='<div class="invm-card"><div class="invm-tw"><table class="invm-table"><thead><tr>'+
+     '<th class="l">PO</th><th class="l">Supplier</th><th class="l">Mode</th><th>Stored</th><th>Expires</th><th>Cases</th><th>+Days</th><th>Total</th><th>Cover</th><th>Shrink %</th><th>At risk</th><th>Margin</th><th class="l">Zone</th>'+
+     '</tr></thead><tbody>';
+  m.lots.forEach(function(l){
+    var shC=l.shrink>15?'#ea580c':l.shrink>10?'#d97706':'#16a34a';
+    var mgC=l.margin<0?'#dc2626':l.margin<m.tmar*100?'#d97706':'#16a34a';
+    var addCell=(INVM_DAYSMODE==='auto')?('<span class="invm-cin lock" style="display:inline-block">'+l.add.toFixed(1)+'</span>'):('<input class="invm-cin" type="number" value="'+(l.addManual!=null?l.addManual:l.addAuto.toFixed(0))+'" onchange="invmSetManual(\''+l.id+'\',this.value)">');
+    var zl=l.zone==='under'?'UNDERWATER':l.zone;
+    h+='<tr>'+
+      '<td class="l"><span class="invm-po">'+l.po+'</span></td>'+
+      '<td class="l"><span class="invm-supn">'+l.sup+'</span></td>'+
+      '<td class="l"><span class="invm-mc '+l.mode+'">'+(l.mode==='air'?'AIR':'SEA')+'</span></td>'+
+      '<td>'+l.stored+'d</td><td class="invm-muted">in '+l.expDays+'d</td>'+
+      '<td><input class="invm-cin" type="number" value="'+l.cases+'" onchange="invmSetCases(\''+l.id+'\',this.value)"></td>'+
+      '<td>'+addCell+'</td><td><b>'+Math.round(l.total)+'d</b></td>'+
+      '<td class="invm-muted">'+l.coverDays.toFixed(1)+'d</td>'+
+      '<td style="color:'+shC+';font-weight:700">'+l.shrink.toFixed(1)+'%</td>'+
+      '<td>'+invmF(l.atCs)+' cs<br><span class="invm-muted">'+invmMoney(l.atUsd)+'</span></td>'+
+      '<td style="color:'+mgC+';font-weight:700">'+l.margin.toFixed(0)+'%</td>'+
+      '<td class="l"><span class="invm-zone '+l.zone+'">'+zl+'</span></td>'+
+    '</tr>';
+  });
+  h+='<tr class="invm-tot"><td class="l" colspan="3">Total</td><td>'+Math.round(t.avgAge)+'d</td><td></td><td>'+invmF(t.cases)+'</td><td></td><td></td><td>'+t.coverage.toFixed(1)+'d</td><td>'+(t.cases?(t.atCs/t.cases*100).toFixed(1):'0')+'%</td><td>'+invmF(t.atCs)+' cs</td><td colspan="2"></td></tr>';
+  h+='</tbody></table></div></div>';
+  return h;
+}
+function renderInventory(){
+  var content=invmEl('invm-content'); if(!content) return;
+  var st=bpInvState();
+  var dEl=invmEl('invm-demand'); if(dEl && dEl.value==='') dEl.value=Math.round(invmDemand());
+  var sEl=invmEl('invm-sell'); if(sEl && sEl.value==='') sEl.value=(st.sellLb!=null?st.sellLb:2.02);
+  ['ov','lots','aging','count','scn'].forEach(function(k){ var b=invmEl('invm-tb-'+k); if(b) b.classList.toggle('on', k===INVM_TAB); });
+  ['mean','p75','p90'].forEach(function(k){ var b=invmEl('invm-r-'+k); if(b) b.classList.toggle('on', k===INVM_RATEKEY); });
+  var m=invmCompute(), t=invmTotals(m);
+  var rl=invmEl('invm-rateLbl'); if(rl) rl.textContent=m.rate.toFixed(3)+'%/day \u00b7 '+INVM_RATEKEY;
+  var sl=invmEl('invm-subline'); if(sl) sl.textContent='ginger \u00b7 '+m.lots.length+' lots \u00b7 '+invmF(t.cases)+' cs \u00b7 '+invmMoney(t.val);
+  if(INVM_TAB==='ov') content.innerHTML=invmOverview(m,t);
+  else if(INVM_TAB==='aging') content.innerHTML=invmAging(m,t);
+  else if(INVM_TAB==='count') content.innerHTML=invmCount(m,t);
+  else if(INVM_TAB==='scn') content.innerHTML=invmScenarios(m,t);
+  else content.innerHTML=invmLots(m,t);
+}
+function invmTab(x){ INVM_TAB=x; renderInventory(); }
+function invmSetDays(x){ INVM_DAYSMODE=x; renderInventory(); }
+function invmSetRate(x){ INVM_RATEKEY=x; renderInventory(); }
+function invmSaveSell(){ var st=bpInvState(); st.sellLb=invmNum('invm-sell',2.02); bpInvSave(st); }
+function invmSetCases(id,v){ var st=bpInvState(); if(!st.rows[id]) st.rows[id]={}; st.rows[id].cases=Math.max(0,parseInt(v)||0); bpInvSave(st); renderInventory(); }
+function invmSetManual(id,v){ var st=bpInvState(); if(!st.rows[id]) st.rows[id]={}; st.rows[id].days=Math.max(0,parseFloat(v)||0); bpInvSave(st); renderInventory(); }
+
+function invmAging(m,t){
+  if(!m.lots.length) return '<div class="invm-card"><div class="invm-empty">No lots on hand.</div></div>';
+  var st=bpInvState(),hist=bpHistRates();
+  var clnBase=bpInvRate('cleanBase',hist,st)||0, clnDet=bpInvRate('cleanDetPctWk',hist,st)||0;
+  function netAt(l,age){ var cln=clnBase*(1+(clnDet/100)*(age/7)); var shr=Math.min(0.59,m.rate/100*age); return (l.landed+cln)/(1-shr); }
+  function deadlines(l){ var dT=null,dZ=null; for(var d=0;d<=120;d++){ var mg=(m.sell-netAt(l,l.stored+d))/m.sell*100; if(dT===null && mg<m.tmar*100) dT=d; if(dZ===null && mg<0){dZ=d;break;} } return {dT:dT,dZ:dZ}; }
+  var maxAge=Math.max(60,m.shelf+5);
+  var lead='<div class="invm-lead"><b>Economic runway, per lot.</b> Each bar is days from arrival. Green = margin above target, yellow = thinning, red = underwater (holding cost beats the sale). Black marker = today; blue = sell-out. Runway differs per lot because cost differs &mdash; cheap SEA lots get weeks, pricey AIR almost none. <em>Your shrink + cleaning optimization, made visible.</em></div>';
+  var bars='<div class="invm-card" style="padding:18px 20px"><div class="invm-runway">';
+  m.lots.forEach(function(l){
+    var dl=deadlines(l);
+    var t1=(dl.dT!=null?dl.dT:maxAge), t2=(dl.dZ!=null?dl.dZ:maxAge);
+    var p1=Math.min(100,(l.stored+t1)/maxAge*100), p2=Math.min(100,(l.stored+t2)/maxAge*100);
+    var today=Math.min(100,l.stored/maxAge*100), sold=Math.min(100,l.total/maxAge*100);
+    var vC=l.zone==='under'?'#dc2626':l.zone==='thin'?'#d97706':'#16a34a';
+    var verdict=l.zone==='under'?'underwater':(dl.dT!=null?dl.dT+'d to thin':'healthy');
+    bars+='<div class="invm-rr"><div class="invm-nm"><b>'+l.po+'</b><br>'+l.sup+' &middot; $'+l.landed.toFixed(2)+'</div>'+
+      '<div class="invm-track" style="--t1:'+p1+'%;--t2:'+p2+'%">'+
+        '<div class="invm-mark" style="left:'+today+'%"><span class="invm-lab">today '+l.stored+'d</span></div>'+
+        '<div class="invm-mark" style="left:'+sold+'%;background:#2563eb"><span class="invm-lab" style="color:#2563eb;top:auto;bottom:-15px">sold '+Math.round(l.total)+'d</span></div>'+
+      '</div><div class="invm-verdict" style="color:'+vC+'">'+verdict+'</div></div>';
+  });
+  bars+='</div></div>';
+  var grossMar=(m.sell-t.blended)/m.sell*100, afterMar=(m.sell-t.breakeven)/m.sell*100;
+  var bridgeC=afterMar<0?'#dc2626':afterMar<m.tmar*100?'#d97706':'#16a34a';
+  var bridge='<div class="invm-panel"><h3>Margin bridge</h3><div style="font-size:11.5px;line-height:1.85;font-family:var(--fm,monospace)">'+
+    'Sell price &nbsp;&nbsp;&nbsp;<b style="color:#1f2937">$'+m.sell.toFixed(2)+'/lb</b><br>'+
+    '&minus; Landed &nbsp;&nbsp;<span style="color:var(--gray-600)">$'+t.blended.toFixed(2)+'</span> <span class="invm-muted">('+grossMar.toFixed(0)+'% gross)</span><br>'+
+    '&minus; Shrink+clean <span style="color:#ea580c">$'+(t.breakeven-t.blended).toFixed(2)+'</span> <span class="invm-muted">the holding cost</span><br>'+
+    '<span style="display:inline-block;border-top:1px solid var(--gray-200);width:180px;margin:5px 0"></span><br>'+
+    '= Net margin &nbsp;<b style="color:'+bridgeC+'">'+afterMar.toFixed(0)+'%</b> <span class="invm-muted">vs '+(m.tmar*100).toFixed(0)+'% target</span></div></div>';
+  var z={healthy:0,thin:0,under:0}; m.lots.forEach(function(l){z[l.zone]+=l.cases;});
+  var zm=[['healthy','Healthy margin','#16a34a'],['thin','Thin margin','#ca8a04'],['under','Underwater','#dc2626']];
+  var zones='<div class="invm-panel"><h3>Cases by economic zone</h3><div class="invm-agebars">'+zm.map(function(zz){var pct=t.cases?z[zz[0]]/t.cases*100:0;return '<div class="invm-agerow"><span class="nm">'+zz[1]+'</span><div class="invm-agetrack"><div class="invm-agefill" style="width:'+pct+'%;background:'+zz[2]+'"></div></div><span class="amt" style="color:'+zz[2]+'">'+invmF(z[zz[0]])+' cs</span></div>';}).join('')+'</div></div>';
+  return lead+bars+'<div class="invm-perp" style="margin-top:14px">'+bridge+zones+'</div>';
+}
+function invmCount(m,t){
+  var lead='<div class="invm-lead"><b>Perpetual estimate.</b> Periodic counting (your Monday WholesaleWare pull) is the truth weekly; this estimates on-hand each day in between (count &minus; days &times; sell rate) so you are not blind Tue&ndash;Sun, and flags when to recount.</div>';
+  var labels=['Mon','Tue','Wed','Thu','Fri','Sat','Sun','Mon*'], maxV=t.cases||1, days='';
+  for(var d=0;d<=7;d++){ var est=Math.max(0,t.cases-m.perDay*d); var h=Math.round(est/maxV*100); var cls=d===0?'today':(d===7?'recount':''); days+='<div class="invm-daycol"><div class="invm-dayval">'+invmF(est)+'</div><div class="invm-daybar '+cls+'" style="height:'+h+'%"></div><div class="invm-daylbl">'+labels[d]+'</div></div>'; }
+  var left='<div class="invm-panel"><h3>Estimated on-hand &mdash; Mon to next Mon</h3><div class="invm-days">'+days+'</div><div style="margin-top:11px;font-size:11px;color:var(--gray-600)">Mon true count: <b>'+invmF(t.cases)+' cs</b>. Est. next Mon ~<b>'+invmF(Math.max(0,t.cases-m.perDay*7))+' cs</b> &mdash; <b style="color:#dc2626">recount</b> to re-true from WholesaleWare.</div></div>';
+  var right='<div class="invm-panel"><h3>Count health</h3><div style="font-size:11.5px;line-height:1.85;color:var(--gray-600)">Method: <b>periodic / weekly cycle count</b> (Mondays).<br>Days since last count: <b>0</b> (today).<br>Est. sold by next count: <b>~'+invmF(m.perDay*7)+' cs</b>.<br>Coverage left: <b>'+t.coverage.toFixed(1)+'d</b>.<br><br><span class="invm-muted">Wire a daily feed &rarr; true perpetual (no blind days).</span></div></div>';
+  return lead+'<div class="invm-perp">'+left+right+'</div>';
+}
+var INVM_BASE=null, INVM_SAVED=[];
+function invmSnap(m,t){ return {atUsd:t.atUsd, marginUsd:t.marginUsd, coverage:t.coverage, under:t.under, breakeven:t.breakeven, demand:m.demand, sell:m.sell, rate:INVM_RATEKEY}; }
+function invmScenarios(m,t){
+  var cur=invmSnap(m,t); if(!INVM_BASE) INVM_BASE=cur;
+  function row(lbl,b,c,f,goodLow){ var dv=c-b; var col=dv===0?'var(--gray-400)':((dv<0)===!!goodLow?'#16a34a':'#dc2626'); return '<tr><td>'+lbl+'</td><td>'+f(b)+'</td><td><b>'+f(c)+'</b> <span style="font-size:10px;color:'+col+'">'+(dv>=0?'+':'')+f(dv)+'</span></td></tr>'; }
+  var lead='<div class="invm-lead"><b>Scenario manager.</b> Adjust the levers up top (demand, shrink percentile, sell $/lb, target margin), then <b>Save</b> a scenario and compare. Answers "what if sales slow / shrink runs high / price drops?"</div>';
+  var cmp='<div class="invm-panel"><h3>Base vs current</h3><table class="invm-cmp"><thead><tr><th>Metric</th><th>Base</th><th>Current</th></tr></thead><tbody>'+
+    row('Shrink at risk',INVM_BASE.atUsd,cur.atUsd,invmMoney,true)+
+    row('Projected margin',INVM_BASE.marginUsd,cur.marginUsd,invmMoney,false)+
+    row('Coverage (DIO)',INVM_BASE.coverage,cur.coverage,function(x){return x.toFixed(1)+'d';},false)+
+    row('Underwater lots',INVM_BASE.under,cur.under,function(x){return ''+Math.round(x);},true)+
+    row('Break-even $/lb',INVM_BASE.breakeven,cur.breakeven,function(x){return '$'+x.toFixed(2);},true)+
+    '</tbody></table><div style="margin-top:11px;display:flex;gap:8px"><button class="invm-btn" onclick="invmScnSave()">Save scenario</button><button class="invm-btn ghost" onclick="invmScnRebase()">Set base = current</button></div></div>';
+  var setup='<div class="invm-panel"><h3>Current levers</h3><div style="font-size:12px;line-height:1.95;font-family:var(--fm,monospace);color:var(--gray-700)">Demand: <b>'+invmF(m.demand)+' cs/wk</b><br>Shrink: <b>'+m.rate.toFixed(3)+'%/day ('+INVM_RATEKEY+')</b><br>Sell: <b>$'+m.sell.toFixed(2)+'/lb</b><br>Target margin: <b>'+(m.tmar*100).toFixed(0)+'%</b></div>'+
+    '<div style="margin-top:12px;font-size:11px;color:var(--gray-500)">'+(INVM_SAVED.length?('<b>Saved scenarios:</b><br>'+INVM_SAVED.map(function(sc){return '&middot; '+sc.name+' &mdash; risk '+invmMoney(sc.s.atUsd)+', margin '+invmMoney(sc.s.marginUsd)+', '+sc.s.under+' uw';}).join('<br>')):'<span class="invm-muted">No saved scenarios yet. Move a lever and hit Save.</span>')+'</div></div>';
+  return lead+'<div class="invm-perp">'+cmp+setup+'</div>';
+}
+function invmScnSave(){ var m=invmCompute(),t=invmTotals(m); INVM_SAVED.push({name:'Scn '+(INVM_SAVED.length+1)+' ('+INVM_RATEKEY+', '+invmF(m.demand)+'cs, $'+m.sell.toFixed(2)+')', s:invmSnap(m,t)}); renderInventory(); }
+function invmScnRebase(){ var m=invmCompute(),t=invmTotals(m); INVM_BASE=invmSnap(m,t); renderInventory(); }
+
+
 
 function bpRenderContainerCosts(){   // entry — called from renderBuyPlanner()
   var host=document.getElementById('bp-cc-table'); if(!host) return;
