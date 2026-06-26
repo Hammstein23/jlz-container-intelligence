@@ -5016,6 +5016,9 @@ function authInjectLogo() {
 .invm-cmp thead th{font-size:9px;text-transform:uppercase;color:var(--gray-400);font-family:var(--fm,monospace)}
 .invm-btn{font-size:11px;font-weight:600;padding:7px 12px;border:1px solid #0d5026;background:#0d5026;color:#fff;border-radius:6px;cursor:pointer}
 .invm-btn.ghost{background:#fff;color:#0d5026}
+.invm-add{font-family:var(--fb,sans-serif);font-size:11.5px;padding:6px 10px;border:1px solid #0d5026;border-radius:6px;background:#f0fdf4;color:#0d5026;font-weight:600;cursor:pointer;max-width:320px}
+.invm-rm{border:none;background:none;color:var(--gray-300);font-size:16px;line-height:1;cursor:pointer;padding:0 5px;font-weight:700}
+.invm-rm:hover{color:#dc2626}
 </style>
 <div class="invm-wrap">
   <div class="invm-head"><h2>Inventory Management</h2><span class="invm-sub" id="invm-subline">ginger</span></div>
@@ -10889,11 +10892,11 @@ function invmOverview(m,t){
   return h;
 }
 function invmLots(m,t){
-  if(!m.lots.length) return '<div class="invm-card"><div class="invm-empty">No lots on hand yet. Add inventory lots in the Buy Planner &rarr; Inventory section; they appear here automatically.</div></div>';
+  if(!m.lots.length) return '<div class="invm-bar" style="margin-bottom:12px"><div class="invm-grp" style="margin-left:auto"><select class="invm-add" onchange="invmAddLot(this)">'+invmAddOptions()+'</select></div></div><div class="invm-card"><div class="invm-empty">No lots on hand yet. Use the <b>+ add lot</b> dropdown above to pick the orders you are physically holding &mdash; they come from your Orders list.</div></div>';
   var h='<div class="invm-lead"><b>Stock on hand, FEFO order</b> (soonest-expiring first). <b>+Days</b> auto from FEFO depletion at your demand &mdash; switch to Manual to override any lot. <em>Expires</em> = arrival + '+m.shelf+'d shelf life.</div>';
-  h+='<div class="invm-bar" style="margin-bottom:12px"><div class="invm-grp"><label>+Days</label><div class="invm-toggle"><button id="invm-d-auto" class="'+(INVM_DAYSMODE==='auto'?'on':'')+'" onclick="invmSetDays(\'auto\')">Auto (FEFO)</button><button id="invm-d-man" class="'+(INVM_DAYSMODE==='manual'?'on':'')+'" onclick="invmSetDays(\'manual\')">Manual</button></div></div></div>';
+  h+='<div class="invm-bar" style="margin-bottom:12px"><div class="invm-grp"><label>+Days</label><div class="invm-toggle"><button id="invm-d-auto" class="'+(INVM_DAYSMODE==='auto'?'on':'')+'" onclick="invmSetDays(\'auto\')">Auto (FEFO)</button><button id="invm-d-man" class="'+(INVM_DAYSMODE==='manual'?'on':'')+'" onclick="invmSetDays(\'manual\')">Manual</button></div></div><div class="invm-grp" style="margin-left:auto"><select class="invm-add" onchange="invmAddLot(this)">'+invmAddOptions()+'</select></div></div>';
   h+='<div class="invm-card"><div class="invm-tw"><table class="invm-table"><thead><tr>'+
-     '<th class="l">PO</th><th class="l">Supplier</th><th class="l">Mode</th><th>Stored</th><th>Expires</th><th>Cases</th><th>+Days</th><th>Total</th><th>Cover</th><th>Shrink %</th><th>At risk</th><th>Margin</th><th class="l">Zone</th>'+
+     '<th class="l">PO</th><th class="l">Supplier</th><th class="l">Mode</th><th>Stored</th><th>Expires</th><th>Cases</th><th>+Days</th><th>Total</th><th>Cover</th><th>Shrink %</th><th>At risk</th><th>Margin</th><th class="l">Zone</th><th></th>'+
      '</tr></thead><tbody>';
   m.lots.forEach(function(l){
     var shC=l.shrink>15?'#ea580c':l.shrink>10?'#d97706':'#16a34a';
@@ -10912,9 +10915,10 @@ function invmLots(m,t){
       '<td>'+invmF(l.atCs)+' cs<br><span class="invm-muted">'+invmMoney(l.atUsd)+'</span></td>'+
       '<td style="color:'+mgC+';font-weight:700">'+l.margin.toFixed(0)+'%</td>'+
       '<td class="l"><span class="invm-zone '+l.zone+'">'+zl+'</span></td>'+
+      '<td><button class="invm-rm" title="Remove lot" onclick="invmRemoveLot(\''+l.id+'\')">&times;</button></td>'+
     '</tr>';
   });
-  h+='<tr class="invm-tot"><td class="l" colspan="3">Total</td><td>'+Math.round(t.avgAge)+'d</td><td></td><td>'+invmF(t.cases)+'</td><td></td><td></td><td>'+t.coverage.toFixed(1)+'d</td><td>'+(t.cases?(t.atCs/t.cases*100).toFixed(1):'0')+'%</td><td>'+invmF(t.atCs)+' cs</td><td colspan="2"></td></tr>';
+  h+='<tr class="invm-tot"><td class="l" colspan="3">Total</td><td>'+Math.round(t.avgAge)+'d</td><td></td><td>'+invmF(t.cases)+'</td><td></td><td></td><td>'+t.coverage.toFixed(1)+'d</td><td>'+(t.cases?(t.atCs/t.cases*100).toFixed(1):'0')+'%</td><td>'+invmF(t.atCs)+' cs</td><td colspan="3"></td></tr>';
   h+='</tbody></table></div></div>';
   return h;
 }
@@ -11004,6 +11008,22 @@ function invmScenarios(m,t){
 }
 function invmScnSave(){ var m=invmCompute(),t=invmTotals(m); INVM_SAVED.push({name:'Scn '+(INVM_SAVED.length+1)+' ('+INVM_RATEKEY+', '+invmF(m.demand)+'cs, $'+m.sell.toFixed(2)+')', s:invmSnap(m,t)}); renderInventory(); }
 function invmScnRebase(){ var m=invmCompute(),t=invmTotals(m); INVM_BASE=invmSnap(m,t); renderInventory(); }
+
+function invmAddOptions(){
+  var st=bpInvState();
+  var list=bpAllOrders().filter(function(o){ var id=bpCcId(o); return !(st.rows && st.rows[id]); });
+  list.sort(function(a,b){ return String(bpEtaOf(a)).localeCompare(String(bpEtaOf(b))); });
+  var h='<option value="">+ add lot to inventory</option>';
+  list.forEach(function(o){
+    var id=bpCcId(o), mode=(o.mode==='air')?'air':'sea', po=o.jlzPo||o.contractNo||o.containerNo||'(no PO)';
+    var eta=bpEtaOf(o); eta=eta?String(eta).slice(0,10):'';
+    h+='<option value="'+esc_(id)+'">'+esc_(po)+' &middot; '+esc_(o.supplier||'-')+' &middot; '+mode+' &middot; '+(parseFloat(o.cases)||0)+' cs'+(eta?(' &middot; '+eta):'')+'</option>';
+  });
+  return h;
+}
+function invmAddLot(sel){ var id=sel.value; if(!id) return; var st=bpInvState(); st.rows=st.rows||{}; if(!st.rows[id]) st.rows[id]={}; bpInvSave(st); renderInventory(); }
+function invmRemoveLot(id){ var st=bpInvState(); if(st.rows) delete st.rows[id]; bpInvSave(st); renderInventory(); }
+
 
 
 
