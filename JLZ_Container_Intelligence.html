@@ -5285,6 +5285,7 @@ var curPriceCountry='United States',curMktCountry='United States',curRangeW=26;
 function ge(id){return document.getElementById(id);}
 function qa(s){return document.querySelectorAll(s);}
 function setText(id,v){var el=ge(id);if(el)el.textContent=v;}
+function miKill(ctx){try{var e=ctx&&(typeof Chart!=='undefined')&&Chart.getChart(ctx);if(e)e.destroy();}catch(_){}}
 
 function miInit(){
   setText('mi-thru',D.meta.data_through);
@@ -5379,7 +5380,7 @@ function renderPriceChart(nW){
   // 4-week moving average for the chart line
   var oM=smooth4(oRaw,labels),cM=smooth4(cRaw,labels);
   var ctx=ge('mi-price-chart');if(!ctx)return;
-  if(PC)PC.destroy();
+  miKill(ctx);
   PC=new Chart(ctx.getContext('2d'),{type:'line',data:{labels:labels,datasets:[
     {label:'Organic',data:labels.map(function(l){return oM[l]||null;}),borderColor:'#0d5026',backgroundColor:'rgba(13,80,38,.07)',fill:true,tension:0.3,pointRadius:0,borderWidth:2,spanGaps:true},
     {label:'Conventional',data:labels.map(function(l){return cM[l]||null;}),borderColor:'#d97706',fill:false,tension:0.3,pointRadius:0,borderWidth:1.5,borderDash:[4,3],spanGaps:true}
@@ -5519,7 +5520,7 @@ function renderShareChart(agg){
   var MY=['Anawi','La Grama','Elisur','Hamilton','Interloom'];
   var pal=['#16a34a','#4ade80','#a3e635','#facc15','#fb923c','#f87171','#a78bfa','#60a5fa'];
   var colors=top8.map(function(r,i){return MY.includes(r.tag)?'#0d5026':pal[i];});colors.push('#d1d5db');
-  var ctx=ge('mi-share-chart');if(!ctx)return;if(SC)SC.destroy();
+  var ctx=ge('mi-share-chart');if(!ctx)return;miKill(ctx);
   SC=new Chart(ctx.getContext('2d'),{type:'doughnut',data:{labels:labels,datasets:[{data:vals,backgroundColor:colors,borderWidth:2,borderColor:'#fff'}]},
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{font:{size:10},boxWidth:10}},tooltip:{callbacks:{label:function(c){return ' '+(c.parsed/1e6).toFixed(2)+'M lbs';}}}}}});
 }
@@ -5527,9 +5528,9 @@ function renderShareChart(agg){
 function renderSeasonality(){
   var svd=D.season_vol||[];var spd=D.season_price||[];
   var ctx1=ge('mi-seas-vol-chart');
-  if(ctx1&&!SVC){SVC=new Chart(ctx1.getContext('2d'),{type:'bar',data:{labels:svd.map(function(d){return 'W'+String(d.iso_week).padStart(2,'0');}),datasets:[{data:svd.map(function(d){return d.avg_lbs;}),backgroundColor:svd.map(function(d){return d.iso_week>=43&&d.iso_week<=47?'#0d5026':d.iso_week>=14&&d.iso_week<=21?'#f59e0b':'#86efac';}),borderRadius:2,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return ' '+(c.raw/1e6).toFixed(2)+'M lbs avg';}}}},scales:{x:{ticks:{maxTicksLimit:26,font:{size:8}},grid:{display:false}},y:{ticks:{callback:function(v){return (v/1e6).toFixed(1)+'M';},font:{size:9}},grid:{color:'rgba(0,0,0,.04)'}}}}});}
+  if(ctx1){miKill(ctx1);SVC=new Chart(ctx1.getContext('2d'),{type:'bar',data:{labels:svd.map(function(d){return 'W'+String(d.iso_week).padStart(2,'0');}),datasets:[{data:svd.map(function(d){return d.avg_lbs;}),backgroundColor:svd.map(function(d){return d.iso_week>=43&&d.iso_week<=47?'#0d5026':d.iso_week>=14&&d.iso_week<=21?'#f59e0b':'#86efac';}),borderRadius:2,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return ' '+(c.raw/1e6).toFixed(2)+'M lbs avg';}}}},scales:{x:{ticks:{maxTicksLimit:26,font:{size:8}},grid:{display:false}},y:{ticks:{callback:function(v){return (v/1e6).toFixed(1)+'M';},font:{size:9}},grid:{color:'rgba(0,0,0,.04)'}}}}});}
   var ctx2=ge('mi-seas-price-chart');
-  if(ctx2&&!SPC){SPC=new Chart(ctx2.getContext('2d'),{type:'line',data:{labels:spd.map(function(d){return 'W'+String(d.iso_week).padStart(2,'0');}),datasets:[{data:spd.map(function(d){return d.avg_p;}),borderColor:'#0d5026',backgroundColor:'rgba(13,80,38,.06)',fill:true,tension:0.4,pointRadius:1.5,borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return ' $'+(c.raw||0).toFixed(4)+'/lb avg';}}}},scales:{x:{ticks:{maxTicksLimit:26,font:{size:8}},grid:{display:false}},y:{ticks:{callback:function(v){return '$'+v.toFixed(2);},font:{size:9}},grid:{color:'rgba(0,0,0,.04)'}}}}});}
+  if(ctx2){miKill(ctx2);SPC=new Chart(ctx2.getContext('2d'),{type:'line',data:{labels:spd.map(function(d){return 'W'+String(d.iso_week).padStart(2,'0');}),datasets:[{data:spd.map(function(d){return d.avg_p;}),borderColor:'#0d5026',backgroundColor:'rgba(13,80,38,.06)',fill:true,tension:0.4,pointRadius:1.5,borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return ' $'+(c.raw||0).toFixed(4)+'/lb avg';}}}},scales:{x:{ticks:{maxTicksLimit:26,font:{size:8}},grid:{display:false}},y:{ticks:{callback:function(v){return '$'+v.toFixed(2);},font:{size:9}},grid:{color:'rgba(0,0,0,.04)'}}}}});}
 }
 
 window.miLoad=function(input){
@@ -5748,7 +5749,7 @@ function mifRenderTrend(){
   var fS=mifPriceSeries(byGroup,weeks,'Formal'),iS=mifPriceSeries(byGroup,weeks,'Informal');
   var incW=D.meta?D.meta.incomplete_week:null;
   var labels=weeks.map(function(w){return w===incW?mifShortWk(w)+'*':mifShortWk(w);});
-  if(MIF_TC)MIF_TC.destroy();
+  miKill(ctx);
   MIF_TC=new Chart(ctx.getContext('2d'),{type:'line',data:{labels:labels,datasets:[
     {label:'Formal',data:fS,borderColor:'#0d5026',backgroundColor:'rgba(13,80,38,.08)',fill:true,tension:.25,spanGaps:true,pointRadius:2.5,borderWidth:2.2},
     {label:'Informal',data:iS,borderColor:'#9ca3af',backgroundColor:'transparent',fill:false,tension:.25,spanGaps:true,pointRadius:2,borderWidth:1.6,borderDash:[4,3]}
@@ -5789,7 +5790,7 @@ function mifRenderCotiz(){
   var mine=mifMyQuotes(weeks);
   var mS=weeks.map(function(w){var v=mine[w];return v&&v.l?Math.max(0,(v.u/v.l)-MIF_FREIGHT):null;});
   var labels=weeks.map(mifShortWk);
-  if(MIF_CC)MIF_CC.destroy();
+  miKill(ctx);
   MIF_CC=new Chart(ctx.getContext('2d'),{type:'line',data:{labels:labels,datasets:[
     {label:'Formal',data:fS,borderColor:'#0d5026',backgroundColor:'transparent',tension:.2,spanGaps:true,pointRadius:2,borderWidth:2},
     {label:'Informal',data:iS,borderColor:'#9ca3af',backgroundColor:'transparent',tension:.2,spanGaps:true,pointRadius:2,borderWidth:1.6,borderDash:[4,3]},
