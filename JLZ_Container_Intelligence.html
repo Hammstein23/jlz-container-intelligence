@@ -5071,6 +5071,22 @@ function authInjectLogo() {
 .mi-date-ctrl select,.mi-date-ctrl input[type=month]{border:1px solid var(--gray-300);border-radius:4px;padding:3px 7px;font-size:11px;font-family:var(--fb);color:var(--gray-700);background:var(--white)}
 .mi-bench-card{background:linear-gradient(135deg,#f0fdf4 0%,#ecfdf5 100%);border:1px solid #bbf7d0;border-radius:7px;padding:14px 16px;margin-bottom:14px}
 .mi-bench-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#065f46;font-family:var(--fb);margin-bottom:10px}
+.mif-chiprow{display:flex;gap:6px;flex-wrap:wrap}
+.mif-chip{display:inline-flex;align-items:center;gap:6px;background:var(--jlz-light);color:var(--jlz-dark);border-radius:14px;padding:4px 5px 4px 11px;font-size:11px;font-weight:600;font-family:var(--fb)}
+.mif-chip button{border:none;background:var(--jlz-dark);color:#fff;width:15px;height:15px;border-radius:50%;cursor:pointer;font-size:10px;line-height:1;display:flex;align-items:center;justify-content:center;padding:0}
+.mif-chip button:hover{background:#dc2626}
+.mif-search{width:100%;padding:7px 10px;border:1px solid var(--gray-300);border-radius:5px;font-family:var(--fb);font-size:11.5px;margin-bottom:8px;box-sizing:border-box}
+.mif-search:focus{outline:none;border-color:var(--jlz-mid);box-shadow:0 0 0 2px var(--jlz-light)}
+.mif-roster{max-height:230px;overflow-y:auto;border:1px solid var(--gray-100);border-radius:5px}
+.mif-addbtn{padding:2px 9px;border-radius:12px;border:1px solid var(--jlz-mid);background:#fff;color:var(--jlz-mid);font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap}
+.mif-addbtn:hover{background:var(--jlz-light)}
+.mif-callout{background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:5px;padding:10px 12px;font-size:11.5px;margin-bottom:10px;line-height:1.5}
+.mif-slider-row{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.mif-slider-row label{font-size:11px;color:var(--gray-600);white-space:nowrap}
+.mif-slider-row input[type=range]{flex:1;min-width:120px;accent-color:var(--jlz)}
+.mif-slider-val{font-family:var(--fm,monospace);font-weight:700;font-size:12.5px;color:var(--jlz-dark);min-width:48px;text-align:right}
+.mif-tag-ex{background:#fffbeb;color:#d97706;border:1px solid #fde68a;font-size:9px;font-weight:700;padding:2px 7px;border-radius:8px;font-family:var(--fb);margin-left:auto;white-space:nowrap}
+@media(max-width:768px){.mif-slider-row{flex-direction:column;align-items:stretch}.mif-slider-val{text-align:left}}
 @media(max-width:768px){.mi-g2{grid-template-columns:1fr}.mi-krow{grid-template-columns:1fr 1fr}}
 </style>
 
@@ -5089,6 +5105,7 @@ function authInjectLogo() {
   <button class="mi-snb" onclick="miSec('suppliers',this)">Supplier Intel</button>
   <button class="mi-snb" onclick="miSec('market',this)">Market Overview</button>
   <button class="mi-snb" onclick="miSec('seasonality',this)">Seasonality</button>
+  <button class="mi-snb" onclick="miSec('formal',this)">Formal vs Informal</button>
 </div>
 
 <div id="mi-s-prices" class="mi-sec active">
@@ -5185,6 +5202,76 @@ function authInjectLogo() {
   <div class="mi-card"><div class="mi-ch"><span class="mi-ct">Avg FOB Price by Season &mdash; Organic</span><span class="mi-hint">Multi-year avg $/lb</span></div><div class="mi-cb"><div class="mi-wrap" style="height:180px"><canvas id="mi-seas-price-chart"></canvas></div></div></div>
 </div>
 
+<div id="mi-s-formal" class="mi-sec">
+  <div class="mi-krow" id="mif-kpis"></div>
+
+  <div class="mi-card">
+    <div class="mi-ch">
+      <span class="mi-ct">Formal vs. informal &mdash; weekly FOB trend</span>
+      <div class="mi-ptog" id="mif-cat-tog" style="margin-left:auto">
+        <button class="mi-pill active" onclick="mifSetCat('Organic',this)">Organic</button>
+        <button class="mi-pill" onclick="mifSetCat('Conventional',this)">Conventional</button>
+      </div>
+      <div class="mi-ptog" id="mif-range-tog">
+        <button class="mi-pill" onclick="mifSetRange(8,this)">8w</button>
+        <button class="mi-pill active" onclick="mifSetRange(16,this)">16w</button>
+        <button class="mi-pill" onclick="mifSetRange(26,this)">26w</button>
+      </div>
+    </div>
+    <div class="mi-cb">
+      <div class="mi-wrap"><canvas id="mif-trend-chart"></canvas></div>
+      <div class="mi-hint" id="mif-incomplete-note" style="margin-top:6px;color:#d97706"></div>
+      <div class="mi-hint" style="margin-top:4px">
+        <span style="color:var(--jlz);font-weight:700">&#9679;</span> Formal (<span id="formal-count">6</span> exporters) &nbsp;&middot;&nbsp;
+        <span style="color:var(--gray-400);font-weight:700">- -</span> Informal (resto del mercado)
+      </div>
+    </div>
+  </div>
+
+  <div class="mi-card">
+    <div class="mi-ch"><span class="mi-ct">&#191;Qui&eacute;n cuenta como formal?</span><span class="mi-hint">Default: La Grama, Interloom, A&ntilde;awi, Elisur, La Campi&ntilde;a, JAS &mdash; mueve a cualquiera, cuando quieras</span></div>
+    <div class="mi-cb">
+      <div class="mi-g2">
+        <div>
+          <div class="mi-hint" style="margin-bottom:8px;font-weight:700;text-transform:uppercase;font-size:10px;letter-spacing:.05em">Roster formal</div>
+          <div class="mif-chiprow" id="mif-chips"></div>
+        </div>
+        <div>
+          <div class="mi-hint" style="margin-bottom:8px;font-weight:700;text-transform:uppercase;font-size:10px;letter-spacing:.05em">El resto (12 meses, por volumen)</div>
+          <input class="mif-search" id="mif-search" placeholder="Buscar exportador..." oninput="mifRenderRoster(this.value)">
+          <div class="mif-roster"><table class="mi-tbl">
+            <thead><tr><th>Exportador</th><th class="r">Lbs/12m</th><th></th></tr></thead>
+            <tbody id="mif-roster-body"></tbody>
+          </table></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mi-card">
+    <div class="mi-ch">
+      <span class="mi-ct">Mis cotizaciones vs. mercado (FOB) &mdash; &uacute;ltimas 8 semanas</span>
+      <span class="mif-tag-ex">estimado &mdash; ver nota</span>
+    </div>
+    <div class="mi-cb">
+      <div class="mif-callout">
+        <b>Ojo:</b> tu precio de compra es CIF o DDP &mdash; ya incluye flete oce&aacute;nico + seguro (DDP tambi&eacute;n customs + inland). El mercado (Veritrade) es FOB. Todav&iacute;a no trackeamos el flete oce&aacute;nico por separado, as&iacute; que el ajuste de abajo es una <b>estimaci&oacute;n tuya</b>, no un n&uacute;mero calculado &mdash; en $0.00 ves tu costo tal cual (CIF/DDP), sin ajustar.
+      </div>
+      <div class="mif-slider-row">
+        <label>Flete oce&aacute;nico + seguro estimado ($/lb, se resta de tu CIF/DDP)</label>
+        <input type="range" id="mif-freight" min="0" max="0.40" step="0.01" value="0" oninput="mifSetFreight(this.value)">
+        <span class="mif-slider-val" id="mif-freight-val">$0.00</span>
+      </div>
+      <div class="mi-wrap" style="height:200px"><canvas id="mif-cotiz-chart"></canvas></div>
+      <table class="mi-tbl" style="margin-top:10px">
+        <thead><tr><th>Semana</th><th class="r">Formal $/lb</th><th class="r">Informal $/lb</th><th class="r">M&iacute;o (adj.) $/lb</th><th class="r">vs Formal</th><th class="r">vs Informal</th></tr></thead>
+        <tbody id="mif-cmp-body"></tbody>
+      </table>
+      <div class="mi-hint" style="margin-top:6px" id="mif-orders-note"></div>
+    </div>
+  </div>
+</div>
+
 </div><!-- end tab-market -->
 
 <script>
@@ -5193,6 +5280,7 @@ var D={"meta": {"data_through": "2026-05-20", "total_records": 21381, "generated
 (function(){try{var s=localStorage.getItem('jlz_mi_v4');if(s){var l=JSON.parse(s);if(l&&l.meta&&l.meta.data_through>=D.meta.data_through)D=l;}}catch(e){}})();
 function saveD(){try{localStorage.setItem('jlz_mi_v4',JSON.stringify(D));}catch(e){}}
 var PC=null,SC=null,SVC=null,SPC=null,miInited=false,curSup='La Grama',mktSortKey='lbs';
+var MIF_TC=null,MIF_CC=null,MIF_CAT='Organic',MIF_RANGE=16,MIF_FREIGHT=0;
 var curPriceCountry='United States',curMktCountry='United States',curRangeW=26;
 function ge(id){return document.getElementById(id);}
 function qa(s){return document.querySelectorAll(s);}
@@ -5203,7 +5291,7 @@ function miInit(){
   populateCountrySelectors();
   renderKPIs();renderPriceChart(26);renderWeeklyTable();
   renderSupTabs();renderBenchBanner();renderSup('La Grama');
-  initMktDates();renderMkt();miInited=true;
+  initMktDates();renderMkt();mifRenderAll();miInited=true;
 }
 
 function populateCountrySelectors(){
@@ -5448,11 +5536,12 @@ window.miLoad=function(input){
   var file=input.files[0];if(!file)return;
   if(typeof XLSX==='undefined'){alert('XLSX not ready');return;}
   var reader=new FileReader();
-  reader.onload=function(e){try{var wb=XLSX.read(e.target.result,{type:'array',cellDates:true});var ws=wb.Sheets[wb.SheetNames[0]];var raw=XLSX.utils.sheet_to_json(ws,{range:5,raw:false});if(!raw.length){alert('No data found');return;}processVT(raw,function(nd){if(nd){D=mergeD(D,nd);saveD();miInited=false;PC=null;SC=null;SVC=null;SPC=null;miInit();alert('Updated through '+D.meta.data_through);}});}catch(err){alert('Error: '+err.message);}};
+  reader.onload=function(e){try{var wb=XLSX.read(e.target.result,{type:'array',cellDates:true});var ws=wb.Sheets[wb.SheetNames[0]];var raw=XLSX.utils.sheet_to_json(ws,{range:5,raw:true,cellDates:true});if(!raw.length){alert('No data found');return;}processVT(raw,function(nd){if(nd){D=mergeD(D,nd);saveD();miInited=false;PC=null;SC=null;SVC=null;SPC=null;miInit();alert('Updated through '+D.meta.data_through);}});}catch(err){alert('Error: '+err.message);}};
   reader.readAsArrayBuffer(file);input.value='';
 };
 
 function processVT(rows,cb){
+  rows=vtNorm(rows);
   var LBS=2.20462;
   var TOP8=['United States','Netherlands','Canada','Spain','United Kingdom','Germany','Italy','Dominican Republic'];
   var EXCL=/DESHIDRATADO|DRIED|HOJUELA|SECO|POLVO|POWDER|PASTA|PASTE|JUGO|JUICE|MOLIDO|GROUND|TURMERIC|CURCUMA|PALILLO|EXTRACT|ACEITE|OIL|CONGELAD|FROZEN|IQF|RODAJAS|SLICED|TROZOS|CHIPS|BEBIDA|PASTEURIZADO|CONCENTRADO|MUESTRA|SAMPLE|PUBLICIDAD|SUBPRODUCTO|ALMIDON|ROMERO|SIN VALOR/i;
@@ -5467,14 +5556,29 @@ function processVT(rows,cb){
     return true;
   });
   if(!fresh.length){cb(null);return;}
-  fresh.forEach(function(r){r._cat=ORG.test(r['Commercial Description']||'')?'Organic':'Conventional';r._lbs=parseFloat(r['Net kg']||0)*LBS;r._usd=parseFloat(r['U$ FOB Tot']||0);r._date=r['Date']?new Date(r['Date']):null;r._ym=r._date?r._date.toISOString().slice(0,7):'';r._yw=r._date?isoWk(r._date):'';r._imp=normImp(r['Importer']||'');r._ctry=normCtry(r['Destination Country']||'');r._cg=TOP8.indexOf(r._ctry)>=0?r._ctry:'Other';r._sup=tagSup(r['Exporter']||'');});
+  fresh.forEach(function(r){r._cat=ORG.test(r['Commercial Description']||'')?'Organic':'Conventional';r._lbs=parseFloat(r['Net kg']||0)*LBS;r._usd=parseFloat(r['U$ FOB Tot']||0);r._date=vtDate(r['Date']);r._ym=r._date?r._date.toISOString().slice(0,7):'';r._yw=r._date?isoWk(r._date):'';r._imp=normImp(r['Importer']||'');r._ctry=normCtry(r['Destination Country']||'');r._cg=TOP8.indexOf(r._ctry)>=0?r._ctry:'Other';r._sup=tagSup(r['Exporter']||'');});
   var maxD=fresh.map(function(r){return r._date;}).filter(Boolean).sort(function(a,b){return b-a;})[0];
+  // Is the most recent week in the file still in progress? (customs reporting
+  // lags a few days, so the newest week is usually a partial week, not a real drop.)
+  var _incWeek=null;
+  if(maxD){
+    var _mon=new Date(maxD.getFullYear(),maxD.getMonth(),maxD.getDate());
+    _mon.setDate(_mon.getDate()-((_mon.getDay()+6)%7));
+    var _sun=new Date(_mon.getFullYear(),_mon.getMonth(),_mon.getDate()+6);
+    if(maxD<_sun)_incWeek=isoWk(maxD);
+  }
   // Weekly by country group + _ALL
   var wMap={};
   fresh.forEach(function(r){if(!r._yw)return;
     [r._cg,'_ALL'].forEach(function(cg){var k=r._yw+'|'+r._cat+'|'+cg;if(!wMap[k])wMap[k]={year_week:r._yw,category:r._cat,cgroup:cg,_l:0,_u:0};wMap[k]._l+=r._lbs;wMap[k]._u+=r._usd;});
   });
   var weekly=Object.values(wMap).filter(function(w){return w.year_week>='2022-W01';}).map(function(w){return{year_week:w.year_week,category:w.category,cgroup:w.cgroup,p:w._l?parseFloat((w._u/w._l).toFixed(4)):0,v:parseFloat((w._l/1000).toFixed(1))};});
+  // Exporter-level weekly aggregate (kept separate from cgroup weekly above).
+  // Used by the Formal/Informal view so the formal/informal split can be
+  // reclassified live in the UI without re-parsing the source file.
+  var ewMap={};
+  fresh.forEach(function(r){if(!r._yw)return;var exp=(r['Exporter']||'').trim();if(!exp)return;var k=r._yw+'|'+r._cat+'|'+exp;if(!ewMap[k])ewMap[k]={yw:r._yw,cat:r._cat,exp:exp,_l:0,_u:0};ewMap[k]._l+=r._lbs;ewMap[k]._u+=r._usd;});
+  var expwk=Object.values(ewMap).filter(function(w){return w.yw>='2022-W01';}).map(function(w){return{yw:w.yw,cat:w.cat,exp:w.exp,lbs:Math.round(w._l),usd:Math.round(w._u)};});
   // ms4 by country group
   var cut4=new Date(maxD);cut4.setDate(cut4.getDate()-28);var ms4={};
   fresh.filter(function(r){return r._date>=cut4;}).forEach(function(r){
@@ -5496,16 +5600,227 @@ function processVT(rows,cb){
   var piMap={};fresh.filter(function(r){return r._cat==='Organic'&&r._yw;}).forEach(function(r){var iso=getIsoN(r._date),key=r._yw;if(!piMap[key])piMap[key]={iso:iso,_l:0,_u:0};piMap[key]._l+=r._lbs;piMap[key]._u+=r._usd;});
   var isoPA={};Object.values(piMap).forEach(function(v){if(!isoPA[v.iso])isoPA[v.iso]=[];isoPA[v.iso].push(v._l?v._u/v._l:0);});
   var sp=Object.keys(isoPA).map(function(wk){var arr=isoPA[wk];return{iso_week:parseInt(wk),avg_p:parseFloat((arr.reduce(function(s,v){return s+v;},0)/arr.length).toFixed(4))};}).sort(function(a,b){return a.iso_week-b.iso_week;});
-  cb({meta:{data_through:maxD?maxD.toISOString().slice(0,10):'-',total_records:fresh.length,generated:new Date().toISOString().slice(0,10),countries:TOP8.concat(['Other'])},ms4:ms4o,weekly:weekly,season_vol:sv,season_price:sp,sup:sup,mkt:mkt});
+  cb({meta:{data_through:maxD?maxD.toISOString().slice(0,10):'-',total_records:fresh.length,generated:new Date().toISOString().slice(0,10),countries:TOP8.concat(['Other']),incomplete_week:_incWeek},ms4:ms4o,weekly:weekly,season_vol:sv,season_price:sp,sup:sup,mkt:mkt,expwk:expwk});
 }
 
-function mergeD(ex,inc){var wMap={};(ex.weekly||[]).forEach(function(w){wMap[w.year_week+'|'+w.category+'|'+(w.cgroup||'_ALL')]=w;});(inc.weekly||[]).forEach(function(w){wMap[w.year_week+'|'+w.category+'|'+(w.cgroup||'_ALL')]=w;});return Object.assign({},inc,{weekly:Object.values(wMap).sort(function(a,b){return a.year_week>b.year_week?1:-1;})});}
+function mergeD(ex,inc){
+  var wMap={};(ex.weekly||[]).forEach(function(w){wMap[w.year_week+'|'+w.category+'|'+(w.cgroup||'_ALL')]=w;});(inc.weekly||[]).forEach(function(w){wMap[w.year_week+'|'+w.category+'|'+(w.cgroup||'_ALL')]=w;});
+  var _nowW=isoWk(new Date());
+  var weekly=Object.values(wMap).filter(function(w){return w.year_week<=_nowW;}).sort(function(a,b){return a.year_week>b.year_week?1:-1;});
+  // Exporter-level weekly (expwk): merge by exporter+week+category, then keep only
+  // a rolling window so localStorage does not grow unbounded across many uploads.
+  var ewMap={};(ex.expwk||[]).forEach(function(w){ewMap[w.yw+'|'+w.cat+'|'+w.exp]=w;});(inc.expwk||[]).forEach(function(w){ewMap[w.yw+'|'+w.cat+'|'+w.exp]=w;});
+  var allEw=Object.values(ewMap).filter(function(w){return w.yw<=_nowW;});
+  var ewWeeks=[];var _seen={};allEw.forEach(function(w){if(!_seen[w.yw]){_seen[w.yw]=1;ewWeeks.push(w.yw);}});ewWeeks.sort();
+  var EW_MAX_WEEKS=60;
+  var keepFrom=ewWeeks.length>EW_MAX_WEEKS?ewWeeks[ewWeeks.length-EW_MAX_WEEKS]:null;
+  var expwk=keepFrom?allEw.filter(function(w){return w.yw>=keepFrom;}):allEw;
+  return Object.assign({},inc,{weekly:weekly,expwk:expwk});
+}
 function normImp(name){if(!name||/^(TO ORDER|CONSIGNATARIO|N\/A)/i.test(name.trim()))return 'To Order / Unknown';var n=name.toUpperCase().trim();n=n.replace(/\s+\d{4,}.*/,'').replace(/P\.?O\.?\s*BOX.*/i,'').replace(/[,\.]+$/,'').replace(/\s+/,' ').trim();var NORMS=[[/VIVA TIERRA ORGANIC[.\s]*INC[.\s]*/,'VIVA TIERRA ORGANIC INC'],[/HEATH\s*(AND|Y|&)\s*LEJEUNE[.,\s]*INC[.,\s]*/,'HEATH AND LEJEUNE INC'],[/HEALTH AND LEJEUNE.*/,'HEATH AND LEJEUNE INC'],[/GLOBAL FARMS ENTERPRISES[.,\s]*\.?INC[.,\s]*/,'GLOBAL FARMS ENTERPRISES INC'],[/GLOBAL FARMS ENTERPRISES[.,\s]*$/,'GLOBAL FARMS ENTERPRISES INC'],[/A&A ORGANIC FARMS.*GLOBAL FARMS.*/,'GLOBAL FARMS ENTERPRISES INC'],[/IPOKI B\.?V?\.?\s*$/,'IPOKI BV'],[/IPOKI PRODUCE LLC.*/,'IPOKI PRODUCE LLC'],[/VOELKEL.*/,'VOELKEL GMBH'],[/JLZ P[OD]DUCE.*/,'JLZ PRODUCE'],[/JLZ PRODUCE.*/,'JLZ PRODUCE'],[/ANAWI USA.*/,'ANAWI USA LLC'],[/BROADVIEW PRODUCE.*/,'BROADVIEW PRODUCE CO'],[/I LOVE PRODUCE LLC.*/,'I LOVE PRODUCE LLC'],[/HERMANOS FERNANDEZ.*/,'HERMANOS FERNANDEZ LOPEZ SAU'],[/WEALMOOR.*/,'WEALMOOR LTD'],[/FRUCHTHANSA.*/,'FRUCHTHANSA GMBH'],[/UREN NORTH AMERICA.*/,'UREN NORTH AMERICA'],[/TRINITY DISTRIBUTION.*/,'TRINITY DISTRIBUTION INC'],[/THOMAS FRESH.*/,'THOMAS FRESH INC'],[/MINOR[.,\s]*WEIR.*/,'MINOR WEIR AND WILLIS LTD'],[/FRESH DIRECT PRODUCE.*/,'FRESH DIRECT PRODUCE LTD'],[/SMART GROUP TRADERS.*/,'SMART GROUP TRADERS INC'],[/HLB SPECIALTIES.*/,'HLB SPECIALTIES LLC'],[/MAMAPACH.*/,'MAMAPACH INC'],[/TOTAL PRODUCE.*/,'TOTAL PRODUCE BV']];for(var i=0;i<NORMS.length;i++)if(NORMS[i][0].test(n))return NORMS[i][1];return n.slice(0,45);}
 function normCtry(c){var M={'ESTADOS UNIDOS':'United States','PAÍSES BAJOS':'Netherlands','PAISES BAJOS':'Netherlands','ALEMANIA':'Germany','ESPAÑA':'Spain','ESPA\u00d1A':'Spain','REINO UNIDO':'United Kingdom','BÉLGICA':'Belgium','B\u00c9LGICA':'Belgium','BELGICA':'Belgium','CANADÁ':'Canada','CANAD\u00c1':'Canada','CANADA':'Canada','ITALIA':'Italy','AUSTRALIA':'Australia','JAPÓN':'Japan','JAPON':'Japan','CHILE':'Chile','FRANCIA':'France','SUECIA':'Sweden','DINAMARCA':'Denmark','NORUEGA':'Norway','FINLANDIA':'Finland','SUIZA':'Switzerland','AUSTRIA':'Austria','PORTUGAL':'Portugal','REPÚBLICA DOMINICANA':'Dominican Republic','CHINA':'China','COREA':'South Korea','SINGAPUR':'Singapore','NUEVA ZELANDA':'New Zealand','POLONIA':'Poland','IRLANDA':'Ireland'};return M[c.toUpperCase().trim()]||c.trim();}
 function tagSup(exp){var e=exp.toUpperCase();if(e.includes('ANAWI'))return 'Anawi';if(e.includes('GRAMA'))return 'La Grama';if(e.includes('ELISUR'))return 'Elisur';if(e.includes('HAMILLTON')||e.includes('HAMILTON'))return 'Hamilton';if(e.includes('INTERLOOM'))return 'Interloom';return 'Market';}
+function vtNorm(rows){
+  // Map Veritrade Spanish column headers to the canonical English keys the parser uses.
+  // English exports already use the canonical names, so they pass through untouched.
+  var SRC2CANON={
+    'Fecha':'Date',
+    'Kg Neto':'Net kg',
+    'Descripcion Comercial':'Commercial Description',
+    'Descripci\u00f3n Comercial':'Commercial Description',
+    'Exportador':'Exporter',
+    'Importador':'Importer',
+    'Pais de Destino':'Destination Country',
+    'Pa\u00eds de Destino':'Destination Country',
+    'V\u00eda':'Via'
+  };
+  return rows.map(function(r){var o={};for(var k in r){o[SRC2CANON[k]||k]=r[k];}return o;});
+}
+function vtDate(v){
+  // Robust: accepts a JS Date (from cellDates), an Excel serial number, or a dd/mm/yyyy string.
+  if(v==null||v==='')return null;
+  if(v instanceof Date)return isNaN(v.getTime())?null:v;
+  if(typeof v==='number')return new Date(Math.round((v-25569)*86400000));
+  var str=String(v).trim();
+  var m=str.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if(m){var dd=+m[1],mo=+m[2],yy=+m[3];if(yy<100)yy+=2000;if(mo>=1&&mo<=12&&dd>=1&&dd<=31)return new Date(yy,mo-1,dd);}
+  var d=new Date(str);return isNaN(d.getTime())?null:d;
+}
 function isoWk(d){var t=new Date(d);t.setHours(0,0,0,0);t.setDate(t.getDate()+3-(t.getDay()+6)%7);var j4=new Date(t.getFullYear(),0,4);return t.getFullYear()+'-W'+String(1+Math.round(((t-j4)/86400000-3+(j4.getDay()+6)%7)/7)).padStart(2,'0');}
 function getIsoN(d){var t=new Date(d);t.setHours(0,0,0,0);t.setDate(t.getDate()+3-(t.getDay()+6)%7);var j4=new Date(t.getFullYear(),0,4);return 1+Math.round(((t-j4)/86400000-3+(j4.getDay()+6)%7)/7);}
 function ym(months){var d=new Date();d.setMonth(d.getMonth()+months);return d.toISOString().slice(0,7);}
+
+// ==============================================================
+// FORMAL vs INFORMAL -- user-editable exporter classification.
+// Default = 6 named exporters; everything else defaults Informal.
+// Overrides persist in localStorage and can move ANY exporter either way.
+// ==============================================================
+var MIF_LS='jlz_mi_formal_overrides';
+var MIF_PATS=[['La Grama',/GRAMA/i],['Interloom',/INTERLOOM/i],['Anawi',/A.?AWI/i],['Elisur',/ELISUR/i],['La Campina',/CAMPI.A/i],['JAS',/\bJAS\b/i]];
+function mifDefLabel(name){for(var i=0;i<MIF_PATS.length;i++){if(MIF_PATS[i][1].test(name))return MIF_PATS[i][0];}return null;}
+function mifOverrides(){try{return JSON.parse(localStorage.getItem(MIF_LS)||'{}')||{};}catch(e){return {};}}
+function mifSaveOverrides(o){try{localStorage.setItem(MIF_LS,JSON.stringify(o));}catch(e){}}
+function mifClassOf(name){var ov=mifOverrides();if(Object.prototype.hasOwnProperty.call(ov,name))return ov[name];return mifDefLabel(name)?'Formal':'Informal';}
+window.mifSetClass=function(name,cls){var def=mifDefLabel(name)?'Formal':'Informal';var ov=mifOverrides();if(cls===def)delete ov[name];else ov[name]=cls;mifSaveOverrides(ov);mifRenderAll();};
+function mifDisplayName(name){var lbl=mifDefLabel(name);if(lbl)return lbl;return name.length>30?name.slice(0,30)+'\u2026':name;}
+
+// -- Aggregation over D.expwk (exporter x week x category lbs/usd) --
+function mifAllWeeks(){var s={};(D.expwk||[]).forEach(function(r){s[r.yw]=true;});return Object.keys(s).sort();}
+function mifPickWeeks(n){return mifAllWeeks().slice(-n);}
+function mifCompleteWeeks(n){var incW=D.meta?D.meta.incomplete_week:null;var a=mifAllWeeks().filter(function(w){return w!==incW;});return a.slice(-n);}
+function mifWeeklyByGroup(weekList,cat){
+  var wset={};weekList.forEach(function(w){wset[w]=true;});
+  var out={Formal:{},Informal:{}};
+  (D.expwk||[]).forEach(function(r){
+    if(cat&&r.cat!==cat)return;
+    if(!wset[r.yw])return;
+    var g=mifClassOf(r.exp);
+    if(!out[g][r.yw])out[g][r.yw]={lbs:0,usd:0};
+    out[g][r.yw].lbs+=r.lbs;out[g][r.yw].usd+=r.usd;
+  });
+  return out;
+}
+function mifPriceSeries(byGroup,weekList,g){return weekList.map(function(w){var v=byGroup[g][w];return(v&&v.lbs)?v.usd/v.lbs:null;});}
+function mifWavg(byGroup,weekList,g){var tl=0,tu=0;weekList.forEach(function(w){var v=byGroup[g][w];if(v){tl+=v.lbs;tu+=v.usd;}});return tl?tu/tl:null;}
+function mifShortWk(w){return w?'W'+w.slice(6):'';}
+function mifRoster(){
+  var cut=new Date();cut.setDate(cut.getDate()-365);
+  var cutW=isoWk(cut);
+  var agg={};
+  (D.expwk||[]).forEach(function(r){if(r.yw<cutW)return;if(!agg[r.exp])agg[r.exp]=0;agg[r.exp]+=r.lbs;});
+  return Object.keys(agg).map(function(name){return{name:name,lbs12mo:agg[name]};}).sort(function(a,b){return b.lbs12mo-a.lbs12mo;});
+}
+function mifRosterItem(name){var r=mifRoster();for(var i=0;i<r.length;i++)if(r[i].name===name)return r[i];return null;}
+function mifCurrentFormalList(){
+  var set={};
+  mifRoster().forEach(function(r){if(mifClassOf(r.name)==='Formal')set[r.name]=r.lbs12mo;});
+  var ov=mifOverrides();Object.keys(ov).forEach(function(n){if(ov[n]==='Formal'&&!(n in set))set[n]=0;});
+  return Object.keys(set).map(function(n){return{name:n,lbs12mo:set[n]};}).sort(function(a,b){return b.lbs12mo-a.lbs12mo;});
+}
+
+// -- Own purchase orders (real ORDERS, not example data) converted to a
+// CIF/DDP $/lb, bucketed by the week the order LEFT Peru (ETD) so it lines
+// up with Veritrade's export date -- NOT the US arrival date (ETA lags ETD
+// by the ocean/air transit time, so bucketing by ETA would misalign weeks).
+function mifLocalDate(s){if(!s)return null;var p=String(s).slice(0,10).split('-');if(p.length!==3)return null;var d=new Date(+p[0],+p[1]-1,+p[2]);return isNaN(d.getTime())?null:d;}
+function mifMyQuotes(weekList){
+  var wset={};weekList.forEach(function(w){wset[w]=true;});
+  var orders=(typeof bpAllOrders==='function')?bpAllOrders():[];
+  var byWk={};
+  orders.forEach(function(o){
+    var c=parseFloat(o.cifTotal)||0,l=parseFloat(o.netWeightLb)||0;
+    if(c<=0||l<=0)return;
+    var ds=o.etdActual||o.etdEstimated||o.arrivalActual||o.arrivalEstimated;
+    var d=mifLocalDate(ds);if(!d)return;
+    var wk=isoWk(d);if(!wset[wk])return;
+    if(!byWk[wk])byWk[wk]={l:0,u:0,n:0};
+    byWk[wk].l+=l;byWk[wk].u+=c;byWk[wk].n++;
+  });
+  return byWk;
+}
+
+// -- Render: KPI strip --
+function mifRenderKpis(){
+  var el0=ge('mif-kpis');if(!el0)return;
+  var weeks=mifPickWeeks(MIF_RANGE);
+  var byGroup=mifWeeklyByGroup(weeks,MIF_CAT);
+  var rN=Math.min(4,weeks.length);
+  var recent=weeks.slice(-rN),prior=weeks.slice(-2*rN,-rN);
+  var fNow=mifWavg(byGroup,recent,'Formal'),fPrior=mifWavg(byGroup,prior,'Formal');
+  var iNow=mifWavg(byGroup,recent,'Informal'),iPrior=mifWavg(byGroup,prior,'Informal');
+  var totLbs=0,formLbs=0;
+  weeks.forEach(function(w){var f=byGroup.Formal[w],i=byGroup.Informal[w];if(f){totLbs+=f.lbs;formLbs+=f.lbs;}if(i){totLbs+=i.lbs;}});
+  var share=totLbs?(formLbs/totLbs*100):0;
+  var spread=(fNow&&iNow)?((fNow-iNow)/iNow*100):null;
+  function dHtml(now,prior){if(now==null||!prior)return '<span class="mi-delta neu">\u2014</span>';var pct=(now-prior)/prior*100;var cls=Math.abs(pct)<2?'neu':(pct>0?'up':'dn');return '<span class="mi-delta '+cls+'">'+(pct>=0?'+':'')+pct.toFixed(1)+'% 4w</span>';}
+  el0.innerHTML=
+     '<div class="mi-kpi"><div class="mi-kpi-lbl">Formal $/lb</div><div class="mi-kpi-val" style="color:var(--jlz)">'+(fNow?'$'+fNow.toFixed(3):'-')+'</div>'+dHtml(fNow,fPrior)+'</div>'
+    +'<div class="mi-kpi"><div class="mi-kpi-lbl">Informal $/lb</div><div class="mi-kpi-val">'+(iNow?'$'+iNow.toFixed(3):'-')+'</div>'+dHtml(iNow,iPrior)+'</div>'
+    +'<div class="mi-kpi"><div class="mi-kpi-lbl">Formal premium</div><div class="mi-kpi-val" style="color:'+(spread==null?'var(--gray-400)':(spread>=0?'var(--jlz)':'#dc2626'))+'">'+(spread==null?'-':(spread>=0?'+':'')+spread.toFixed(1)+'%')+'</div><div class="mi-kpi-sub">vs informal</div></div>'
+    +'<div class="mi-kpi"><div class="mi-kpi-lbl">Formal share</div><div class="mi-kpi-val">'+share.toFixed(1)+'%</div><div class="mi-kpi-sub">of '+MIF_CAT.toLowerCase()+' lbs</div></div>';
+}
+
+// -- Render: Formal vs Informal weekly trend chart --
+function mifRenderTrend(){
+  var ctx=ge('mif-trend-chart');if(!ctx)return;
+  var weeks=mifPickWeeks(MIF_RANGE);
+  var byGroup=mifWeeklyByGroup(weeks,MIF_CAT);
+  var fS=mifPriceSeries(byGroup,weeks,'Formal'),iS=mifPriceSeries(byGroup,weeks,'Informal');
+  var incW=D.meta?D.meta.incomplete_week:null;
+  var labels=weeks.map(function(w){return w===incW?mifShortWk(w)+'*':mifShortWk(w);});
+  if(MIF_TC)MIF_TC.destroy();
+  MIF_TC=new Chart(ctx.getContext('2d'),{type:'line',data:{labels:labels,datasets:[
+    {label:'Formal',data:fS,borderColor:'#0d5026',backgroundColor:'rgba(13,80,38,.08)',fill:true,tension:.25,spanGaps:true,pointRadius:2.5,borderWidth:2.2},
+    {label:'Informal',data:iS,borderColor:'#9ca3af',backgroundColor:'transparent',fill:false,tension:.25,spanGaps:true,pointRadius:2,borderWidth:1.6,borderDash:[4,3]}
+  ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+    plugins:{legend:{position:'top',labels:{font:{size:10.5},boxWidth:10}},tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': '+(c.raw!=null?'$'+c.raw.toFixed(4)+'/lb':'sin datos');}}}},
+    scales:{x:{ticks:{font:{size:9}},grid:{display:false}},y:{ticks:{callback:function(v){return '$'+v.toFixed(2);},font:{size:10}},grid:{color:'rgba(0,0,0,.04)'}}}
+  }});
+  var note=ge('mif-incomplete-note');
+  if(note)note.textContent=(incW&&weeks.indexOf(incW)>=0)?('* '+mifShortWk(incW)+' en curso \u2014 aduana con rezago, semana parcial'):'';
+  var fc=ge('formal-count');if(fc)fc.textContent=mifCurrentFormalList().length;
+}
+
+// -- Render: classification manager (chips + searchable roster) --
+function mifRenderChips(){
+  var el=ge('mif-chips');if(!el)return;
+  var list=mifCurrentFormalList();
+  el.innerHTML=list.map(function(f){
+    return '<span class="mif-chip">'+mifDisplayName(f.name)+'<button onclick="mifSetClass(\''+f.name.replace(/'/g,"\\'")+'\',\'Informal\')" title="Mover a informal">\u00d7</button></span>';
+  }).join('')||'<span style="color:var(--gray-400);font-size:12px">Ninguno \u2014 agrega desde la lista</span>';
+}
+window.mifRenderRoster=function(filterText){
+  var body=ge('mif-roster-body');if(!body)return;
+  var q=(filterText||'').toLowerCase().trim();
+  var rows=mifRoster().filter(function(r){return mifClassOf(r.name)==='Informal';});
+  if(q)rows=rows.filter(function(r){return r.name.toLowerCase().indexOf(q)>=0;});
+  rows.sort(function(a,b){return b.lbs12mo-a.lbs12mo;});
+  body.innerHTML=rows.slice(0,60).map(function(r){
+    return '<tr><td title="'+r.name.replace(/"/g,'&quot;')+'">'+mifDisplayName(r.name)+'</td><td class="r">'+(r.lbs12mo/1e6).toFixed(2)+'M</td><td><button class="mif-addbtn" onclick="mifSetClass(\''+r.name.replace(/'/g,"\\'")+'\',\'Formal\')">+ Formal</button></td></tr>';
+  }).join('')||'<tr><td colspan="3" style="text-align:center;color:var(--gray-300);padding:14px">Sin resultados</td></tr>';
+};
+
+// -- Render: "mis cotizaciones" vs market, last 8 complete weeks --
+function mifRenderCotiz(){
+  var ctx=ge('mif-cotiz-chart');if(!ctx)return;
+  var weeks=mifCompleteWeeks(8);
+  var byGroup=mifWeeklyByGroup(weeks,'Organic');
+  var fS=mifPriceSeries(byGroup,weeks,'Formal'),iS=mifPriceSeries(byGroup,weeks,'Informal');
+  var mine=mifMyQuotes(weeks);
+  var mS=weeks.map(function(w){var v=mine[w];return v&&v.l?Math.max(0,(v.u/v.l)-MIF_FREIGHT):null;});
+  var labels=weeks.map(mifShortWk);
+  if(MIF_CC)MIF_CC.destroy();
+  MIF_CC=new Chart(ctx.getContext('2d'),{type:'line',data:{labels:labels,datasets:[
+    {label:'Formal',data:fS,borderColor:'#0d5026',backgroundColor:'transparent',tension:.2,spanGaps:true,pointRadius:2,borderWidth:2},
+    {label:'Informal',data:iS,borderColor:'#9ca3af',backgroundColor:'transparent',tension:.2,spanGaps:true,pointRadius:2,borderWidth:1.6,borderDash:[4,3]},
+    {label:'Mis cotizaciones',data:mS,borderColor:'#d97706',backgroundColor:'#d97706',showLine:false,pointRadius:5,pointStyle:'rectRot',spanGaps:false}
+  ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+    plugins:{legend:{position:'top',labels:{font:{size:10.5},boxWidth:10}},tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': '+(c.raw!=null?'$'+c.raw.toFixed(3)+'/lb':'\u2014');}}}},
+    scales:{x:{ticks:{font:{size:9}},grid:{display:false}},y:{ticks:{callback:function(v){return '$'+v.toFixed(2);},font:{size:10}},grid:{color:'rgba(0,0,0,.04)'}}}
+  }});
+  var body=ge('mif-cmp-body');
+  if(body){
+    body.innerHTML=weeks.map(function(w,i){
+      var f=fS[i],ip=iS[i],my=mS[i];
+      var vf=(my!=null&&f)?((my-f)/f*100):null,vi=(my!=null&&ip)?((my-ip)/ip*100):null;
+      function fd(v){if(v==null)return '\u2014';var c=v>8?'color:#dc2626':(v<-8?'color:#15803d':'color:var(--gray-500)');return '<span style="'+c+'">'+(v>=0?'+':'')+v.toFixed(1)+'%</span>';}
+      return '<tr><td>'+mifShortWk(w)+'</td><td class="r">'+(f?'$'+f.toFixed(3):'\u2014')+'</td><td class="r">'+(ip?'$'+ip.toFixed(3):'\u2014')+'</td><td class="r">'+(my!=null?'$'+my.toFixed(3):'\u2014')+'</td><td class="r">'+fd(vf)+'</td><td class="r">'+fd(vi)+'</td></tr>';
+    }).join('');
+  }
+  var nOrders=0;Object.keys(mine).forEach(function(w){nOrders+=mine[w].n;});
+  var note=ge('mif-orders-note');
+  if(note)note.textContent=nOrders?('Comparado contra '+nOrders+' orden(es) en esta ventana \u00b7 alineado por ETD (salida de Peru) \u00b7 flete estimado restado: $'+MIF_FREIGHT.toFixed(2)+'/lb'):'Sin ordenes con CIF/DDP + peso cargado en esta ventana de 8 semanas.';
+}
+
+window.mifSetCat=function(cat,btn){var box=btn.closest('.mi-ptog');if(box)box.querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');MIF_CAT=cat;mifRenderKpis();mifRenderTrend();};
+window.mifSetRange=function(n,btn){var box=btn.closest('.mi-ptog');if(box)box.querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');MIF_RANGE=n;mifRenderKpis();mifRenderTrend();};
+window.mifSetFreight=function(v){MIF_FREIGHT=parseFloat(v)||0;var el=ge('mif-freight-val');if(el)el.textContent='$'+MIF_FREIGHT.toFixed(2);mifRenderCotiz();};
+
+function mifRenderAll(){
+  mifRenderKpis();mifRenderTrend();mifRenderChips();
+  var sEl=ge('mif-search');mifRenderRoster(sEl?sEl.value:'');
+  mifRenderCotiz();
+}
 
 (function(){var _orig=window.switchTab;window.switchTab=function(t){_orig&&_orig(t);if(t==='market'){var tries=0;function attempt(){tries++;if(typeof Chart==='undefined'){if(tries<30)setTimeout(attempt,150);return;}var tab=ge('tab-market');if(!tab||tab.style.display==='none'){if(tries<20)setTimeout(attempt,100);return;}if(!miInited)miInit();}setTimeout(attempt,80);}};})();
 
