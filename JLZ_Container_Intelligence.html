@@ -5087,6 +5087,20 @@ function authInjectLogo() {
 .mif-slider-val{font-family:var(--fm,monospace);font-weight:700;font-size:12.5px;color:var(--jlz-dark);min-width:48px;text-align:right}
 .mif-tag-ex{background:#fffbeb;color:#d97706;border:1px solid #fde68a;font-size:9px;font-weight:700;padding:2px 7px;border-radius:8px;font-family:var(--fb);margin-left:auto;white-space:nowrap}
 @media(max-width:768px){.mif-slider-row{flex-direction:column;align-items:stretch}.mif-slider-val{text-align:left}}
+.mo-metricrow{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.mo-metric{flex:1;min-width:220px;background:#fff;border:1px solid var(--gray-200);border-radius:7px;padding:12px 15px}
+.mo-metric-lbl{font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-bottom:4px}
+.mo-metric-val{font-family:var(--fb);font-size:18px;font-weight:700;color:var(--jlz-dark)}
+.mo-metric-sub{font-size:10.5px;color:var(--gray-500);margin-top:2px;line-height:1.5}
+.mo-chip{display:inline-block;font-size:9px;font-weight:700;padding:1px 6px;border-radius:6px;margin:1px 3px 1px 0}
+.mo-chip.new{background:#dcfce7;color:#166534}
+.mo-chip.dropped{background:#fee2e2;color:#b91c1c}
+tr.mo-rkrow{cursor:pointer}
+tr.mo-rkrow:hover{background:var(--gray-50)}
+table.mo-drill{width:100%;border-collapse:collapse;font-size:10.5px;margin:5px 0}
+table.mo-drill th{text-align:left;padding:4px 8px;color:var(--gray-400);font-weight:700;font-size:8.5px;text-transform:uppercase}
+table.mo-drill td{padding:4px 8px;color:var(--gray-600);border-top:1px solid var(--gray-200)}
+table.mo-drill td.r{text-align:right;font-family:var(--fm)}
 @media(max-width:768px){.mi-g2{grid-template-columns:1fr}.mi-krow{grid-template-columns:1fr 1fr}}
 </style>
 
@@ -5119,12 +5133,12 @@ function authInjectLogo() {
     <div class="mi-ch"><span class="mi-ct">FOB Price &mdash; Organic vs Conventional</span>
       <div class="mi-date-ctrl"><span>Destination:</span><select id="mi-price-country" onchange="miPriceCountry()"></select></div>
       <div class="mi-ptog" id="mi-price-mode-tog"><button class="mi-pill active" onclick="miPriceMode('Both',this)">Both</button><button class="mi-pill" onclick="miPriceMode('Sea',this)">Sea</button><button class="mi-pill" onclick="miPriceMode('Air',this)">Air</button></div>
-      <div class="mi-ptog"><button class="mi-pill active" onclick="miPriceRange(26,this)">6M</button><button class="mi-pill" onclick="miPriceRange(52,this)">1Y</button><button class="mi-pill" onclick="miPriceRange(104,this)">2Y</button><button class="mi-pill" onclick="miPriceRange(0,this)">All</button></div>
+      <span id="mi-price-range-wrap"><div class="mi-ptog"><button class="mi-pill" onclick="miPriceRange(4,this)">4w</button><button class="mi-pill" onclick="miPriceRange(8,this)">8w</button><button class="mi-pill" onclick="miPriceRange(12,this)">12w</button></div> <div class="mi-ptog"><button class="mi-pill active" onclick="miPriceRange(26,this)">6M</button><button class="mi-pill" onclick="miPriceRange(52,this)">1Y</button><button class="mi-pill" onclick="miPriceRange(104,this)">2Y</button><button class="mi-pill" onclick="miPriceRange(0,this)">All</button></div></span>
     </div>
     <div class="mi-cb"><div class="mi-wrap"><canvas id="mi-price-chart"></canvas></div><div class="mi-hint" style="margin-top:6px;text-align:center">Line = 4-week moving average &middot; table below shows raw weekly</div></div>
   </div>
   <div class="mi-card">
-    <div class="mi-ch"><span class="mi-ct">Weekly Log</span><span class="mi-hint">Last 16 weeks &middot; weighted avg FOB $/lb</span></div>
+    <div class="mi-ch"><span class="mi-ct">Weekly Log</span><span class="mi-hint">Click a week to see individual shipments</span></div>
     <div style="padding:0;overflow-x:auto">
       <table class="mi-tbl"><thead><tr><th>Week</th><th class="r">Org $/lb</th><th class="r">Org Klbs</th><th class="r">Conv $/lb</th><th class="r">Conv Klbs</th><th class="r">Premium</th></tr></thead><tbody id="mi-wk-tbl"></tbody></table>
     </div>
@@ -5134,17 +5148,44 @@ function authInjectLogo() {
 <div id="mi-s-market" class="mi-sec">
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
     <span style="font-size:12px;font-weight:600;color:var(--gray-700);font-family:var(--fb)">Range:</span>
-    <div class="mi-date-ctrl"><input type="month" id="mi-mkt-from" onchange="miRenderMkt()"><span>to</span><input type="month" id="mi-mkt-to" onchange="miRenderMkt()"></div>
+    <div class="mi-ptog" id="mi-mkt-range-tog">
+      <button class="mi-pill" onclick="miMktRange(4,this)">4w</button>
+      <button class="mi-pill active" onclick="miMktRange(8,this)">8w</button>
+      <button class="mi-pill" onclick="miMktRange(12,this)">12w</button>
+    </div>
+    <div class="mi-ptog" id="mi-mkt-mode-tog">
+      <button class="mi-pill active" onclick="miMktMode('Both',this)">Both</button>
+      <button class="mi-pill" onclick="miMktMode('Sea',this)">Sea</button>
+      <button class="mi-pill" onclick="miMktMode('Air',this)">Air</button>
+    </div>
+    <div class="mi-ptog" id="mi-mkt-cat-tog">
+      <button class="mi-pill active" onclick="miMktCat('All',this)">All</button>
+      <button class="mi-pill" onclick="miMktCat('Organic',this)">Organic</button>
+      <button class="mi-pill" onclick="miMktCat('Conventional',this)">Conventional</button>
+    </div>
     <div class="mi-date-ctrl"><span>Destination:</span><select id="mi-mkt-country" onchange="miRenderMkt()"></select></div>
-    <div class="mi-ptog"><button class="mi-pill active" onclick="miMktPreset(1,this)">1M</button><button class="mi-pill" onclick="miMktPreset(3,this)">3M</button><button class="mi-pill" onclick="miMktPreset(6,this)">6M</button><button class="mi-pill" onclick="miMktPreset(12,this)">1Y</button><button class="mi-pill" onclick="miMktPreset(0,this)">All</button></div>
   </div>
+
+  <div class="mo-metricrow">
+    <div class="mo-metric">
+      <div class="mo-metric-lbl">Market Concentration</div>
+      <div class="mo-metric-val" id="mo-conc-val">-</div>
+      <div class="mo-metric-sub" id="mo-conc-sub"></div>
+    </div>
+    <div class="mo-metric">
+      <div class="mo-metric-lbl">Entrants / Dropped (vs. prior equal period)</div>
+      <div id="mo-entrants-val" style="margin-top:3px"></div>
+    </div>
+  </div>
+
   <div class="mi-g2">
     <div>
       <div class="mi-card">
         <div class="mi-ch"><span class="mi-ct">Top Exporters</span>
           <div class="mi-ptog"><button class="mi-pill active" onclick="miMktSort('lbs',this)">Volume</button><button class="mi-pill" onclick="miMktSort('usd',this)">Value</button><button class="mi-pill" onclick="miMktSort('p',this)">Price</button></div>
         </div>
-        <div style="max-height:480px;overflow-y:auto"><table class="mi-tbl"><thead><tr><th>#</th><th>Exporter</th><th class="r">M lbs</th><th class="r">$/lb</th><th class="r">$K</th></tr></thead><tbody id="mi-mkt-tbl"></tbody></table></div>
+        <span class="mi-hint">Click a row to see who they sold to</span>
+        <div style="max-height:480px;overflow-y:auto;margin-top:8px"><table class="mi-tbl"><thead><tr><th>#</th><th>Exporter</th><th class="r">M lbs</th><th class="r">$/lb</th><th class="r">$K</th></tr></thead><tbody id="mi-mkt-tbl"></tbody></table></div>
       </div>
     </div>
     <div>
@@ -5308,7 +5349,7 @@ var D={"meta": {"data_through": "2026-05-20", "total_records": 21381, "generated
 function saveD(){try{localStorage.setItem('jlz_mi_v4',JSON.stringify(D));}catch(e){}}
 var PC=null,SC=null,SVC=null,SPC=null,miInited=false,mktSortKey='lbs';
 
-var curPriceCountry='United States',curMktCountry='United States',curRangeW=26,curPriceMode='Both',curSeasMode='Both';
+var curPriceCountry='United States',curMktCountry='United States',curRangeW=26,curPriceMode='Both',curSeasMode='Both',ptDrillOpen=null;
 function ge(id){return document.getElementById(id);}
 function qa(s){return document.querySelectorAll(s);}
 function setText(id,v){var el=ge(id);if(el)el.textContent=v;}
@@ -5380,7 +5421,7 @@ function renderKPIs(){
 
 function wavg(rows){var tv=rows.reduce(function(s,r){return s+(r.v||0);},0);if(!tv)return 0;return rows.reduce(function(s,r){return s+(r.p||0)*(r.v||0);},0)/tv;}
 
-window.miPriceRange=function(n,btn){btn.closest('.mi-ptog').querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');curRangeW=n;renderPriceChart(n);};
+window.miPriceRange=function(n,btn){var wrap=btn.closest('#mi-price-range-wrap')||btn.closest('.mi-ptog');wrap.querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');curRangeW=n;renderPriceChart(n);};
 window.miPriceMode=function(m,btn){btn.closest('.mi-ptog').querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');curPriceMode=m;renderPriceChart(curRangeW);renderWeeklyTable();};
 
 // 4-week trailing moving average over a sorted (oldest-first) price series
@@ -5421,6 +5462,23 @@ function renderPriceChart(nW){
   });
 }
 
+function ptHasDetail(week){return (D.shipDet||[]).some(function(r){return r.yw===week;});}
+function ptDrillHtml(week,colspan){
+  if(!ptHasDetail(week))return '<tr><td colspan="'+colspan+'"><div style="padding:6px 10px;color:var(--gray-400);font-size:10.5px">Shipment detail available for the last ~16 weeks only.</div></td></tr>';
+  var rows=(D.shipDet||[]).filter(function(r){
+    if(r.yw!==week)return false;
+    if(curPriceMode!=='Both'&&r.mode!==curPriceMode)return false;
+    if(curPriceCountry!=='_ALL'){
+      var rowCg=MO_TOP8.indexOf(r.country)>=0?r.country:'Other';
+      if(rowCg!==curPriceCountry)return false;
+    }
+    return true;
+  });
+  if(!rows.length)return '<tr><td colspan="'+colspan+'"><div style="padding:6px 10px;color:var(--gray-400);font-size:10.5px">No shipments for this filter.</div></td></tr>';
+  var body=rows.map(function(r){return '<tr><td>'+r.exp+'</td><td>'+r.buyer+'</td><td>'+r.country+'</td><td>'+r.mode+'</td><td>'+r.cat+'</td><td class="r">'+(r.lbs/1000).toFixed(1)+'k</td><td class="r">$'+(r.usd/r.lbs).toFixed(3)+'</td></tr>';}).join('');
+  return '<tr><td colspan="'+colspan+'"><table class="mo-drill"><thead><tr><th>Exporter</th><th>Buyer</th><th>Country</th><th>Mode</th><th>Cat</th><th>Lbs</th><th>$/lb</th></tr></thead><tbody>'+body+'</tbody></table></td></tr>';
+}
+window.ptToggleDrill=function(wk){ptDrillOpen=(ptDrillOpen===wk)?null:wk;renderWeeklyTable();};
 function renderWeeklyTable(){
   var weeks=wkRows(curPriceCountry,curPriceMode);
   var oM={};weeks.filter(function(w){return w.category==='Organic';}).forEach(function(w){oM[w.year_week]=w;});
@@ -5428,63 +5486,136 @@ function renderWeeklyTable(){
   var all=[...new Set(weeks.map(function(w){return w.year_week;}))].sort().slice(-16).reverse();
   var tb=ge('mi-wk-tbl');if(!tb)return;
   tb.innerHTML=all.map(function(wk){var o=oM[wk]||{},c=cM[wk]||{};var prem=(o.p&&c.p)?((o.p-c.p)/c.p*100).toFixed(1)+'%':'-';
-    return '<tr><td style="font-weight:600">'+wk+'</td><td class="r" style="color:#0d5026;font-weight:600">'+(o.p?'$'+o.p.toFixed(4):'-')+'</td><td class="r">'+(o.v?o.v.toFixed(0):'-')+'</td><td class="r" style="color:#d97706">'+(c.p?'$'+c.p.toFixed(4):'-')+'</td><td class="r">'+(c.v?c.v.toFixed(0):'-')+'</td><td class="r"><span class="mi-bench ok">'+prem+'</span></td></tr>';
+    var arrow=(ptDrillOpen===wk)?'\u25be':'\u25b8';
+    var main='<tr><td style="font-weight:600;cursor:pointer" onclick="ptToggleDrill(\''+wk+'\')">'+arrow+' '+wk+'</td><td class="r" style="color:#0d5026;font-weight:600">'+(o.p?'$'+o.p.toFixed(4):'-')+'</td><td class="r">'+(o.v?o.v.toFixed(0):'-')+'</td><td class="r" style="color:#d97706">'+(c.p?'$'+c.p.toFixed(4):'-')+'</td><td class="r">'+(c.v?c.v.toFixed(0):'-')+'</td><td class="r"><span class="mi-bench ok">'+prem+'</span></td></tr>';
+    var drill=(ptDrillOpen===wk)?ptDrillHtml(wk,6):'';
+    return main+drill;
   }).join('');
 }
 
-function initMktDates(){
-  var max=D.meta.data_through;if(!max)return;
-  ge('mi-mkt-to').value=max.slice(0,7);
-  var d=new Date(max);d.setMonth(d.getMonth()-1);ge('mi-mkt-from').value=d.toISOString().slice(0,7);
-  var cm=ge('mi-mkt-country');if(cm)cm.value=curMktCountry;
-}
+// ==============================================================
+// MARKET OVERVIEW -- rebuilt on D.expwk (weekly, mode+cg-aware,
+// full exporter names) instead of the old monthly D.mkt. Buyer
+// drill-down reads D.shipDet (same source used by "Comprando bien?").
+// ==============================================================
+var MO_TOP8=['United States','Netherlands','Canada','Spain','United Kingdom','Germany','Italy','Dominican Republic']; // keep in sync with processVT's TOP8
+var moRangeW=8, moMode='Both', moCat='All', moSortKey='lbs', moDrillOpen=null;
 
-window.miMktPreset=function(m,btn){
-  btn.closest('.mi-ptog').querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');
-  var max=D.meta.data_through||'2026-05-21';ge('mi-mkt-to').value=max.slice(0,7);
-  if(m===0){ge('mi-mkt-from').value='2023-01';}else{var d=new Date(max);d.setMonth(d.getMonth()-m);ge('mi-mkt-from').value=d.toISOString().slice(0,7);}
-  renderMkt();
-};
-window.miRenderMkt=function(){renderMkt();};
-window.miMktSort=function(k,btn){btn.closest('.mi-ptog').querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');mktSortKey=k;renderMkt();};
+function moAllWeeks(){var s={};(D.expwk||[]).forEach(function(r){s[r.yw]=true;});return Object.keys(s).sort();}
+function moWeeksTail(n){return moAllWeeks().slice(-n);}
 
-function mktFiltered(){
-  var cm=ge('mi-mkt-country');if(cm)curMktCountry=cm.value;
-  var from=ge('mi-mkt-from').value||'2023-01',to=ge('mi-mkt-to').value||'2026-12';
-  var cc=curMktCountry;
-  return (D.mkt||[]).filter(function(r){
-    if(r.year_month<from||r.year_month>to)return false;
-    if(cc!=='_ALL'&&r.cgroup!==cc)return false;
-    return true;
+function moRanking(weeks,mode,cat,cg){
+  var wset={};weeks.forEach(function(w){wset[w]=true;});
+  var agg={};
+  (D.expwk||[]).forEach(function(r){
+    if(r.cg!==cg)return;
+    if(!wset[r.yw])return;
+    if(cat!=='All'&&r.cat!==cat)return;
+    if(mode!=='Both'&&r.mode!==mode)return;
+    if(!agg[r.exp])agg[r.exp]={lbs:0,usd:0,n:0};
+    agg[r.exp].lbs+=r.lbs;agg[r.exp].usd+=r.usd;agg[r.exp].n+=(r.n||0);
   });
+  return Object.keys(agg).map(function(name){var a=agg[name];return{name:name,lbs:a.lbs,usd:a.usd,n:a.n,p:a.lbs?a.usd/a.lbs:0};});
+}
+function moConcentration(ranking){
+  var total=ranking.reduce(function(s,r){return s+r.lbs;},0);
+  var sorted=ranking.slice().sort(function(a,b){return b.lbs-a.lbs;});
+  var top3=sorted.slice(0,3).reduce(function(s,r){return s+r.lbs;},0);
+  var top5=sorted.slice(0,5).reduce(function(s,r){return s+r.lbs;},0);
+  return{top3pct:total?top3/total*100:0,top5pct:total?top5/total*100:0,n:ranking.length};
+}
+function moEntrants(curWeeks,priorWeeks,mode,cat,cg){
+  var curSet={},priorSet={};
+  (D.expwk||[]).forEach(function(r){
+    if(r.cg!==cg)return;
+    if(cat!=='All'&&r.cat!==cat)return;
+    if(mode!=='Both'&&r.mode!==mode)return;
+    if(curWeeks.indexOf(r.yw)>=0)curSet[r.exp]=true;
+    if(priorWeeks.indexOf(r.yw)>=0)priorSet[r.exp]=true;
+  });
+  var entrants=Object.keys(curSet).filter(function(n){return !priorSet[n];});
+  var dropped=Object.keys(priorSet).filter(function(n){return !curSet[n];});
+  return{entrants:entrants,dropped:dropped};
+}
+function moBuyersFor(name,weeks,mode,cat,cg){
+  var wset={};weeks.forEach(function(w){wset[w]=true;});
+  var byBuyer={};
+  (D.shipDet||[]).forEach(function(r){
+    if(r.exp!==name)return;
+    if(!wset[r.yw])return;
+    if(cat!=='All'&&r.cat!==cat)return;
+    if(mode!=='Both'&&r.mode!==mode)return;
+    if(cg!=='_ALL'){
+      var rowCg=MO_TOP8.indexOf(r.country)>=0?r.country:'Other';
+      if(rowCg!==cg)return;
+    }
+    var key=r.buyer+'|'+r.country;
+    if(!byBuyer[key])byBuyer[key]={buyer:r.buyer,country:r.country,lbs:0,usd:0};
+    byBuyer[key].lbs+=r.lbs;byBuyer[key].usd+=r.usd;
+  });
+  return Object.values(byBuyer).sort(function(a,b){return b.lbs-a.lbs;});
+}
+function moShortName(name){return name.length>28?name.slice(0,28)+'...':name;}
+
+window.miMktRange=function(n,btn){btn.closest('.mi-ptog').querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');moRangeW=n;moDrillOpen=null;renderMkt();};
+window.miMktMode=function(m,btn){btn.closest('.mi-ptog').querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');moMode=m;renderMkt();};
+window.miMktCat=function(c,btn){btn.closest('.mi-ptog').querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');moCat=c;renderMkt();};
+window.miMktSort=function(k,btn){btn.closest('.mi-ptog').querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');moSortKey=k;renderMkt();};
+window.miRenderMkt=function(){curMktCountry=ge('mi-mkt-country').value;renderMkt();};
+window.moToggleDrill=function(name){moDrillOpen=(moDrillOpen===name)?null:name;renderMkt();};
+
+function initMktDates(){var cm=ge('mi-mkt-country');if(cm)cm.value=curMktCountry;}
+
+function moDrillHtml(name,weeks,colspan){
+  var buyers=moBuyersFor(name,weeks,moMode,moCat,curMktCountry);
+  if(!buyers.length)return '<tr><td colspan="'+colspan+'"><div style="padding:6px 10px;color:var(--gray-400);font-size:10.5px">No shipments for this filter.</div></td></tr>';
+  var body=buyers.map(function(b){return '<tr><td>'+b.buyer+'</td><td>'+b.country+'</td><td class="r">'+(b.lbs/1000).toFixed(1)+'k</td><td class="r">$'+(b.usd/b.lbs).toFixed(3)+'</td></tr>';}).join('');
+  return '<tr><td colspan="'+colspan+'"><table class="mo-drill"><thead><tr><th>Buyer</th><th>Country</th><th>Lbs</th><th>$/lb</th></tr></thead><tbody>'+body+'</tbody></table></td></tr>';
 }
 
 function renderMkt(){
-  var rows=mktFiltered();var eMap={};
-  rows.forEach(function(r){
-    if(!eMap[r.e])eMap[r.e]={e:r.e,tag:r.supplier_tag,lbs:0,usd:0};eMap[r.e].lbs+=r.lbs;eMap[r.e].usd+=r.usd;});
-  var agg=Object.values(eMap).map(function(e){e.p=e.lbs?e.usd/e.lbs:0;return e;});
-  agg.sort(function(a,b){return b[mktSortKey]-a[mktSortKey];});
-  var MY=['Anawi','La Grama','Elisur','Hamilton','Interloom'];
-  var tb=ge('mi-mkt-tbl');if(!tb)return;
-  tb.innerHTML=agg.length?agg.map(function(row,i){var isMine=MY.includes(row.tag);var short=row.e.length>28?row.e.slice(0,28)+'...':row.e;
-    return '<tr><td style="color:var(--gray-400);font-size:10px">'+(i+1)+'</td><td class="'+(isMine?'mine':'')+'" title="'+row.e+'">'+short+'</td><td class="r">'+(row.lbs/1e6).toFixed(2)+'</td><td class="r">'+(row.p?'$'+row.p.toFixed(3):'-')+'</td><td class="r">'+(row.usd?(row.usd/1000).toFixed(0):'-')+'</td></tr>';
-  }).join(''):'<tr><td colspan="5" style="text-align:center;color:var(--gray-400);padding:16px">No shipments to this destination in range</td></tr>';
-  if(SC)renderShareChart(agg);
+  var weeks=moWeeksTail(moRangeW);
+  var cg=curMktCountry||'_ALL';
+  var ranking=moRanking(weeks,moMode,moCat,cg);
+
+  var conc=moConcentration(ranking);
+  var cv=ge('mo-conc-val'),cs=ge('mo-conc-sub');
+  if(cv)cv.textContent='Top 3: '+conc.top3pct.toFixed(0)+'%';
+  if(cs)cs.textContent='Top 5: '+conc.top5pct.toFixed(0)+'% of volume \u00b7 '+conc.n+' active exporters this period';
+
+  var allW=moAllWeeks();var idx=allW.indexOf(weeks[0]);
+  var priorWeeks=idx>=0?allW.slice(Math.max(0,idx-moRangeW),idx):[];
+  var ent=moEntrants(weeks,priorWeeks,moMode,moCat,cg);
+  var ev=ge('mo-entrants-val');
+  if(ev){
+    var html='';
+    if(ent.entrants.length)html+=ent.entrants.slice(0,5).map(function(n){return '<span class="mo-chip new">+ '+moShortName(n)+'</span>';}).join('');
+    if(ent.dropped.length)html+=ent.dropped.slice(0,5).map(function(n){return '<span class="mo-chip dropped">- '+moShortName(n)+'</span>';}).join('');
+    ev.innerHTML=html||'<span style="color:var(--gray-400);font-size:11px">No changes vs. prior period</span>';
+  }
+
+  ranking.sort(function(a,b){return b[moSortKey]-a[moSortKey];});
+  var tb=ge('mi-mkt-tbl');
+  if(tb){
+    tb.innerHTML=ranking.length?ranking.map(function(row,i){
+      var short=moShortName(row.name);
+      var main='<tr class="mo-rkrow" onclick="moToggleDrill(\''+row.name.replace(/'/g,"\\'")+'\')"><td style="color:var(--gray-400);font-size:10px">'+(i+1)+'</td><td title="'+row.name.replace(/"/g,'&quot;')+'">'+short+'</td><td class="r">'+(row.lbs/1e6).toFixed(2)+'</td><td class="r">'+(row.p?'$'+row.p.toFixed(3):'-')+'</td><td class="r">'+(row.usd?(row.usd/1000).toFixed(0):'-')+'</td></tr>';
+      var drill=(moDrillOpen===row.name)?moDrillHtml(row.name,weeks,5):'';
+      return main+drill;
+    }).join(''):'<tr><td colspan="5" style="text-align:center;color:var(--gray-400);padding:16px">No shipments to this destination in range</td></tr>';
+  }
+  renderShareChart(ranking);
 }
 
-function renderShareChart(agg){
-  if(!agg){var rows=mktFiltered();var eMap={};
-    rows.forEach(function(r){if(!eMap[r.e])eMap[r.e]={e:r.e,tag:r.supplier_tag,lbs:0};eMap[r.e].lbs+=r.lbs;});
-    agg=Object.values(eMap).sort(function(a,b){return b.lbs-a.lbs;});}
-  var top8=agg.slice(0,8);var other=agg.slice(8).reduce(function(s,r){return s+r.lbs;},0);
-  var labels=top8.map(function(r){return r.e.split(' ')[0];});labels.push('Other');
-  var vals=top8.map(function(r){return r.lbs;});vals.push(other);
-  var MY=['Anawi','La Grama','Elisur','Hamilton','Interloom'];
-  var pal=['#16a34a','#4ade80','#a3e635','#facc15','#fb923c','#f87171','#a78bfa','#60a5fa'];
-  var colors=top8.map(function(r,i){return MY.includes(r.tag)?'#0d5026':pal[i];});colors.push('#d1d5db');
+function renderShareChart(ranking){
+  if(!ranking){var weeks=moWeeksTail(moRangeW);ranking=moRanking(weeks,moMode,moCat,curMktCountry||'_ALL');}
+  var sorted=ranking.slice().sort(function(a,b){return b.lbs-a.lbs;});
+  var top8=sorted.slice(0,8);var other=sorted.slice(8).reduce(function(s,r){return s+r.lbs;},0);
+  var labels=top8.map(function(r){return r.name.split(' ')[0];});if(other>0)labels.push('Other');
+  var vals=top8.map(function(r){return r.lbs;});if(other>0)vals.push(other);
+  var pal=['#0d5026','#16a34a','#4ade80','#a3e635','#facc15','#fb923c','#f87171','#a78bfa','#d1d5db'];
   var ctx=ge('mi-share-chart');if(!ctx)return;miKill(ctx);
-  SC=new Chart(ctx.getContext('2d'),{type:'doughnut',data:{labels:labels,datasets:[{data:vals,backgroundColor:colors,borderWidth:2,borderColor:'#fff'}]},
+  SC=new Chart(ctx.getContext('2d'),{type:'doughnut',data:{labels:labels,datasets:[{data:vals,backgroundColor:pal,borderWidth:2,borderColor:'#fff'}]},
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{font:{size:10},boxWidth:10}},tooltip:{callbacks:{label:function(c){return ' '+(c.parsed/1e6).toFixed(2)+'M lbs';}}}}}});
 }
 
@@ -5568,7 +5699,13 @@ function processVT(rows,cb){
   // Used by the Formal/Informal view so the formal/informal split can be
   // reclassified live in the UI without re-parsing the source file.
   var ewMap={};
-  fresh.forEach(function(r){if(!r._yw)return;var exp=(r['Exporter']||'').trim();if(!exp)return;var k=r._yw+'|'+r._cat+'|'+exp+'|'+r._mode;if(!ewMap[k])ewMap[k]={yw:r._yw,cat:r._cat,exp:exp,mode:r._mode,_l:0,_u:0,_n:0};ewMap[k]._l+=r._lbs;ewMap[k]._u+=r._usd;ewMap[k]._n++;});
+  fresh.forEach(function(r){if(!r._yw)return;var exp=(r['Exporter']||'').trim();if(!exp)return;
+    [r._cg,'_ALL'].forEach(function(cg){
+      var k=r._yw+'|'+r._cat+'|'+exp+'|'+r._mode+'|'+cg;
+      if(!ewMap[k])ewMap[k]={yw:r._yw,cat:r._cat,exp:exp,mode:r._mode,cg:cg,_l:0,_u:0,_n:0};
+      ewMap[k]._l+=r._lbs;ewMap[k]._u+=r._usd;ewMap[k]._n++;
+    });
+  });
   // Shipment-detail aggregate (exporter x week x mode x cat x buyer x country),
   // kept for a SHORT rolling window only (trimmed in mergeD) so buy-side drill-down
   // can show "who bought from whom, at what price" for recent weeks without
@@ -5580,7 +5717,7 @@ function processVT(rows,cb){
     sdMap[k]._l+=r._lbs;sdMap[k]._u+=r._usd;
   });
   var shipDet=Object.values(sdMap).map(function(w){return{yw:w.yw,mode:w.mode,cat:w.cat,exp:w.exp,buyer:w.buyer,country:w.country,lbs:Math.round(w._l),usd:Math.round(w._u)};});
-  var expwk=Object.values(ewMap).filter(function(w){return w.yw>='2022-W01';}).map(function(w){return{yw:w.yw,cat:w.cat,exp:w.exp,mode:w.mode,lbs:Math.round(w._l),usd:Math.round(w._u),n:w._n};});
+  var expwk=Object.values(ewMap).filter(function(w){return w.yw>='2022-W01';}).map(function(w){return{yw:w.yw,cat:w.cat,exp:w.exp,mode:w.mode,cg:w.cg,lbs:Math.round(w._l),usd:Math.round(w._u),n:w._n};});
   // ms4 by country group
   var cut4=new Date(maxD);cut4.setDate(cut4.getDate()-28);var ms4={};
   fresh.filter(function(r){return r._date>=cut4;}).forEach(function(r){
@@ -5611,7 +5748,7 @@ function mergeD(ex,inc){
   var weekly=Object.values(wMap).filter(function(w){return w.year_week<=_nowW;}).sort(function(a,b){return a.year_week>b.year_week?1:-1;});
   // Exporter-level weekly (expwk): merge by exporter+week+category+mode, then keep
   // only a rolling window so localStorage does not grow unbounded across uploads.
-  var ewMap={};(ex.expwk||[]).forEach(function(w){ewMap[w.yw+'|'+w.cat+'|'+w.exp+'|'+(w.mode||'?')]=w;});(inc.expwk||[]).forEach(function(w){ewMap[w.yw+'|'+w.cat+'|'+w.exp+'|'+(w.mode||'?')]=w;});
+  var ewMap={};(ex.expwk||[]).forEach(function(w){ewMap[w.yw+'|'+w.cat+'|'+w.exp+'|'+(w.mode||'?')+'|'+(w.cg||'_ALL')]=w;});(inc.expwk||[]).forEach(function(w){ewMap[w.yw+'|'+w.cat+'|'+w.exp+'|'+(w.mode||'?')+'|'+(w.cg||'_ALL')]=w;});
   var allEw=Object.values(ewMap).filter(function(w){return w.yw<=_nowW;});
   var ewWeeks=[];var _seen={};allEw.forEach(function(w){if(!_seen[w.yw]){_seen[w.yw]=1;ewWeeks.push(w.yw);}});ewWeeks.sort();
   var EW_MAX_WEEKS=60;
@@ -5679,7 +5816,7 @@ function mifRoster(){
   var cut=new Date();cut.setDate(cut.getDate()-365);
   var cutW=isoWk(cut);
   var agg={};
-  (D.expwk||[]).forEach(function(r){if(r.yw<cutW)return;if(!agg[r.exp])agg[r.exp]=0;agg[r.exp]+=r.lbs;});
+  (D.expwk||[]).forEach(function(r){if(r.cg!=='_ALL')return;if(r.yw<cutW)return;if(!agg[r.exp])agg[r.exp]=0;agg[r.exp]+=r.lbs;});
   return Object.keys(agg).map(function(name){return{name:name,lbs12mo:agg[name]};}).sort(function(a,b){return b.lbs12mo-a.lbs12mo;});
 }
 function mifRosterItem(name){var r=mifRoster();for(var i=0;i<r.length;i++)if(r[i].name===name)return r[i];return null;}
@@ -5753,6 +5890,7 @@ function mibAggMatch(matchFn,weeks,mode,cat){
   var wset={};weeks.forEach(function(w){wset[w]=true;});
   var out={};
   (D.expwk||[]).forEach(function(r){
+    if(r.cg!=='_ALL')return;
     if(!wset[r.yw])return;
     if(cat&&r.cat!==cat)return;
     if(mode!=='Both'&&r.mode!==mode)return;
@@ -5775,6 +5913,7 @@ function mibTop5Informal(){
   var cutW=isoWk(cut);
   var agg={};
   (D.expwk||[]).forEach(function(r){
+    if(r.cg!=='_ALL')return;
     if(r.yw<cutW)return;
     if(!mibIsInformal(r.exp))return;
     if(!agg[r.exp])agg[r.exp]=0;
