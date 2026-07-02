@@ -5117,8 +5117,8 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
 <div class="mi-subnav">
   <button class="mi-snb active" onclick="miSec('prices',this)">Price Trends</button>
   <button class="mi-snb" onclick="miSec('market',this)">Market Overview</button>
-  <button class="mi-snb" onclick="miSec('seasonality',this)">Seasonality</button>
-  <button class="mi-snb" onclick="miSec('formal',this)">Comprando bien?</button>
+  <button class="mi-snb" onclick="miSec('seasonality',this)">Historical View</button>
+  <button class="mi-snb" onclick="miSec('formal',this)">Procurement Intelligence</button>
 </div>
 
 <div id="mi-s-prices" class="mi-sec active">
@@ -5195,16 +5195,44 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
 </div>
 
 <div id="mi-s-seasonality" class="mi-sec">
-  <div class="mi-card">
-    <div class="mi-ch"><span class="mi-ct">Avg Weekly Volume by ISO Week &mdash; Organic</span><span class="mi-hint">Multi-year avg</span><div class="mi-ptog" id="mi-seas-mode-tog" style="margin-left:auto"><button class="mi-pill active" onclick="miSeasMode('Both',this)">Both</button><button class="mi-pill" onclick="miSeasMode('Sea',this)">Sea</button><button class="mi-pill" onclick="miSeasMode('Air',this)">Air</button></div></div>
-    <div class="mi-cb">
-      <div class="mi-wrap" style="height:240px"><canvas id="mi-seas-vol-chart"></canvas></div>
-      <div style="margin-top:10px;padding:9px 13px;background:#f0fdf4;border-radius:6px;font-size:11px;color:var(--gray-700);font-family:var(--fb)">
-        <strong style="color:var(--jlz)">Peak: Weeks 43-47</strong> (Oct-Nov) &mdash; order 6+ weeks ahead. &nbsp;&nbsp;<strong style="color:#92400e">Low: Weeks 14-21</strong> (Apr-May) &mdash; price opportunity window.
-      </div>
+  <style>
+  .mih-yearchip{padding:5px 11px;border-radius:14px;border:2px solid var(--gray-200);background:#fff;font-size:11px;font-weight:700;cursor:pointer}
+  .mih-yearchip.on{color:#fff}
+  .mih-statcard{background:linear-gradient(135deg,#f0fdf4 0%,#ecfdf5 100%);border:1px solid #bbf7d0;border-radius:9px;padding:14px 18px;margin-bottom:12px}
+  .mih-stat-num{font-family:var(--fd);font-size:24px;font-weight:800;color:var(--jlz-dark)}
+  .mih-stat-sub{font-size:11.5px;color:var(--gray-600);margin-top:2px}
+  .mih-airbar{display:inline-block;height:7px;border-radius:3px;background:#d97706;vertical-align:middle}
+  </style>
+
+  <div class="callout" style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:5px;padding:10px 13px;font-size:11.5px;margin-bottom:10px;line-height:1.5">
+    A ginger campaign runs June through the following May, not Jan-Dec -- so weeks are grouped by campaign year here (e.g. "2024-25" = June 2024 through May 2025) instead of calendar year. This is why this replaced the old Seasonality averages: those blended the tail of one campaign with the start of the next.
+  </div>
+
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+    <span style="font-size:12px;font-weight:600;color:var(--gray-700);font-family:var(--fb)">Campaigns:</span>
+    <div class="mi-ptog" id="mih-year-picker"></div>
+    <div class="mi-ptog" id="mih-metric-tog">
+      <button class="mi-pill active" onclick="mihSetMetric('lbs',this)">Volume</button>
+      <button class="mi-pill" onclick="mihSetMetric('p',this)">Price $/lb</button>
+    </div>
+    <div class="mi-ptog" id="mih-mode-tog">
+      <button class="mi-pill active" onclick="mihSetMode('Both',this)">Both</button>
+      <button class="mi-pill" onclick="mihSetMode('Sea',this)">Sea</button>
+      <button class="mi-pill" onclick="mihSetMode('Air',this)">Air</button>
     </div>
   </div>
-  <div class="mi-card"><div class="mi-ch"><span class="mi-ct">Avg FOB Price by Season &mdash; Organic</span><span class="mi-hint">Multi-year avg $/lb</span></div><div class="mi-cb"><div class="mi-wrap" style="height:180px"><canvas id="mi-seas-price-chart"></canvas></div></div></div>
+
+  <div class="mih-statcard" id="mih-statcard"></div>
+
+  <div class="mi-card">
+    <div class="mi-ch"><span class="mi-ct" id="mih-chart-title">Volume, week since June 1 -- campaign over campaign</span><span class="mi-hint">Organic &middot; week 1 = first week of June</span></div>
+    <div class="mi-cb"><div class="mi-wrap"><canvas id="mih-chart"></canvas></div></div>
+  </div>
+
+  <div class="mi-card">
+    <div class="mi-ch"><span class="mi-ct">Campaign health</span><span class="mi-hint">Air-bridge % = share of the campaign's last ~13 weeks (Mar-May) that moved by air -- how early the harvest ran out</span></div>
+    <div class="mi-cb"><table class="mi-tbl"><thead><tr><th>Campaign</th><th class="r">Total Sea</th><th class="r">Total Air</th><th class="r">Air-bridge</th><th class="r">Total volume</th></tr></thead><tbody id="mih-health-tbl"></tbody></table></div>
+  </div>
 </div>
 
 <div id="mi-s-formal" class="mi-sec">
@@ -5213,125 +5241,130 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
   .mib-ctrl-grp{display:flex;flex-direction:column;gap:5px}
   .mib-ctrl-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700}
   .mib-ctrl-grp input[type=date]{border:1px solid var(--gray-300);border-radius:5px;padding:6px 8px;font-family:var(--fb);font-size:12px}
+  .mib-wkref{font-size:9.5px;color:var(--gray-400);font-family:var(--fm);margin-top:2px}
   .mib-datesep{color:var(--gray-400);align-self:center;margin-top:14px;font-size:11px}
   .mib-quickbtn{padding:6px 11px;border-radius:6px;border:1px solid var(--jlz-mid,#1a6b35);background:var(--jlz-light,#e6f0e9);color:var(--jlz-dark,#08381a);font-size:11px;font-weight:700;cursor:pointer}
   .mib-quickbtn.alt{background:var(--white);color:var(--jlz-mid,#1a6b35)}
-  .mib-headline{background:linear-gradient(135deg,#f0fdf4 0%,#ecfdf5 100%);border:1px solid #bbf7d0;border-radius:9px;padding:12px 16px;margin-bottom:10px;font-size:12.5px}
-  .mib-hl-row{padding:3px 0}
-  .mib-hl-tag{font-size:9px;font-weight:700;padding:1px 7px;border-radius:8px;white-space:nowrap;margin-left:4px}
-  .mib-hl-tag.up{background:#fee2e2;color:#b91c1c} .mib-hl-tag.dn{background:#dcfce7;color:#166534} .mib-hl-tag.neu{background:var(--gray-100);color:var(--gray-500)}
-  .mib-volcard{background:var(--white);border:1px solid var(--gray-200);border-radius:5px;padding:9px 13px;margin-bottom:12px;font-size:11px;color:var(--gray-600)}
-  .mib-tabbar{display:flex;gap:4px;margin-bottom:10px;border-bottom:2px solid var(--gray-100)}
-  .mib-tabbtn{padding:8px 14px;border:none;background:none;font-family:var(--fb);font-weight:600;font-size:12px;color:var(--gray-500);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px}
-  .mib-tabbtn.active{color:var(--jlz-dark,#08381a);border-bottom-color:var(--jlz,#0d5026)}
-  .mib-entsel{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
-  .mib-entbtn{padding:5px 11px;border-radius:14px;border:1px solid var(--gray-200);background:var(--white);font-size:10.5px;font-weight:600;cursor:pointer;color:var(--gray-600)}
-  .mib-entbtn.active{background:var(--jlz-dark,#08381a);border-color:var(--jlz-dark,#08381a);color:#fff}
-  table.mib-wk{width:100%;border-collapse:collapse;font-size:11px}
-  table.mib-wk th{text-align:right;padding:6px 8px;font-size:8.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-400);border-bottom:1px solid var(--gray-200);font-weight:700}
-  table.mib-wk th:first-child,table.mib-wk td:first-child{text-align:left}
-  table.mib-wk td{text-align:right;padding:6px 8px;border-bottom:1px solid var(--gray-100);font-family:var(--fm);color:var(--gray-700)}
-  table.mib-wk .n{color:var(--gray-400);font-size:9px}
-  .mib-drilltbl{width:100%;border-collapse:collapse;font-size:10px;margin:5px 0}
-  .mib-drilltbl th{text-align:left;padding:3px 7px;color:var(--gray-400);font-weight:700;font-size:8px;text-transform:uppercase}
-  .mib-drilltbl td{padding:3px 7px;color:var(--gray-600);border-top:1px solid var(--gray-200)}
-  .mib-drilltbl td.r{text-align:right;font-family:var(--fm)}
-  .mib-fobset{background:var(--gray-50);border:1px solid var(--gray-100);border-radius:5px;padding:10px 13px;margin-bottom:12px}
+  .mib-gapcard{background:linear-gradient(135deg,#f0fdf4 0%,#ecfdf5 100%);border:1px solid #bbf7d0;border-radius:9px;padding:16px 20px;margin-bottom:12px}
+  .mib-gap-main{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  .mib-gap-num{font-family:var(--fd);font-size:28px;font-weight:800}
+  .mib-gap-num.close{color:#15803d} .mib-gap-num.wide{color:#dc2626} .mib-gap-num.flat{color:var(--gray-500)}
+  .mib-gap-sub{font-size:12px;color:var(--gray-600)}
+  .mib-gap-trend{font-size:11px;font-weight:700;padding:2px 9px;border-radius:12px}
+  .mib-gap-trend.closing{background:#dcfce7;color:#166534} .mib-gap-trend.widening{background:#fee2e2;color:#b91c1c} .mib-gap-trend.flat{background:var(--gray-100);color:var(--gray-500)}
+  .mib-fobset{background:var(--gray-50);border:1px solid var(--gray-100);border-radius:5px;padding:10px 13px}
   .mib-fobrow{display:flex;align-items:center;gap:9px;padding:5px 0;border-bottom:1px solid var(--gray-100);flex-wrap:wrap}
   .mib-fobrow:last-child{border-bottom:none}
   .mib-fobrow .nm{font-weight:700;min-width:70px;font-size:11.5px}
   .mib-fobrow .ic{font-size:8.5px;font-weight:700;padding:1px 6px;border-radius:6px;background:var(--gray-200);color:var(--gray-600)}
   .mib-fobrow label{font-size:10px;color:var(--gray-500)}
   .mib-fobrow input[type=number]{width:65px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-family:var(--fm);font-size:11px}
+  .mib-searchbox{width:100%;padding:8px 11px;border:1px solid var(--gray-300);border-radius:5px;font-family:var(--fb);font-size:12px;margin-bottom:9px;box-sizing:border-box}
+  .mib-roster{max-height:230px;overflow-y:auto;border:1px solid var(--gray-100);border-radius:5px}
+  .mib-roster-row{display:flex;align-items:center;gap:9px;padding:7px 11px;border-bottom:1px solid var(--gray-100);font-size:11.5px;cursor:pointer}
+  .mib-roster-row:last-child{border-bottom:none}
+  .mib-roster-row:hover{background:var(--gray-50)}
+  .mib-roster-row.checked{background:var(--jlz-light)}
+  .mib-roster-row input{margin:0}
+  .mib-roster-row .rname{flex:1}
+  .mib-roster-row .rtag{font-size:8.5px;font-weight:700;padding:1px 6px;border-radius:6px}
+  .mib-rtag.Formal{background:var(--jlz-light);color:var(--jlz-dark)}
+  .mib-rtag.Informal{background:var(--gray-100);color:var(--gray-500)}
+  .mib-rtag.Mine{background:#fffbeb;color:#d97706}
+  .mib-roster-row .rvol{color:var(--gray-400);font-family:var(--fm);font-size:10px;white-space:nowrap}
+  .mib-selchips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;min-height:26px}
+  .mib-selchip{display:inline-flex;align-items:center;gap:6px;border-radius:14px;padding:4px 5px 4px 11px;font-size:11px;font-weight:600;color:#fff}
+  .mib-selchip button{border:none;background:rgba(255,255,255,.3);color:#fff;width:15px;height:15px;border-radius:50%;cursor:pointer;font-size:10px;line-height:1}
+  .mib-legend{font-size:10.5px;color:var(--gray-500);margin-top:6px;line-height:1.6}
+  table.mib-wk{width:100%;border-collapse:collapse;font-size:10.5px}
+  table.mib-wk th{text-align:right;padding:6px 7px;font-size:8.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--gray-400);border-bottom:1px solid var(--gray-200);font-weight:700}
+  table.mib-wk th:first-child,table.mib-wk td:first-child{text-align:left}
+  table.mib-wk td{text-align:right;padding:6px 7px;border-bottom:1px solid var(--gray-100);font-family:var(--fm);color:var(--gray-700)}
+  .mib-drilltbl{width:100%;border-collapse:collapse;font-size:10px;margin:5px 0}
+  .mib-drilltbl th{text-align:left;padding:3px 7px;color:var(--gray-400);font-weight:700;font-size:8px;text-transform:uppercase}
+  .mib-drilltbl td{padding:3px 7px;color:var(--gray-600);border-top:1px solid var(--gray-200)}
+  .mib-drilltbl td.r{text-align:right;font-family:var(--fm)}
   .mib-tagex{background:#fffbeb;color:#d97706;border:1px solid #fde68a;font-size:8.5px;font-weight:700;padding:2px 7px;border-radius:8px;white-space:nowrap}
-  .mib-callout{background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:5px;padding:9px 12px;font-size:11px;margin-bottom:10px;line-height:1.5}
   @media(max-width:768px){.mib-ctrlbar{flex-direction:column;align-items:stretch}.mib-datesep{display:none}}
   </style>
 
   <div class="mib-ctrlbar">
-    <div class="mib-ctrl-grp"><span class="mib-ctrl-lbl">Desde</span><input type="date" id="mib-from"></div>
+    <div class="mib-ctrl-grp"><span class="mib-ctrl-lbl">From</span><input type="date" id="mib-from"><span class="mib-wkref" id="mib-wkref-from"></span></div>
     <span class="mib-datesep">&rarr;</span>
-    <div class="mib-ctrl-grp"><span class="mib-ctrl-lbl">Hasta</span><input type="date" id="mib-to"></div>
-    <button class="mib-quickbtn" onclick="mibQuickRange(2)">Ultimas 2 semanas</button>
-    <button class="mib-quickbtn alt" onclick="mibQuickRange(4)">4 semanas</button>
-    <button class="mib-quickbtn alt" onclick="mibQuickRange(12)">12 semanas</button>
-    <div class="mib-ctrl-grp"><span class="mib-ctrl-lbl">Modo</span>
+    <div class="mib-ctrl-grp"><span class="mib-ctrl-lbl">To</span><input type="date" id="mib-to"><span class="mib-wkref" id="mib-wkref-to"></span></div>
+    <button class="mib-quickbtn" onclick="mibQuickRange(4)">Last 4 weeks</button>
+    <button class="mib-quickbtn alt" onclick="mibQuickRange(8)">Last 8 weeks</button>
+    <button class="mib-quickbtn alt" onclick="mibQuickRange(12)">Last 12 weeks</button>
+    <button class="mib-quickbtn alt" onclick="mibQuickCampaign()">This campaign</button>
+    <div class="mib-ctrl-grp"><span class="mib-ctrl-lbl">Mode</span>
       <div class="mi-ptog" id="mib-mode-tog">
-        <button class="mi-pill" data-m="Air" onclick="mibSetMode('Air',this)">Aereo</button>
-        <button class="mi-pill" data-m="Sea" onclick="mibSetMode('Sea',this)">Maritimo</button>
-        <button class="mi-pill active" data-m="Both" onclick="mibSetMode('Both',this)">Ambos</button>
+        <button class="mi-pill" data-m="Air" onclick="mibSetMode('Air',this)">Air</button>
+        <button class="mi-pill" data-m="Sea" onclick="mibSetMode('Sea',this)">Sea</button>
+        <button class="mi-pill active" data-m="Both" onclick="mibSetMode('Both',this)">Both</button>
       </div>
     </div>
-    <div class="mib-ctrl-grp"><span class="mib-ctrl-lbl">Destino</span>
+    <div class="mib-ctrl-grp"><span class="mib-ctrl-lbl">Destination</span>
       <div class="mi-ptog" id="mib-dest-tog">
-        <button class="mi-pill active" data-d="World" onclick="mibSetDest('World',this)">Mundo</button>
-        <button class="mi-pill" data-d="United States" onclick="mibSetDest('United States',this)">Solo EEUU</button>
+        <button class="mi-pill active" data-d="_ALL" onclick="mibSetDest('_ALL',this)">World</button>
+        <button class="mi-pill" data-d="United States" onclick="mibSetDest('United States',this)">US only</button>
+      </div>
+    </div>
+    <div class="mib-ctrl-grp"><span class="mib-ctrl-lbl">Category</span>
+      <div class="mi-ptog" id="mib-cat-tog">
+        <button class="mi-pill active" data-c="Organic" onclick="mibSetCat('Organic',this)">Organic</button>
+        <button class="mi-pill" data-c="Conventional" onclick="mibSetCat('Conventional',this)">Conventional</button>
       </div>
     </div>
   </div>
 
-  <div class="mib-headline" id="mib-headline"></div>
-  <div class="mib-volcard" id="mib-volcard"></div>
+  <div class="mib-gapcard" id="mib-gapcard"></div>
 
-  <div class="mib-tabbar">
-    <button class="mib-tabbtn active" onclick="mibSetLayer('market',this)">Mercado (Formal vs Informal)</button>
-    <button class="mib-tabbtn" onclick="mibSetLayer('top5',this)">Top 5 Informal</button>
-    <button class="mib-tabbtn" onclick="mibSetLayer('mysup',this)">Mis proveedores</button>
+  <div class="mi-card">
+    <div class="mi-ch"><span class="mi-ct">CIF/DDP to FOB conversion</span><span class="mi-hint">You control these numbers -- no default is invented here</span></div>
+    <div class="mi-cb"><div class="mib-fobset" id="mib-fob-settings"></div></div>
   </div>
 
-  <div id="mib-layer-market" class="mib-layer">
-    <div class="mi-card">
-      <div class="mi-ch"><span class="mi-ct">Formal vs. Informal &mdash; semana a semana</span><span class="mi-hint">n = cantidad de embarques detras de cada precio</span></div>
-      <div class="mi-cb">
-        <div class="mi-wrap"><canvas id="mib-chart-market"></canvas></div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:12px">
-          <div><div class="mi-hint" style="margin-bottom:6px;font-weight:700">FORMAL</div><table class="mib-wk"><thead><tr><th>Semana</th><th>$/lb</th><th>n</th></tr></thead><tbody id="mib-tbl-market-formal"></tbody></table></div>
-          <div><div class="mi-hint" style="margin-bottom:6px;font-weight:700">INFORMAL</div><table class="mib-wk"><thead><tr><th>Semana</th><th>$/lb</th><th>n</th></tr></thead><tbody id="mib-tbl-market-informal"></tbody></table></div>
-        </div>
+  <div class="mi-card">
+    <div class="mi-ch"><span class="mi-ct">Compare exporters</span><span class="mi-hint">Pick up to 6, sorted by trailing-12mo volume</span></div>
+    <div class="mi-cb">
+      <div style="display:flex;gap:8px;margin-bottom:9px">
+        <input class="mib-searchbox" id="mib-roster-search" placeholder="Search exporter..." style="margin-bottom:0" oninput="mibRenderEntityRoster(this.value)">
+        <button class="mib-quickbtn alt" style="white-space:nowrap" onclick="mibAddMySuppliers()">+ Add my suppliers</button>
       </div>
+      <div class="mib-roster" id="mib-entity-roster"></div>
     </div>
   </div>
 
-  <div id="mib-layer-top5" class="mib-layer" style="display:none">
-    <div class="mi-card">
-      <div class="mi-ch"><span class="mi-ct">Top 5 informal por volumen</span><span class="mi-hint">Trailing 12 meses, ventana estable</span></div>
-      <div class="mi-cb">
-        <div class="mib-entsel" id="mib-top5-sel"></div>
-        <div class="mi-wrap"><canvas id="mib-chart-top5"></canvas></div>
-        <table class="mib-wk" style="margin-top:10px"><thead><tr><th>Semana</th><th>$/lb</th><th>n</th><th>vs Formal</th></tr></thead><tbody id="mib-tbl-top5"></tbody></table>
-      </div>
-    </div>
-  </div>
-
-  <div id="mib-layer-mysup" class="mib-layer" style="display:none">
-    <div class="mi-card">
-      <div class="mi-ch"><span class="mi-ct">Conversion CIF/DDP a FOB</span><span class="mi-hint">Vos controlas estos numeros</span></div>
-      <div class="mi-cb"><div class="mib-fobset" id="mib-fob-settings"></div></div>
-    </div>
-    <div class="mi-card">
-      <div class="mi-ch"><span class="mi-ct">Mis proveedores vs. mundo</span></div>
-      <div class="mi-cb">
-        <div class="mib-entsel" id="mib-mysup-sel"></div>
-        <div class="mi-wrap"><canvas id="mib-chart-mysup"></canvas></div>
-        <table class="mib-wk" style="margin-top:10px"><thead><tr><th>Semana</th><th>Mundo $/lb</th><th>n</th><th>Mio (FOB) $/lb</th><th>vs Mundo</th></tr></thead><tbody id="mib-tbl-mysup"></tbody></table>
-        <div class="mi-hint" style="margin-top:6px" id="mib-orders-note"></div>
+  <div class="mi-card">
+    <div class="mi-ch"><span class="mi-ct">Selling price -- selected exporters vs. my shipments</span><span class="mi-hint">Point shape = mode that week (not color, so exporter colors stay readable)</span></div>
+    <div class="mi-cb">
+      <div class="mib-selchips" id="mib-sel-chips"></div>
+      <div class="mi-wrap" style="height:320px"><canvas id="mib-chart-main"></canvas></div>
+      <div class="mib-legend">
+        <b>Shapes:</b> &#9679; Sea &nbsp; &#9650; Air &nbsp; &#9670; Mixed (both modes that week) &nbsp; &#9733; My shipment (real orders) &middot;
+        <b>Colors</b> identify each exporter -- see chips above.
       </div>
     </div>
   </div>
 
   <div class="mi-card">
-    <div class="mi-ch"><span class="mi-ct">&#191;Qui&eacute;n cuenta como formal?</span><span class="mi-hint">Default: La Grama, Interloom, A&ntilde;awi, Elisur, La Campi&ntilde;a, JAS &mdash; mueve a cualquiera, cuando quieras. Afecta las 3 capas de arriba.</span></div>
+    <div class="mi-ch"><span class="mi-ct">Weekly detail</span><span class="mi-hint">Click a week to see individual shipments (exporter, buyer, country, mode)</span></div>
+    <div class="mi-cb"><div style="overflow-x:auto"><table class="mib-wk" id="mib-wk-table"><thead></thead><tbody id="mib-wk-body"></tbody></table></div></div>
+  </div>
+
+  <div class="mi-card">
+    <div class="mi-ch"><span class="mi-ct">Who counts as formal?</span><span class="mi-hint">Default: La Grama, Interloom, Anawi, Elisur, La Campina, JAS -- move anyone, anytime. Feeds the roster above.</span></div>
     <div class="mi-cb">
       <div class="mi-g2">
         <div>
-          <div class="mi-hint" style="margin-bottom:8px;font-weight:700;text-transform:uppercase;font-size:10px;letter-spacing:.05em">Roster formal</div>
+          <div class="mi-hint" style="margin-bottom:8px;font-weight:700;text-transform:uppercase;font-size:10px;letter-spacing:.05em">Formal roster</div>
           <div class="mif-chiprow" id="mif-chips"></div>
         </div>
         <div>
-          <div class="mi-hint" style="margin-bottom:8px;font-weight:700;text-transform:uppercase;font-size:10px;letter-spacing:.05em">El resto (12 meses, por volumen)</div>
-          <input class="mif-search" id="mif-search" placeholder="Buscar exportador..." oninput="mifRenderRoster(this.value)">
+          <div class="mi-hint" style="margin-bottom:8px;font-weight:700;text-transform:uppercase;font-size:10px;letter-spacing:.05em">Everyone else (12mo, by volume)</div>
+          <input class="mif-search" id="mif-search" placeholder="Search exporter..." oninput="mifRenderRoster(this.value)">
           <div class="mif-roster"><table class="mi-tbl">
-            <thead><tr><th>Exportador</th><th class="r">Lbs/12m</th><th></th></tr></thead>
+            <thead><tr><th>Exporter</th><th class="r">Lbs/12m</th><th></th></tr></thead>
             <tbody id="mif-roster-body"></tbody>
           </table></div>
         </div>
@@ -5349,7 +5382,7 @@ var D={"meta": {"data_through": "2026-05-20", "total_records": 21381, "generated
 function saveD(){try{localStorage.setItem('jlz_mi_v4',JSON.stringify(D));}catch(e){}}
 var PC=null,SC=null,SVC=null,SPC=null,miInited=false,mktSortKey='lbs';
 
-var curPriceCountry='United States',curMktCountry='United States',curRangeW=26,curPriceMode='Both',curSeasMode='Both',ptDrillOpen=null;
+var curPriceCountry='United States',curMktCountry='United States',curRangeW=26,curPriceMode='Both',ptDrillOpen=null;
 function ge(id){return document.getElementById(id);}
 function qa(s){return document.querySelectorAll(s);}
 function setText(id,v){var el=ge(id);if(el)el.textContent=v;}
@@ -5524,7 +5557,21 @@ function moConcentration(ranking){
   var top5=sorted.slice(0,5).reduce(function(s,r){return s+r.lbs;},0);
   return{top3pct:total?top3/total*100:0,top5pct:total?top5/total*100:0,n:ranking.length};
 }
-function moEntrants(curWeeks,priorWeeks,mode,cat,cg){
+function moWeekYearAgo(wk){
+  var y=+wk.slice(0,4),w=+wk.slice(6);
+  var jan4=new Date(y,0,4);
+  var mon=new Date(jan4);mon.setDate(jan4.getDate()-((jan4.getDay()+6)%7)+(w-1)*7);
+  var thu=new Date(mon);thu.setDate(mon.getDate()+3);
+  var yearAgo=new Date(thu);yearAgo.setDate(thu.getDate()-364);
+  return isoWk(yearAgo);
+}
+function moEntrants(curWeeks,mode,cat,cg){
+  // Year-over-year, not period-over-period: a seasonal player (e.g. an
+  // air-bridge exporter active every Mar-May) should not re-trigger as a
+  // "new entrant" every single year just because they were absent from the
+  // immediately-prior weeks. Comparing against the same calendar point one
+  // year back only flags genuinely new or genuinely departed exporters.
+  var priorWeeks=curWeeks.map(moWeekYearAgo);
   var curSet={},priorSet={};
   (D.expwk||[]).forEach(function(r){
     if(r.cg!==cg)return;
@@ -5583,9 +5630,7 @@ function renderMkt(){
   if(cv)cv.textContent='Top 3: '+conc.top3pct.toFixed(0)+'%';
   if(cs)cs.textContent='Top 5: '+conc.top5pct.toFixed(0)+'% of volume \u00b7 '+conc.n+' active exporters this period';
 
-  var allW=moAllWeeks();var idx=allW.indexOf(weeks[0]);
-  var priorWeeks=idx>=0?allW.slice(Math.max(0,idx-moRangeW),idx):[];
-  var ent=moEntrants(weeks,priorWeeks,moMode,moCat,cg);
+  var ent=moEntrants(weeks,moMode,moCat,cg);
   var ev=ge('mo-entrants-val');
   if(ev){
     var html='';
@@ -5619,39 +5664,133 @@ function renderShareChart(ranking){
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{font:{size:10},boxWidth:10}},tooltip:{callbacks:{label:function(c){return ' '+(c.parsed/1e6).toFixed(2)+'M lbs';}}}}}});
 }
 
-function seasCombine(svdRaw,spdRaw,mode){
-  // D.season_vol/season_price can carry up to 2 rows per iso_week (Air, Sea).
-  // Combine volume-weighted (or filter to one mode) so charts show exactly
-  // one bar/point per ISO week instead of two overlapping ones with the
-  // same x-axis label.
-  if(mode&&mode!=='Both'){
-    return {
-      vol:svdRaw.filter(function(d){return d.mode===mode;}).sort(function(a,b){return a.iso_week-b.iso_week;}),
-      price:spdRaw.filter(function(d){return d.mode===mode;}).sort(function(a,b){return a.iso_week-b.iso_week;})
-    };
+var MIH_PAL={2020:'#9ca3af',2021:'#9ca3af',2022:'#60a5fa',2023:'#7c3aed',2024:'#d97706',2025:'#0d5026',2026:'#dc2626',2027:'#dc2626'};
+function campLabel(cy){return cy+'-'+String((cy+1)%100).padStart(2,'0');}
+var MIH_SELECTED=null; // lazy-initialized to the last 4 campaigns on first render
+var MIH_SHOW_AVG=true, MIH_MODE='Both', MIH_METRIC='lbs';
+
+function mihAllCamps(){var s={};(D.campWk||[]).forEach(function(r){s[r.cy]=true;});return Object.keys(s).map(Number).sort(function(a,b){return a-b;});}
+function mihCurrentCamp(){
+  var max=D.meta&&D.meta.data_through?D.meta.data_through:null;
+  if(!max)return null;
+  var p=max.split('-');var y=+p[0],m=+p[1];
+  return m>=6?y:y-1;
+}
+function mihSeriesFor(cy,mode,metric){
+  var rows=(D.campWk||[]).filter(function(r){return r.cy===cy&&r.cat==='Organic'&&(mode==='Both'||r.mode===mode);});
+  var byWeek={};
+  rows.forEach(function(r){if(!byWeek[r.cw])byWeek[r.cw]={lbs:0,usd:0};byWeek[r.cw].lbs+=r.lbs;byWeek[r.cw].usd+=r.usd;});
+  var arr=[];
+  for(var w=1;w<=53;w++){var v=byWeek[w];arr.push(v?(metric==='lbs'?v.lbs:(v.lbs?v.usd/v.lbs:null)):null);}
+  return arr;
+}
+function mihAvgContribCamps(){var cur=mihCurrentCamp();return mihAllCamps().filter(function(y){return y!==cur;});}
+function mihAverageSeries(mode,metric){
+  var camps=mihAvgContribCamps();
+  var perCamp=camps.map(function(y){return mihSeriesFor(y,mode,metric);});
+  var avg=[];
+  for(var i=0;i<53;i++){
+    var vals=perCamp.map(function(s){return s[i];}).filter(function(v){return v!=null;});
+    avg.push(vals.length?(vals.reduce(function(a,b){return a+b;},0)/vals.length):null);
   }
-  var volByWk={};
-  svdRaw.forEach(function(d){if(!volByWk[d.iso_week])volByWk[d.iso_week]=0;volByWk[d.iso_week]+=d.avg_lbs;});
-  var volLookup={};svdRaw.forEach(function(d){volLookup[d.iso_week+'|'+d.mode]=d.avg_lbs;});
-  var wSum={},wpSum={};
-  spdRaw.forEach(function(d){
-    var v=volLookup[d.iso_week+'|'+d.mode]||0;
-    if(!wSum[d.iso_week]){wSum[d.iso_week]=0;wpSum[d.iso_week]=0;}
-    wSum[d.iso_week]+=v;wpSum[d.iso_week]+=v*d.avg_p;
+  return avg;
+}
+
+window.mihToggleCamp=function(y){
+  var i=MIH_SELECTED.indexOf(y);
+  if(i>=0)MIH_SELECTED.splice(i,1);else MIH_SELECTED.push(y);
+  mihRenderAll();
+};
+window.mihToggleAverage=function(){MIH_SHOW_AVG=!MIH_SHOW_AVG;mihRenderAll();};
+window.mihSetMetric=function(m,btn){btn.closest('.mi-ptog').querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');MIH_METRIC=m;mihRenderAll();};
+window.mihSetMode=function(m,btn){btn.closest('.mi-ptog').querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');MIH_MODE=m;mihRenderAll();};
+
+function mihRenderYearPicker(){
+  var el=ge('mih-year-picker');if(!el)return;
+  var years=mihAllCamps();
+  var chips=years.map(function(y){
+    var on=MIH_SELECTED.indexOf(y)>=0;
+    var color=MIH_PAL[y]||'#888';
+    var lbl=campLabel(y)+(y===mihCurrentCamp()?' (in progress)':'');
+    return '<button class="mih-yearchip'+(on?' on':'')+'" style="'+(on?('background:'+color+';border-color:'+color):'')+'" onclick="mihToggleCamp('+y+')">'+lbl+'</button>';
+  }).join('');
+  var avgChip='<button class="mih-yearchip'+(MIH_SHOW_AVG?' on':'')+'" style="border-style:dashed;'+(MIH_SHOW_AVG?'background:#1f2937;border-color:#1f2937':'')+'" onclick="mihToggleAverage()" title="Mean across '+mihAvgContribCamps().map(campLabel).join(', ')+'">Average</button>';
+  el.innerHTML=avgChip+chips;
+}
+
+function mihRenderStatcard(){
+  var el=ge('mih-statcard');if(!el)return;
+  var curY=mihCurrentCamp();
+  if(curY==null){el.innerHTML='<div class="mih-stat-sub">Load a Veritrade file to see this.</div>';return;}
+  var allW=(D.campWk||[]).filter(function(r){return r.cy===curY&&r.cat==='Organic';});
+  var curWk=allW.length?Math.max.apply(null,allW.map(function(r){return r.cw;})):0;
+  var priorYears=mihAllCamps().filter(function(y){return y<curY&&y>=curY-3;});
+  if(!priorYears.length||curWk<1){el.innerHTML='<div class="mih-stat-sub">Not enough campaign history yet at this point.</div>';return;}
+  function cumThrough(y,wk){
+    return (D.campWk||[]).filter(function(r){return r.cy===y&&r.cat==='Organic'&&r.cw<=wk;}).reduce(function(s,r){return s+r.lbs;},0);
+  }
+  var curCum=cumThrough(curY,curWk);
+  var priorCums=priorYears.map(function(y){return cumThrough(y,curWk);});
+  var avgPrior=priorCums.reduce(function(a,b){return a+b;},0)/priorCums.length;
+  var pct=avgPrior?((curCum-avgPrior)/avgPrior*100):null;
+  var cls=pct==null?'':(pct>=0?'style="color:#15803d"':'style="color:#dc2626"');
+  el.innerHTML='<div class="mih-stat-num" '+cls+'>'+(pct!=null?((pct>=0?'+':'')+pct.toFixed(0)+'%'):'-')+'</div>'
+    +'<div class="mih-stat-sub">Campaign '+campLabel(curY)+' is '+curWk+' week(s) in -- cumulative volume vs. the '+priorYears.length+'-campaign average ('+priorYears.map(campLabel).join(', ')+') at the same point &mdash; '+(curCum/1e6).toFixed(2)+'M lbs so far vs. '+(avgPrior/1e6).toFixed(2)+'M lbs typical.</div>';
+}
+
+function mihRenderChart(){
+  var ctx=ge('mih-chart');if(!ctx)return;
+  var labels=[];for(var i=1;i<=53;i++)labels.push('Wk '+i);
+  var datasets=[];
+  if(MIH_SHOW_AVG){
+    datasets.push({label:'Average',data:mihAverageSeries(MIH_MODE,MIH_METRIC),borderColor:'#1f2937',backgroundColor:'transparent',spanGaps:true,tension:.3,pointRadius:0,borderWidth:2.5,borderDash:[6,4]});
+  }
+  MIH_SELECTED.slice().sort().forEach(function(y){
+    var color=MIH_PAL[y]||'#888';
+    datasets.push({label:campLabel(y),data:mihSeriesFor(y,MIH_MODE,MIH_METRIC),borderColor:color,backgroundColor:'transparent',spanGaps:true,tension:.3,pointRadius:1.5,borderWidth:y===mihCurrentCamp()?3:2});
   });
-  var vol=Object.keys(volByWk).map(function(k){return{iso_week:+k,avg_lbs:volByWk[k]};}).sort(function(a,b){return a.iso_week-b.iso_week;});
-  var price=Object.keys(wpSum).map(function(k){return{iso_week:+k,avg_p:wSum[k]?wpSum[k]/wSum[k]:0};}).sort(function(a,b){return a.iso_week-b.iso_week;});
-  return {vol:vol,price:price};
+  miKill(ctx);
+  SVC=new Chart(ctx.getContext('2d'),{type:'line',data:{labels:labels,datasets:datasets},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+      plugins:{legend:{position:'top',labels:{font:{size:10},boxWidth:9}},tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': '+(c.raw!=null?(MIH_METRIC==='lbs'?(c.raw/1e6).toFixed(2)+'M lbs':'$'+c.raw.toFixed(3)+'/lb'):'no data');}}}},
+      scales:{x:{ticks:{font:{size:9},maxTicksLimit:16},grid:{display:false}},y:{ticks:{callback:function(v){return MIH_METRIC==='lbs'?(v/1e6).toFixed(1)+'M':'$'+v.toFixed(2);},font:{size:10}},grid:{color:'rgba(0,0,0,.04)'}}}}});
+  var t=ge('mih-chart-title');
+  if(t)t.textContent=(MIH_METRIC==='lbs'?'Volume':'Price $/lb')+', week since June 1 -- campaign over campaign'+(MIH_MODE!=='Both'?' ('+MIH_MODE+' only)':'');
 }
-window.miSeasMode=function(m,btn){btn.closest('.mi-ptog').querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');curSeasMode=m;renderSeasonality();};
-function renderSeasonality(){
-  var comb=seasCombine(D.season_vol||[],D.season_price||[],curSeasMode);
-  var svd=comb.vol,spd=comb.price;
-  var ctx1=ge('mi-seas-vol-chart');
-  if(ctx1){miKill(ctx1);SVC=new Chart(ctx1.getContext('2d'),{type:'bar',data:{labels:svd.map(function(d){return 'W'+String(d.iso_week).padStart(2,'0');}),datasets:[{data:svd.map(function(d){return d.avg_lbs;}),backgroundColor:svd.map(function(d){return d.iso_week>=43&&d.iso_week<=47?'#0d5026':d.iso_week>=14&&d.iso_week<=21?'#f59e0b':'#86efac';}),borderRadius:2,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return ' '+(c.raw/1e6).toFixed(2)+'M lbs avg';}}}},scales:{x:{ticks:{maxTicksLimit:26,font:{size:8}},grid:{display:false}},y:{ticks:{callback:function(v){return (v/1e6).toFixed(1)+'M';},font:{size:9}},grid:{color:'rgba(0,0,0,.04)'}}}}});}
-  var ctx2=ge('mi-seas-price-chart');
-  if(ctx2){miKill(ctx2);SPC=new Chart(ctx2.getContext('2d'),{type:'line',data:{labels:spd.map(function(d){return 'W'+String(d.iso_week).padStart(2,'0');}),datasets:[{data:spd.map(function(d){return d.avg_p;}),borderColor:'#0d5026',backgroundColor:'rgba(13,80,38,.06)',fill:true,tension:0.4,pointRadius:1.5,borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return ' $'+(c.raw||0).toFixed(4)+'/lb avg';}}}},scales:{x:{ticks:{maxTicksLimit:26,font:{size:8}},grid:{display:false}},y:{ticks:{callback:function(v){return '$'+v.toFixed(2);},font:{size:9}},grid:{color:'rgba(0,0,0,.04)'}}}}});}
+
+function mihRenderHealthTable(){
+  var el=ge('mih-health-tbl');if(!el)return;
+  var years=mihAllCamps().sort(function(a,b){return b-a;});
+  el.innerHTML=years.map(function(y){
+    var rows=(D.campWk||[]).filter(function(r){return r.cy===y&&r.cat==='Organic';});
+    if(!rows.length)return '';
+    var totalSea=rows.filter(function(r){return r.mode==='Sea';}).reduce(function(s,r){return s+r.lbs;},0);
+    var totalAir=rows.filter(function(r){return r.mode==='Air';}).reduce(function(s,r){return s+r.lbs;},0);
+    var tail=rows.filter(function(r){return r.cw>=40&&r.cw<=52;});
+    var tailSea=tail.filter(function(r){return r.mode==='Sea';}).reduce(function(s,r){return s+r.lbs;},0);
+    var tailAir=tail.filter(function(r){return r.mode==='Air';}).reduce(function(s,r){return s+r.lbs;},0);
+    var airPct=(tailSea+tailAir)?tailAir/(tailSea+tailAir)*100:0;
+    var barColor=airPct>25?'#dc2626':(airPct>10?'#d97706':'#16a34a');
+    return '<tr><td style="font-weight:700;color:'+(MIH_PAL[y]||'#888')+'">'+campLabel(y)+(y===mihCurrentCamp()?' *':'')+'</td>'
+      +'<td class="r">'+(totalSea/1e6).toFixed(1)+'M</td><td class="r">'+(totalAir/1e6).toFixed(1)+'M</td>'
+      +'<td class="r"><span class="mih-airbar" style="width:'+Math.max(4,airPct)+'px;background:'+barColor+'"></span> '+airPct.toFixed(0)+'%</td>'
+      +'<td class="r">'+((totalSea+totalAir)/1e6).toFixed(1)+'M</td></tr>';
+  }).join('');
 }
+
+function mihRenderAll(){
+  if(!ge('mih-year-picker'))return;
+  if(MIH_SELECTED===null){
+    var all=mihAllCamps();
+    MIH_SELECTED=all.slice(-4);
+  }
+  mihRenderYearPicker();
+  mihRenderStatcard();
+  mihRenderChart();
+  mihRenderHealthTable();
+}
+function renderSeasonality(){ mihRenderAll(); }
+
 
 window.miLoad=function(input){
   var file=input.files[0];if(!file)return;
@@ -5733,13 +5872,19 @@ function processVT(rows,cb){
   var top25=Object.entries(vByExp).sort(function(a,b){return b[1]-a[1];}).slice(0,25).map(function(e){return e[0];});
   var mktMap={};fresh.filter(function(r){return r._date&&r._date>=cut3&&top25.indexOf((r['Exporter']||'').slice(0,35))>=0;}).forEach(function(r){var e=(r['Exporter']||'').slice(0,35);var k=r._ym+'|'+e+'|'+r._cg;if(!mktMap[k])mktMap[k]={year_month:r._ym,e:e,supplier_tag:r._sup,cgroup:r._cg,lbs:0,usd:0};mktMap[k].lbs+=r._lbs;mktMap[k].usd+=r._usd;});
   var mkt=Object.values(mktMap).map(function(m){m.lbs=Math.round(m.lbs);m.usd=Math.round(m.usd);return m;});
-  var isoMap={};fresh.filter(function(r){return r._cat==='Organic';}).forEach(function(r){if(!r._date)return;var iso=getIsoN(r._date),yr=r._date.getFullYear(),key=yr+'|'+iso+'|'+r._mode;if(!isoMap[key])isoMap[key]={iso_week:iso,mode:r._mode,lbs:0};isoMap[key].lbs+=r._lbs;});
-  var isoAvg={};Object.values(isoMap).forEach(function(v){var k=v.iso_week+'|'+v.mode;if(!isoAvg[k])isoAvg[k]=[];isoAvg[k].push(v.lbs);});
-  var sv=Object.keys(isoAvg).map(function(k){var arr=isoAvg[k];var p=k.split('|');return{iso_week:parseInt(p[0]),mode:p[1],avg_lbs:Math.round(arr.reduce(function(s,v){return s+v;},0)/arr.length)};}).sort(function(a,b){return a.iso_week-b.iso_week;});
-  var piMap={};fresh.filter(function(r){return r._cat==='Organic'&&r._yw;}).forEach(function(r){var iso=getIsoN(r._date),key=r._yw+'|'+r._mode;if(!piMap[key])piMap[key]={iso:iso,mode:r._mode,_l:0,_u:0};piMap[key]._l+=r._lbs;piMap[key]._u+=r._usd;});
-  var isoPA={};Object.values(piMap).forEach(function(v){var k=v.iso+'|'+v.mode;if(!isoPA[k])isoPA[k]=[];isoPA[k].push(v._l?v._u/v._l:0);});
-  var sp=Object.keys(isoPA).map(function(k){var arr=isoPA[k];var p=k.split('|');return{iso_week:parseInt(p[0]),mode:p[1],avg_p:parseFloat((arr.reduce(function(s,v){return s+v;},0)/arr.length).toFixed(4))};}).sort(function(a,b){return a.iso_week-b.iso_week;});
-  cb({meta:{data_through:maxD?maxD.toISOString().slice(0,10):'-',total_records:fresh.length,generated:new Date().toISOString().slice(0,10),countries:TOP8.concat(['Other']),incomplete_week:_incWeek},ms4:ms4o,weekly:weekly,season_vol:sv,season_price:sp,sup:sup,mkt:mkt,expwk:expwk,shipDet:shipDet});
+  var campMap={};
+  fresh.forEach(function(r){
+    if(!r._date)return;
+    var y=r._date.getFullYear(),m=r._date.getMonth()+1,d=r._date.getDate();
+    var cy=m>=6?y:y-1;
+    var cwStart=new Date(cy,5,1);
+    var cw=Math.floor((r._date-cwStart)/604800000)+1;
+    var key=cy+'|'+cw+'|'+r._mode+'|'+r._cat;
+    if(!campMap[key])campMap[key]={cy:cy,cw:cw,mode:r._mode,cat:r._cat,_l:0,_u:0};
+    campMap[key]._l+=r._lbs;campMap[key]._u+=r._usd;
+  });
+  var campWk=Object.values(campMap).map(function(w){return{cy:w.cy,cw:w.cw,mode:w.mode,cat:w.cat,lbs:Math.round(w._l),usd:Math.round(w._u)};});
+  cb({meta:{data_through:maxD?maxD.toISOString().slice(0,10):'-',total_records:fresh.length,generated:new Date().toISOString().slice(0,10),countries:TOP8.concat(['Other']),incomplete_week:_incWeek},ms4:ms4o,weekly:weekly,sup:sup,mkt:mkt,expwk:expwk,shipDet:shipDet,campWk:campWk});
 }
 
 function mergeD(ex,inc){
@@ -5763,7 +5908,12 @@ function mergeD(ex,inc){
   var SD_MAX_WEEKS=16;
   var keepFromSd=sdWeeks.length>SD_MAX_WEEKS?sdWeeks[sdWeeks.length-SD_MAX_WEEKS]:null;
   var shipDet=keepFromSd?allSd.filter(function(w){return w.yw>=keepFromSd;}):allSd;
-  return Object.assign({},inc,{weekly:weekly,expwk:expwk,shipDet:shipDet});
+  // Campaign-year data (campWk): merge-preserve, no rolling-window trim --
+  // this is small (a few hundred rows even after many years) and the whole
+  // point is long-term history, unlike expwk/shipDet's short retention.
+  var cwMap={};(ex.campWk||[]).forEach(function(w){cwMap[w.cy+'|'+w.cw+'|'+w.mode+'|'+w.cat]=w;});(inc.campWk||[]).forEach(function(w){cwMap[w.cy+'|'+w.cw+'|'+w.mode+'|'+w.cat]=w;});
+  var campWk=Object.values(cwMap);
+  return Object.assign({},inc,{weekly:weekly,expwk:expwk,shipDet:shipDet,campWk:campWk});
 }
 function normImp(name){if(!name||/^(TO ORDER|CONSIGNATARIO|N\/A)/i.test(name.trim()))return 'To Order / Unknown';var n=name.toUpperCase().trim();n=n.replace(/\s+\d{4,}.*/,'').replace(/P\.?O\.?\s*BOX.*/i,'').replace(/[,\.]+$/,'').replace(/\s+/,' ').trim();var NORMS=[[/VIVA TIERRA ORGANIC[.\s]*INC[.\s]*/,'VIVA TIERRA ORGANIC INC'],[/HEATH\s*(AND|Y|&)\s*LEJEUNE[.,\s]*INC[.,\s]*/,'HEATH AND LEJEUNE INC'],[/HEALTH AND LEJEUNE.*/,'HEATH AND LEJEUNE INC'],[/GLOBAL FARMS ENTERPRISES[.,\s]*\.?INC[.,\s]*/,'GLOBAL FARMS ENTERPRISES INC'],[/GLOBAL FARMS ENTERPRISES[.,\s]*$/,'GLOBAL FARMS ENTERPRISES INC'],[/A&A ORGANIC FARMS.*GLOBAL FARMS.*/,'GLOBAL FARMS ENTERPRISES INC'],[/IPOKI B\.?V?\.?\s*$/,'IPOKI BV'],[/IPOKI PRODUCE LLC.*/,'IPOKI PRODUCE LLC'],[/VOELKEL.*/,'VOELKEL GMBH'],[/JLZ P[OD]DUCE.*/,'JLZ PRODUCE'],[/JLZ PRODUCE.*/,'JLZ PRODUCE'],[/ANAWI USA.*/,'ANAWI USA LLC'],[/BROADVIEW PRODUCE.*/,'BROADVIEW PRODUCE CO'],[/I LOVE PRODUCE LLC.*/,'I LOVE PRODUCE LLC'],[/HERMANOS FERNANDEZ.*/,'HERMANOS FERNANDEZ LOPEZ SAU'],[/WEALMOOR.*/,'WEALMOOR LTD'],[/FRUCHTHANSA.*/,'FRUCHTHANSA GMBH'],[/UREN NORTH AMERICA.*/,'UREN NORTH AMERICA'],[/TRINITY DISTRIBUTION.*/,'TRINITY DISTRIBUTION INC'],[/THOMAS FRESH.*/,'THOMAS FRESH INC'],[/MINOR[.,\s]*WEIR.*/,'MINOR WEIR AND WILLIS LTD'],[/FRESH DIRECT PRODUCE.*/,'FRESH DIRECT PRODUCE LTD'],[/SMART GROUP TRADERS.*/,'SMART GROUP TRADERS INC'],[/HLB SPECIALTIES.*/,'HLB SPECIALTIES LLC'],[/MAMAPACH.*/,'MAMAPACH INC'],[/TOTAL PRODUCE.*/,'TOTAL PRODUCE BV']];for(var i=0;i<NORMS.length;i++)if(NORMS[i][0].test(n))return NORMS[i][1];return n.slice(0,45);}
 function normCtry(c){var M={'ESTADOS UNIDOS':'United States','PAÍSES BAJOS':'Netherlands','PAISES BAJOS':'Netherlands','ALEMANIA':'Germany','ESPAÑA':'Spain','ESPA\u00d1A':'Spain','REINO UNIDO':'United Kingdom','BÉLGICA':'Belgium','B\u00c9LGICA':'Belgium','BELGICA':'Belgium','CANADÁ':'Canada','CANAD\u00c1':'Canada','CANADA':'Canada','ITALIA':'Italy','AUSTRALIA':'Australia','JAPÓN':'Japan','JAPON':'Japan','CHILE':'Chile','FRANCIA':'France','SUECIA':'Sweden','DINAMARCA':'Denmark','NORUEGA':'Norway','FINLANDIA':'Finland','SUIZA':'Switzerland','AUSTRIA':'Austria','PORTUGAL':'Portugal','REPÚBLICA DOMINICANA':'Dominican Republic','CHINA':'China','COREA':'South Korea','SINGAPUR':'Singapore','NUEVA ZELANDA':'New Zealand','POLONIA':'Poland','IRLANDA':'Ireland'};return M[c.toUpperCase().trim()]||c.trim();}
@@ -5858,8 +6008,7 @@ var MIB_MYSUP=[
   {name:'Hamilton',pat:/HAMILLTON|HAMILTON/i,incoterm:'CIF'},
   {name:'Elisur',pat:/ELISUR/i,incoterm:'CIF'}
 ];
-var MIB_MODE='Both',MIB_DEST='World',MIB_LAYER='market';
-var MIB_TOP5SEL=null,MIB_MYSUPSEL='Anawi';
+var MIB_MODE='Both',MIB_DEST='_ALL',MIB_CAT='Organic';
 var MIB_FOB_LS='jlz_mib_fob_settings';
 var mibFob={};
 try{mibFob=JSON.parse(localStorage.getItem(MIB_FOB_LS)||'{}')||{};}catch(e){mibFob={};}
@@ -5881,16 +6030,16 @@ function mibWeeksInRange(fromStr,toStr){
 function mibShortWk(w){return w?'W'+w.slice(6):'';}
 function mibIncW(){return D.meta?D.meta.incomplete_week:null;}
 
-// -- aggregation over D.expwk (mode-aware; expwk has no destination field,
-//    so this is always world-wide -- see mib-volcard note) --
+// -- aggregation over D.expwk (mode-aware, cg-aware via the 5th cg param) --
 function mibIsFormal(exp){return mifClassOf(exp)==='Formal';}
 function mibIsInformal(exp){return mifClassOf(exp)==='Informal';}
 function mibMatchName(pat){return function(exp){return pat.test(exp);};}
-function mibAggMatch(matchFn,weeks,mode,cat){
+function mibAggMatch(matchFn,weeks,mode,cat,cg){
+  cg=cg||'_ALL';
   var wset={};weeks.forEach(function(w){wset[w]=true;});
   var out={};
   (D.expwk||[]).forEach(function(r){
-    if(r.cg!=='_ALL')return;
+    if(r.cg!==cg)return;
     if(!wset[r.yw])return;
     if(cat&&r.cat!==cat)return;
     if(mode!=='Both'&&r.mode!==mode)return;
@@ -5907,22 +6056,6 @@ function mibTotal(byWeek,weeks){
 }
 function mibPrice(v){return (v&&v.lbs)?v.usd/v.lbs:null;}
 
-// -- Top 5 Informal, trailing 12mo, dynamic (excludes whoever is currently Formal) --
-function mibTop5Informal(){
-  var cut=new Date();cut.setDate(cut.getDate()-365);
-  var cutW=isoWk(cut);
-  var agg={};
-  (D.expwk||[]).forEach(function(r){
-    if(r.cg!=='_ALL')return;
-    if(r.yw<cutW)return;
-    if(!mibIsInformal(r.exp))return;
-    if(!agg[r.exp])agg[r.exp]=0;
-    agg[r.exp]+=r.lbs;
-  });
-  return Object.keys(agg).map(function(name){return{name:name,lbs12mo:agg[name]};})
-    .sort(function(a,b){return b.lbs12mo-a.lbs12mo;}).slice(0,5);
-}
-
 // -- shipment-level drill-down (D.shipDet, ~16wk window, has country) --
 function mibHasDetailWindow(week){return (D.shipDet||[]).some(function(r){return r.yw===week;});}
 function mibDetailFor(matchFn,week,mode,cat,dest){
@@ -5934,21 +6067,6 @@ function mibDetailFor(matchFn,week,mode,cat,dest){
     return matchFn(r.exp);
   });
 }
-function mibDrillHtml(matchFn,week,colspan){
-  if(!mibHasDetailWindow(week)){
-    return '<tr class="drillrow"><td colspan="'+colspan+'"><div style="padding:6px 10px;color:var(--gray-400);font-size:10.5px">Detalle por envio disponible solo para las ultimas ~16 semanas.</div></td></tr>';
-  }
-  var rows=mibDetailFor(matchFn,week,MIB_MODE,'Organic',MIB_DEST);
-  if(!rows.length){
-    return '<tr class="drillrow"><td colspan="'+colspan+'"><div style="padding:6px 10px;color:var(--gray-400);font-size:10.5px">Sin embarques para este filtro.</div></td></tr>';
-  }
-  var body=rows.map(function(r){
-    return '<tr><td>'+r.buyer+'</td><td>'+r.country+'</td><td>'+r.mode+'</td><td class="r">'+(r.lbs/1000).toFixed(1)+'k</td><td class="r">$'+(r.usd/r.lbs).toFixed(3)+'/lb</td></tr>';
-  }).join('');
-  return '<tr class="drillrow"><td colspan="'+colspan+'"><table class="mib-drilltbl"><thead><tr><th>Comprador</th><th>Pais</th><th>Modo</th><th>Lbs</th><th>$/lb</th></tr></thead><tbody>'+body+'</tbody></table></td></tr>';
-}
-window.mibToggleDrill=function(key){mibDrillOpen=(mibDrillOpen===key)?null:key;mibRenderCurrentLayer();};
-
 // -- real ORDERS -> FOB-adjusted "mis cotizaciones", by supplier, aligned by ETD --
 function mibMyQuotes(weeks){
   var wset={};weeks.forEach(function(w){wset[w]=true;});
@@ -5977,226 +6095,268 @@ function mibAdjust(supplierName,rawPerLb){
   return Math.max(0,v);
 }
 
-// -- headline / volatility --
-function mibFmtDelta(pct){
-  if(pct==null)return '<span class="mib-hl-tag neu">sin datos</span>';
-  var cls=pct>3?'up':(pct<-3?'dn':'neu');
-  return '<span class="mib-hl-tag '+cls+'">'+(pct>=0?'+':'')+pct.toFixed(1)+'%</span>';
+// -- full live roster: every exporter (trailing 12mo), tagged Formal/Informal/Mine --
+function mibMySupOf(name){for(var i=0;i<MIB_MYSUP.length;i++){if(MIB_MYSUP[i].pat.test(name))return MIB_MYSUP[i];}return null;}
+function mibFullRoster(){
+  var cut=new Date();cut.setDate(cut.getDate()-365);
+  var cutW=isoWk(cut);
+  var agg={};
+  (D.expwk||[]).forEach(function(r){
+    if(r.cg!=='_ALL')return;
+    if(r.yw<cutW)return;
+    if(!agg[r.exp])agg[r.exp]=0;
+    agg[r.exp]+=r.lbs;
+  });
+  return Object.keys(agg).map(function(name){
+    var mine=mibMySupOf(name);
+    return{name:name,lbs12mo:agg[name],isFormal:mifClassOf(name)==='Formal',isMine:!!mine,label:mine?mine.name:mifDefLabel(name)};
+  }).sort(function(a,b){return b.lbs12mo-a.lbs12mo;});
 }
-function mibRenderHeadline(){
-  var el=ge('mib-headline');if(!el)return;
-  var weeks=mibWeeksInRange(ge('mib-from').value,ge('mib-to').value);
-  var fBy=mibAggMatch(mibIsFormal,weeks,MIB_MODE,'Organic');
-  var iBy=mibAggMatch(mibIsInformal,weeks,MIB_MODE,'Organic');
-  var fT=mibTotal(fBy,weeks),iT=mibTotal(iBy,weeks);
-  var fp=mibPrice(fT),ip=mibPrice(iT);
-  var l1='<div class="mib-hl-row"><b>Mercado:</b> Formal $'+(fp?fp.toFixed(3):'-')+'/lb (n='+fT.n+') &middot; Informal $'+(ip?ip.toFixed(3):'-')+'/lb (n='+iT.n+')'+((fp&&ip)?' '+mibFmtDelta((fp-ip)/ip*100)+' formal vs informal':'')+'</div>';
+function mibDisplayName2(r){if(!r)return '?';if(r.label)return r.label;return r.name.length>36?r.name.slice(0,36)+'\u2026':r.name;}
+function mibRosterOf(name){var full=mibFullRoster();for(var i=0;i<full.length;i++)if(full[i].name===name)return full[i];return null;}
+function mibAllWeeksSorted(){var s={};(D.expwk||[]).forEach(function(r){if(r.cg==='_ALL')s[r.yw]=true;});return Object.keys(s).sort();}
+function mibPriorWeeks(weeks){
+  if(!weeks.length)return [];
+  var allW=mibAllWeeksSorted();var idx=allW.indexOf(weeks[0]);if(idx<0)return [];
+  var n=weeks.length;return allW.slice(Math.max(0,idx-n),idx);
+}
 
-  var top5=mibTop5Informal();
-  if(!MIB_TOP5SEL||!top5.some(function(t){return t.name===MIB_TOP5SEL;}))MIB_TOP5SEL=top5.length?top5[0].name:null;
-  var l2='';
-  if(MIB_TOP5SEL){
-    var tBy=mibAggMatch(function(e){return e===MIB_TOP5SEL;},weeks,MIB_MODE,'Organic');
-    var tT=mibTotal(tBy,weeks);var tp=mibPrice(tT);
-    l2='<div class="mib-hl-row"><b>Top 5 Informal:</b> '+MIB_TOP5SEL.split(' ').slice(0,2).join(' ')+' vendio al mundo a $'+(tp?tp.toFixed(3):'-')+'/lb (n='+tT.n+')'+((fp&&tp)?' '+mibFmtDelta((tp-fp)/fp*100)+' vs Formal':'')+'</div>';
+// -- selection state (persisted) --
+var MIB_SEL_LS='jlz_mib_selected_entities';
+var selectedEntities=[];
+try{selectedEntities=JSON.parse(localStorage.getItem(MIB_SEL_LS)||'[]')||[];}catch(e){selectedEntities=[];}
+function mibSaveSelected(){try{localStorage.setItem(MIB_SEL_LS,JSON.stringify(selectedEntities));}catch(e){}}
+var MIB_MAX_SEL=6;
+window.mibToggleEntity=function(name){
+  var idx=selectedEntities.indexOf(name);
+  if(idx>=0){selectedEntities.splice(idx,1);}
+  else{if(selectedEntities.length>=MIB_MAX_SEL)return;selectedEntities.push(name);}
+  mibSaveSelected();mibRenderAll();
+};
+window.mibAddMySuppliers=function(){
+  mibFullRoster().filter(function(r){return r.isMine;}).forEach(function(r){
+    if(selectedEntities.length<MIB_MAX_SEL&&selectedEntities.indexOf(r.name)<0)selectedEntities.push(r.name);
+  });
+  mibSaveSelected();mibRenderAll();
+};
+
+// -- shipment-level drill-down (now shows exporter name; respects current selection) --
+function mibDrillHtml(week,colspan){
+  if(!mibHasDetailWindow(week)){
+    return '<tr><td colspan="'+colspan+'"><div style="padding:6px 10px;color:var(--gray-400);font-size:10.5px">Shipment detail available for the last ~16 weeks only.</div></td></tr>';
   }
-
-  var sup=MIB_MYSUP.filter(function(s){return s.name===MIB_MYSUPSEL;})[0]||MIB_MYSUP[0];
-  var sBy=mibAggMatch(mibMatchName(sup.pat),weeks,MIB_MODE,'Organic');
-  var sT=mibTotal(sBy,weeks);var sp=mibPrice(sT);
-  var mq=mibMyQuotes(weeks);var myAgg={l:0,u:0,n:0};
-  Object.keys(mq[sup.name]||{}).forEach(function(w){var v=mq[sup.name][w];myAgg.l+=v.l;myAgg.u+=v.u;myAgg.n+=v.n;});
-  var myRaw=myAgg.l?myAgg.u/myAgg.l:null;
-  var myAdj=myRaw!=null?mibAdjust(sup.name,myRaw):null;
-  var l3='<div class="mib-hl-row"><b>Mis proveedores:</b> '+sup.name+' (mundo) $'+(sp?sp.toFixed(3):'-')+'/lb (n='+sT.n+')'+(myAdj!=null?' &middot; vos (FOB) $'+myAdj.toFixed(3)+'/lb (n='+myAgg.n+')'+(sp?' '+mibFmtDelta((myAdj-sp)/sp*100)+' vs su precio mundial':''):' &middot; sin ordenes tuyas en este rango')+'</div>';
-
-  el.innerHTML=l1+l2+l3;
-}
-function mibRenderVolCard(){
-  var el=ge('mib-volcard');if(!el)return;
-  var allWeeks=[];var seen={};(D.expwk||[]).forEach(function(r){if(!seen[r.yw]){seen[r.yw]=1;allWeeks.push(r.yw);}});
-  allWeeks.sort();
-  var last52=allWeeks.slice(-52);
-  var fBy=mibAggMatch(mibIsFormal,last52,'Both','Organic');
-  var iBy=mibAggMatch(mibIsInformal,last52,'Both','Organic');
-  var spreads=[];
-  last52.forEach(function(w){var f=fBy[w],i=iBy[w];if(f&&i&&f.lbs&&i.lbs){spreads.push(((f.usd/f.lbs)-(i.usd/i.lbs))/(i.usd/i.lbs)*100);}});
-  if(!spreads.length){el.textContent='Sin suficiente historia todavia para calcular volatilidad.';return;}
-  var mn=Math.min.apply(null,spreads),mx=Math.max.apply(null,spreads);
-  var avg=spreads.reduce(function(a,b){return a+b;},0)/spreads.length;
-  el.innerHTML='<b>Contexto real:</b> el premium de Formal sobre Informal, ultimas '+spreads.length+' semanas con datos, rondo entre <b>'+mn.toFixed(1)+'%</b> y <b>'+mx.toFixed(1)+'%</b> (promedio <b>'+(avg>=0?'+':'')+avg.toFixed(1)+'%</b>). Este agregado es mundial -- el filtro de Destino de arriba aplica solo al detalle por envio (flechita), no a este numero ni a los charts.';
-}
-
-// -- layer: mercado --
-function mibRenderMarket(){
-  var weeks=mibWeeksInRange(ge('mib-from').value,ge('mib-to').value).sort().reverse();
-  var incW=mibIncW();
-  var fBy=mibAggMatch(mibIsFormal,weeks,MIB_MODE,'Organic');
-  var iBy=mibAggMatch(mibIsInformal,weeks,MIB_MODE,'Organic');
-  function side(tblId,byWeek,matchFn,tag){
-    var html=weeks.map(function(wk){
-      var v=byWeek[wk],p=mibPrice(v);
-      var flag=wk===incW?' *':'';
-      var key='mkt'+tag+'|'+wk;
-      var arrow=(mibDrillOpen===key)?'\u25be':'\u25b8';
-      var main='<tr><td style="cursor:pointer" onclick="mibToggleDrill(\''+key+'\')">'+arrow+' '+mibShortWk(wk)+flag+'</td><td>'+(p?'$'+p.toFixed(3):'-')+'</td><td class="n">'+(v?v.n:0)+'</td></tr>';
-      var drill=(mibDrillOpen===key)?mibDrillHtml(matchFn,wk,3):'';
-      return main+drill;
-    }).join('');
-    var tb=ge(tblId);if(tb)tb.innerHTML=html;
+  var rows=(D.shipDet||[]).filter(function(r){
+    if(r.yw!==week)return false;
+    if(MIB_CAT&&r.cat!==MIB_CAT)return false;
+    if(MIB_MODE!=='Both'&&r.mode!==MIB_MODE)return false;
+    if(MIB_DEST!=='_ALL'&&r.country!==MIB_DEST)return false;
+    if(selectedEntities.length&&selectedEntities.indexOf(r.exp)<0)return false;
+    return true;
+  });
+  if(!rows.length){
+    return '<tr><td colspan="'+colspan+'"><div style="padding:6px 10px;color:var(--gray-400);font-size:10.5px">No shipments for this filter.</div></td></tr>';
   }
-  side('mib-tbl-market-formal',fBy,mibIsFormal,'F');
-  side('mib-tbl-market-informal',iBy,mibIsInformal,'I');
-  var labels=weeks.slice().reverse().map(function(w){return w===incW?mibShortWk(w)+'*':mibShortWk(w);});
-  var fS=weeks.slice().reverse().map(function(w){return mibPrice(fBy[w]);});
-  var iS=weeks.slice().reverse().map(function(w){return mibPrice(iBy[w]);});
-  mibDrawChart('mib-chart-market',labels,[
-    {label:'Formal',data:fS,borderColor:'#0d5026',backgroundColor:'rgba(13,80,38,.08)',fill:true},
-    {label:'Informal',data:iS,borderColor:'#9ca3af',backgroundColor:'transparent',fill:false,borderDash:[4,3]}
-  ]);
-}
-
-// -- layer: top 5 informal --
-function mibRenderTop5Sel(){
-  var top5=mibTop5Informal();
-  if(!MIB_TOP5SEL||!top5.some(function(t){return t.name===MIB_TOP5SEL;}))MIB_TOP5SEL=top5.length?top5[0].name:null;
-  var el=ge('mib-top5-sel');if(!el)return;
-  el.innerHTML=top5.map(function(t){
-    return '<button class="mib-entbtn'+(t.name===MIB_TOP5SEL?' active':'')+'" onclick="mibSelTop5(\''+t.name.replace(/'/g,"\\'")+'\')">'+t.name.split(' ').slice(0,2).join(' ')+'</button>';
-  }).join('')||'<span style="color:var(--gray-400);font-size:11px">No hay suficientes informales en los ultimos 12 meses.</span>';
-}
-window.mibSelTop5=function(name){MIB_TOP5SEL=name;mibDrillOpen=null;mibRenderAll();};
-function mibRenderTop5(){
-  mibRenderTop5Sel();
-  var tb=ge('mib-tbl-top5');
-  if(!MIB_TOP5SEL){if(tb)tb.innerHTML='';return;}
-  var weeks=mibWeeksInRange(ge('mib-from').value,ge('mib-to').value).sort().reverse();
-  var incW=mibIncW();
-  var matchFn=function(e){return e===MIB_TOP5SEL;};
-  var tBy=mibAggMatch(matchFn,weeks,MIB_MODE,'Organic');
-  var fBy=mibAggMatch(mibIsFormal,weeks,MIB_MODE,'Organic');
-  var html=weeks.map(function(wk){
-    var v=tBy[wk],p=mibPrice(v);var fp=mibPrice(fBy[wk]);
-    var flag=wk===incW?' *':'';
-    var key='top5|'+wk;
-    var arrow=(mibDrillOpen===key)?'\u25be':'\u25b8';
-    var main='<tr><td style="cursor:pointer" onclick="mibToggleDrill(\''+key+'\')">'+arrow+' '+mibShortWk(wk)+flag+'</td><td>'+(p?'$'+p.toFixed(3):'-')+'</td><td class="n">'+(v?v.n:0)+'</td><td>'+((p&&fp)?mibFmtDelta((p-fp)/fp*100):'-')+'</td></tr>';
-    var drill=(mibDrillOpen===key)?mibDrillHtml(matchFn,wk,4):'';
-    return main+drill;
+  var body=rows.map(function(r){
+    var ros=mibRosterOf(r.exp);
+    return '<tr><td>'+mibDisplayName2(ros||{name:r.exp})+'</td><td>'+r.buyer+'</td><td>'+r.country+'</td><td>'+r.mode+'</td><td class="r">'+(r.lbs/1000).toFixed(1)+'k</td><td class="r">$'+(r.usd/r.lbs).toFixed(3)+'</td></tr>';
   }).join('');
-  if(tb)tb.innerHTML=html;
-  var labels=weeks.slice().reverse().map(function(w){return w===incW?mibShortWk(w)+'*':mibShortWk(w);});
-  var tS=weeks.slice().reverse().map(function(w){return mibPrice(tBy[w]);});
-  var fS=weeks.slice().reverse().map(function(w){return mibPrice(fBy[w]);});
-  mibDrawChart('mib-chart-top5',labels,[
-    {label:MIB_TOP5SEL.split(' ').slice(0,2).join(' '),data:tS,borderColor:'#d97706',backgroundColor:'rgba(217,119,6,.08)',fill:true},
-    {label:'Formal (ref.)',data:fS,borderColor:'#0d5026',backgroundColor:'transparent',fill:false,borderDash:[4,3]}
-  ]);
+  return '<tr><td colspan="'+colspan+'"><table class="mib-drilltbl"><thead><tr><th>Exporter</th><th>Buyer</th><th>Country</th><th>Mode</th><th>Lbs</th><th>$/lb</th></tr></thead><tbody>'+body+'</tbody></table></td></tr>';
+}
+window.mibToggleDrill=function(week){mibDrillOpen=(mibDrillOpen===week)?null:week;mibRenderTable();};
+
+// -- gap-to-close: real orders (FOB-adjusted) vs. the chosen comparison set --
+function mibComputeGap(weeks){
+  if(!weeks.length)return{marketPrice:null,myAvg:null,gap:null};
+  var compareSet=selectedEntities.length?selectedEntities:mibFullRoster().filter(function(r){return !r.isFormal;}).map(function(r){return r.name;});
+  var totLbs=0,totUsd=0;
+  compareSet.forEach(function(name){
+    var by=mibAggMatch(function(e){return e===name;},weeks,MIB_MODE,MIB_CAT,MIB_DEST);
+    weeks.forEach(function(w){var v=by[w];if(v){totLbs+=v.lbs;totUsd+=v.usd;}});
+  });
+  var marketPrice=totLbs?totUsd/totLbs:null;
+  var mq=mibMyQuotes(weeks);
+  var myLbs=0,myUsd=0;
+  MIB_MYSUP.forEach(function(s){
+    Object.keys(mq[s.name]||{}).forEach(function(w){
+      var v=mq[s.name][w];if(!v.l)return;
+      var adj=mibAdjust(s.name,v.u/v.l);
+      myLbs+=v.l;myUsd+=adj*v.l;
+    });
+  });
+  var myAvg=myLbs?myUsd/myLbs:null;
+  var gap=(marketPrice&&myAvg!=null)?((myAvg-marketPrice)/marketPrice*100):null;
+  return{marketPrice:marketPrice,myAvg:myAvg,gap:gap};
+}
+function mibRenderGapCard(){
+  var el=ge('mib-gapcard');if(!el)return;
+  var weeks=mibWeeksInRange(ge('mib-from').value,ge('mib-to').value).sort();
+  var cur=mibComputeGap(weeks);
+  if(cur.gap==null){el.innerHTML='<div class="mib-gap-sub">Not enough data (real orders + market data) in this range/selection to compute a gap.</div>';return;}
+  var prior=mibComputeGap(mibPriorWeeks(weeks));
+  var cls=cur.gap>5?'wide':(cur.gap<-5?'close':'flat');
+  var trendCls='flat',trendTxt='flat vs. prior period';
+  if(prior.gap!=null){
+    if(Math.abs(cur.gap)<Math.abs(prior.gap)-1){trendCls='closing';trendTxt='closing vs. prior period';}
+    else if(Math.abs(cur.gap)>Math.abs(prior.gap)+1){trendCls='widening';trendTxt='widening vs. prior period';}
+  }
+  var setLabel=selectedEntities.length?(selectedEntities.length+' selected exporter(s)'):'all Informal exporters (default -- pick some below to narrow it)';
+  el.innerHTML='<div class="mib-gap-main"><div class="mib-gap-num '+cls+'">'+(cur.gap>=0?'+':'')+cur.gap.toFixed(1)+'%</div>'
+    +'<div class="mib-gap-sub">Real orders average <b>$'+cur.myAvg.toFixed(3)+'/lb</b> (FOB-adjusted) vs. <b>$'+cur.marketPrice.toFixed(3)+'/lb</b> for the comparison set</div>'
+    +'<span class="mib-gap-trend '+trendCls+'">'+trendTxt+'</span></div>'
+    +'<div class="mib-legend" style="margin-top:8px">Comparison set: '+setLabel+' &middot; '+(MIB_DEST==='_ALL'?'worldwide':'US buyers only')+' &middot; '+weeks.length+' week(s)</div>';
 }
 
-// -- layer: mis proveedores --
+// -- entity picker (roster + chips) --
+function mibRenderEntityRoster(filterText){
+  var el=ge('mib-entity-roster');if(!el)return;
+  var q=(filterText||'').toLowerCase().trim();
+  var rows=mibFullRoster().filter(function(r){return !q||r.name.toLowerCase().indexOf(q)>=0;});
+  el.innerHTML=rows.slice(0,80).map(function(r){
+    var checked=selectedEntities.indexOf(r.name)>=0;
+    var badges='<span class="mib-rtag '+(r.isFormal?'Formal':'Informal')+'">'+(r.isFormal?'Formal':'Informal')+'</span>'+(r.isMine?'<span class="mib-rtag Mine">Mine</span>':'');
+    return '<div class="mib-roster-row'+(checked?' checked':'')+'" onclick="mibToggleEntity(\''+r.name.replace(/'/g,"\\'")+'\')">'
+      +'<input type="checkbox" '+(checked?'checked':'')+' onclick="event.stopPropagation();mibToggleEntity(\''+r.name.replace(/'/g,"\\'")+'\')">'
+      +'<span class="rname" title="'+r.name.replace(/"/g,'&quot;')+'">'+mibDisplayName2(r)+'</span>'+badges
+      +'<span class="rvol">'+(r.lbs12mo/1e6).toFixed(1)+'M lbs/yr</span></div>';
+  }).join('');
+}
+function mibRenderSelChips(){
+  var el=ge('mib-sel-chips');if(!el)return;
+  var PAL=['#0d5026','#d97706','#2563eb','#9333ea','#dc2626','#0891b2'];
+  el.innerHTML=selectedEntities.map(function(name,i){
+    var r=mibRosterOf(name);var color=PAL[i%PAL.length];
+    return '<span class="mib-selchip" style="background:'+color+'">'+mibDisplayName2(r||{name:name})+'<button onclick="mibToggleEntity(\''+name.replace(/'/g,"\\'")+'\')">&times;</button></span>';
+  }).join('')||'<span style="color:var(--gray-400);font-size:11px">No exporters selected -- pick some below, or use "+ Add my suppliers".</span>';
+}
+
+// -- FOB settings --
 function mibRenderFobSettings(){
   var el=ge('mib-fob-settings');if(!el)return;
   el.innerHTML=MIB_MYSUP.map(function(s){
     var f=mibFobOf(s.name);
-    var destRow=s.incoterm==='DDP'?('<label>Gastos import. destino $/lb</label><input type="number" step="0.01" min="0" value="'+(f.dest||0)+'" onchange="mibSetFob(\''+s.name+'\',\'dest\',this.value)">'):'';
+    var destRow=s.incoterm==='DDP'?('<label>Destination import costs $/lb</label><input type="number" step="0.01" min="0" value="'+(f.dest||0)+'" onchange="mibSetFob(\''+s.name+'\',\'dest\',this.value)">'):'';
     return '<div class="mib-fobrow"><span class="nm">'+s.name+'</span><span class="ic">'+s.incoterm+'</span>'
-      +'<label>Flete+seguro $/lb</label><input type="number" step="0.01" min="0" value="'+(f.freight||0)+'" onchange="mibSetFob(\''+s.name+'\',\'freight\',this.value)">'
+      +'<label>Freight+insurance $/lb</label><input type="number" step="0.01" min="0" value="'+(f.freight||0)+'" onchange="mibSetFob(\''+s.name+'\',\'freight\',this.value)">'
       +destRow+'</div>';
   }).join('');
 }
-window.mibSetFob=function(name,field,val){
-  if(!mibFob[name])mibFob[name]={freight:0,dest:0};
-  mibFob[name][field]=parseFloat(val)||0;
-  mibSaveFob();mibRenderAll();
-};
-function mibRenderMySupSel(){
-  var el=ge('mib-mysup-sel');if(!el)return;
-  el.innerHTML=MIB_MYSUP.map(function(s){
-    return '<button class="mib-entbtn'+(s.name===MIB_MYSUPSEL?' active':'')+'" onclick="mibSelMySup(\''+s.name+'\')">'+s.name+'</button>';
-  }).join('');
+window.mibSetFob=function(name,field,val){if(!mibFob[name])mibFob[name]={freight:0,dest:0};mibFob[name][field]=parseFloat(val)||0;mibSaveFob();mibRenderAll();};
+
+// -- main overlay chart: one line per selected exporter, point shape = dominant mode, plus my real shipments --
+function mibDominantModeShape(name,week){
+  var vAir=mibAggMatch(function(e){return e===name;},[week],'Air',MIB_CAT,MIB_DEST)[week];
+  var vSea=mibAggMatch(function(e){return e===name;},[week],'Sea',MIB_CAT,MIB_DEST)[week];
+  var air=vAir?vAir.lbs:0,sea=vSea?vSea.lbs:0,tot=air+sea;
+  if(!tot)return 'circle';
+  if(air/tot>0.9)return 'triangle';
+  if(sea/tot>0.9)return 'circle';
+  return 'rectRot';
 }
-window.mibSelMySup=function(name){MIB_MYSUPSEL=name;mibDrillOpen=null;mibRenderAll();};
-function mibRenderMySup(){
-  mibRenderFobSettings();mibRenderMySupSel();
-  var sup=MIB_MYSUP.filter(function(s){return s.name===MIB_MYSUPSEL;})[0]||MIB_MYSUP[0];
-  var weeks=mibWeeksInRange(ge('mib-from').value,ge('mib-to').value).sort().reverse();
+function mibRenderChart(){
+  var ctx=ge('mib-chart-main');if(!ctx)return;
+  var weeks=mibWeeksInRange(ge('mib-from').value,ge('mib-to').value).sort();
   var incW=mibIncW();
-  var matchFn=mibMatchName(sup.pat);
-  var wBy=mibAggMatch(matchFn,weeks,MIB_MODE,'Organic');
-  var mq=mibMyQuotes(weeks)[sup.name]||{};
-  var totalN=0;
-  var html=weeks.map(function(wk){
-    var v=wBy[wk],p=mibPrice(v);
-    var mv=mq[wk];var raw=(mv&&mv.l)?mv.u/mv.l:null;
-    var adj=raw!=null?mibAdjust(sup.name,raw):null;
-    if(mv)totalN+=mv.n;
-    var flag=wk===incW?' *':'';
-    var key='mysup|'+wk;
-    var arrow=(mibDrillOpen===key)?'\u25be':'\u25b8';
-    var main='<tr><td style="cursor:pointer" onclick="mibToggleDrill(\''+key+'\')">'+arrow+' '+mibShortWk(wk)+flag+'</td><td>'+(p?'$'+p.toFixed(3):'-')+'</td><td class="n">'+(v?v.n:0)+'</td><td style="color:#d97706;font-weight:600">'+(adj!=null?'$'+adj.toFixed(3):'-')+'</td><td>'+((adj!=null&&p)?mibFmtDelta((adj-p)/p*100):'-')+'</td></tr>';
-    var drill=(mibDrillOpen===key)?mibDrillHtml(matchFn,wk,5):'';
-    return main+drill;
-  }).join('');
-  var tb=ge('mib-tbl-mysup');if(tb)tb.innerHTML=html;
-  var labels=weeks.slice().reverse().map(function(w){return w===incW?mibShortWk(w)+'*':mibShortWk(w);});
-  var wS=weeks.slice().reverse().map(function(w){return mibPrice(wBy[w]);});
-  var mS=weeks.slice().reverse().map(function(w){var mv=mq[w];if(!mv||!mv.l)return null;return mibAdjust(sup.name,mv.u/mv.l);});
-  mibDrawChart('mib-chart-mysup',labels,[
-    {label:sup.name+' (mundo)',data:wS,borderColor:'#0d5026',backgroundColor:'rgba(13,80,38,.08)',fill:true},
-    {label:'Mio (FOB)',data:mS,borderColor:'#d97706',backgroundColor:'#d97706',showLine:false,pointRadius:5,pointStyle:'rectRot'}
-  ]);
-  var note=ge('mib-orders-note');
-  if(note)note.textContent=totalN?('Comparado contra '+totalN+' orden(es) real(es) en esta ventana, alineadas por ETD.'):'Sin ordenes tuyas registradas para '+sup.name+' en esta ventana.';
+  var labels=weeks.map(function(w){return w===incW?mibShortWk(w)+'*':mibShortWk(w);});
+  var PAL=['#0d5026','#d97706','#2563eb','#9333ea','#dc2626','#0891b2'];
+  var datasets=selectedEntities.map(function(name,i){
+    var by=mibAggMatch(function(e){return e===name;},weeks,MIB_MODE,MIB_CAT,MIB_DEST);
+    var data=weeks.map(function(w){return mibPrice(by[w]);});
+    var shapes=weeks.map(function(w){return mibDominantModeShape(name,w);});
+    var color=PAL[i%PAL.length];
+    var ros=mibRosterOf(name);
+    return{label:mibDisplayName2(ros||{name:name}),data:data,borderColor:color,backgroundColor:'transparent',pointStyle:shapes,pointRadius:6,pointBackgroundColor:color,pointBorderColor:color,spanGaps:true,tension:.2,borderWidth:2};
+  });
+  var mq=mibMyQuotes(weeks);
+  var myData=weeks.map(function(w){
+    var l=0,u=0;
+    MIB_MYSUP.forEach(function(s){var v=(mq[s.name]||{})[w];if(v&&v.l){var adj=mibAdjust(s.name,v.u/v.l);l+=v.l;u+=adj*v.l;}});
+    return l?u/l:null;
+  });
+  datasets.push({label:'My shipments (real orders)',data:myData,borderColor:'#000',backgroundColor:'#000',showLine:false,pointStyle:'star',pointRadius:9,pointBorderColor:'#000'});
+  if(MIB_CHARTS['main'])MIB_CHARTS['main'].destroy();
+  miKill(ctx);
+  MIB_CHARTS['main']=new Chart(ctx.getContext('2d'),{type:'line',data:{labels:labels,datasets:datasets},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'nearest',intersect:true},
+      plugins:{legend:{position:'top',labels:{font:{size:10.5},boxWidth:10,usePointStyle:true}},tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': '+(c.raw!=null?'$'+c.raw.toFixed(3)+'/lb':'no data');}}}},
+      scales:{x:{ticks:{font:{size:9.5}},grid:{display:false}},y:{ticks:{callback:function(v){return '$'+v.toFixed(2);},font:{size:10}},grid:{color:'rgba(0,0,0,.04)'}}}}});
 }
 
-// -- chart helper (reuses miKill, defined earlier in this file) --
-function mibDrawChart(id,labels,datasets){
-  var ctx=ge(id);if(!ctx)return;
-  miKill(ctx);
-  MIB_CHARTS[id]=new Chart(ctx.getContext('2d'),{type:'line',data:{labels:labels,datasets:datasets.map(function(d){return Object.assign({tension:.25,spanGaps:true,pointRadius:d.pointRadius||2,borderWidth:2},d);})},
-    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
-      plugins:{legend:{position:'top',labels:{font:{size:10},boxWidth:9}},tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': '+(c.raw!=null?'$'+c.raw.toFixed(3)+'/lb':'-');}}}},
-      scales:{x:{ticks:{font:{size:9}},grid:{display:false}},y:{ticks:{callback:function(v){return '$'+v.toFixed(2);},font:{size:9}},grid:{color:'rgba(0,0,0,.04)'}}}}});
+// -- weekly table (one column per selected exporter + Mine) --
+function mibRenderTable(){
+  var el=ge('mib-wk-table');if(!el)return;
+  var weeks=mibWeeksInRange(ge('mib-from').value,ge('mib-to').value).sort().reverse();
+  var thead=el.querySelector('thead');
+  if(thead)thead.innerHTML='<tr><th></th><th>Week</th>'+selectedEntities.map(function(name){var r=mibRosterOf(name);return '<th>'+mibDisplayName2(r||{name:name})+'</th>';}).join('')+'<th>Mine (real)</th></tr>';
+  var colspan=2+selectedEntities.length+1;
+  var incW=mibIncW();
+  var mqAll=mibMyQuotes(weeks);
+  var body=weeks.map(function(wk){
+    var arrow=(mibDrillOpen===wk)?'\u25be':'\u25b8';
+    var flag=wk===incW?' *':'';
+    var cells=selectedEntities.map(function(name){
+      var by=mibAggMatch(function(e){return e===name;},[wk],MIB_MODE,MIB_CAT,MIB_DEST);
+      var p=mibPrice(by[wk]);
+      return '<td>'+(p?'$'+p.toFixed(3):'-')+'</td>';
+    }).join('');
+    var l=0,u=0;
+    MIB_MYSUP.forEach(function(s){var v=(mqAll[s.name]||{})[wk];if(v&&v.l){var adj=mibAdjust(s.name,v.u/v.l);l+=v.l;u+=adj*v.l;}});
+    var mine=l?'$'+(u/l).toFixed(3):'-';
+    var main='<tr><td style="cursor:pointer" onclick="mibToggleDrill(\''+wk+'\')">'+arrow+'</td><td>'+mibShortWk(wk)+flag+'</td>'+cells+'<td style="color:#d97706;font-weight:600">'+mine+'</td></tr>';
+    var drill=(mibDrillOpen===wk)?mibDrillHtml(wk,colspan):'';
+    return main+drill;
+  }).join('');
+  var tb=ge('mib-wk-body');if(tb)tb.innerHTML=body;
+}
+
+// -- week-reference labels next to BOTH date fields --
+function mibUpdateWkRefs(){
+  var fromV=ge('mib-from').value,toV=ge('mib-to').value;
+  var f=ge('mib-wkref-from'),t=ge('mib-wkref-to');
+  if(f)f.textContent=fromV?('('+mibShortWk(isoWk(mibParseDate(fromV)))+')'):'';
+  if(t)t.textContent=toV?('('+mibShortWk(isoWk(mibParseDate(toV)))+')'):'';
 }
 
 // -- wiring --
-window.mibQuickRange=function(nWeeks){
-  var maxD=(D.meta&&D.meta.data_through)?mibParseDate(D.meta.data_through):new Date();
-  var fromDate=new Date(maxD);fromDate.setDate(fromDate.getDate()-(nWeeks*7-1));
+window.mibQuickCampaign=function(){
+  // Campaign year runs June 1 -> next May 31 (confirmed with real data: sea ramps
+  // June, peaks Aug-Nov, winds down by March, sometimes air-bridges into Apr/May).
+  var toDate=(D.meta&&D.meta.data_through)?mibParseDate(D.meta.data_through):new Date();
+  var campYear=toDate.getMonth()>=5?toDate.getFullYear():toDate.getFullYear()-1; // getMonth() is 0-indexed, 5=June
+  var fromDate=new Date(campYear,5,1);
   var fe=ge('mib-from'),te=ge('mib-to');
   if(fe)fe.value=mibFmtDate(fromDate);
-  if(te)te.value=mibFmtDate(maxD);
+  if(te)te.value=mibFmtDate(toDate);
   mibRenderAll();
 };
-window.mibSetMode=function(m,btn){
-  var box=btn.closest('.mi-ptog');if(box)box.querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});
-  btn.classList.add('active');MIB_MODE=m;mibRenderAll();
+window.mibQuickRange=function(nWeeks){
+  var toDate=(D.meta&&D.meta.data_through)?mibParseDate(D.meta.data_through):new Date();
+  var fromDate=new Date(toDate);fromDate.setDate(fromDate.getDate()-(nWeeks*7-1));
+  var fe=ge('mib-from'),te=ge('mib-to');
+  if(fe)fe.value=mibFmtDate(fromDate);
+  if(te)te.value=mibFmtDate(toDate);
+  mibRenderAll();
 };
-window.mibSetDest=function(d,btn){
-  var box=btn.closest('.mi-ptog');if(box)box.querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});
-  btn.classList.add('active');MIB_DEST=d;mibRenderAll();
-};
-window.mibSetLayer=function(name,btn){
-  document.querySelectorAll('.mib-tabbtn').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');
-  document.querySelectorAll('.mib-layer').forEach(function(l){l.style.display='none';});
-  var el=ge('mib-layer-'+name);if(el)el.style.display='block';
-  MIB_LAYER=name;mibDrillOpen=null;mibRenderAll();
-};
-function mibRenderCurrentLayer(){
-  if(MIB_LAYER==='market')mibRenderMarket();
-  else if(MIB_LAYER==='top5')mibRenderTop5();
-  else mibRenderMySup();
-}
+window.mibSetMode=function(m,btn){var box=btn.closest('.mi-ptog');if(box)box.querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');MIB_MODE=m;mibRenderAll();};
+window.mibSetDest=function(d,btn){var box=btn.closest('.mi-ptog');if(box)box.querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');MIB_DEST=d;mibRenderAll();};
+window.mibSetCat=function(c,btn){var box=btn.closest('.mi-ptog');if(box)box.querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');MIB_CAT=c;mibRenderAll();};
+
 function mibRenderAll(){
   if(!ge('mib-from'))return;
-  mibRenderHeadline();
-  mibRenderVolCard();
-  mibRenderCurrentLayer();
+  mibUpdateWkRefs();
+  mibRenderFobSettings();
+  mibRenderEntityRoster(ge('mib-roster-search')?ge('mib-roster-search').value:'');
+  mibRenderSelChips();
+  mibRenderGapCard();
+  mibRenderChart();
+  mibRenderTable();
 }
 function mibEnsureDefaultRange(){
+  if(!selectedEntities.length){
+    mibFullRoster().filter(function(r){return r.isMine;}).forEach(function(r){if(selectedEntities.length<MIB_MAX_SEL)selectedEntities.push(r.name);});
+    mibSaveSelected();
+  }
   var fe=ge('mib-from');
-  if(fe&&!fe.value)mibQuickRange(2);
+  if(fe&&!fe.value)mibQuickRange(8);
   else mibRenderAll();
 }
 (function(){
