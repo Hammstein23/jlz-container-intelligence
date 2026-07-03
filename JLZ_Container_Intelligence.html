@@ -6349,6 +6349,8 @@ window.mibSetCat=function(c,btn){var box=btn.closest('.mi-ptog');if(box)box.quer
 function mibRenderAll(){
   if(!ge('mib-from'))return;
   mibUpdateWkRefs();
+  mifRenderChips();
+  mifRenderRoster(ge('mif-search')?ge('mif-search').value:'');
   mibRenderFobSettings();
   mibRenderEntityRoster(ge('mib-roster-search')?ge('mib-roster-search').value:'');
   mibRenderSelChips();
