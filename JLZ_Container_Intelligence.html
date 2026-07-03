@@ -5107,6 +5107,10 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
 <div class="mi-topbar">
   <span class="mi-topbar-title">Market Intelligence</span>
   <span class="mi-lag-badge">&#9432; Data through <strong id="mi-thru">-</strong> &nbsp;&middot;&nbsp; ~1 month lag</span>
+  <div class="mi-ptog" id="mi-unit-tog">
+    <button class="mi-pill active" onclick="miSetUnit('lb',this)">$/lb</button>
+    <button class="mi-pill" onclick="miSetUnit('case',this)">$/case (30lb)</button>
+  </div>
   <label class="mi-upload-btn" for="mi-file-inp">
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
     Load Veritrade
@@ -5123,10 +5127,10 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
 
 <div id="mi-s-prices" class="mi-sec active">
   <div class="mi-krow">
-    <div class="mi-kpi"><div class="mi-kpi-lbl">&#127807; Organic FOB</div><div class="mi-kpi-val" id="kp-org">-</div><div class="mi-kpi-sub">$/lb &middot; 4-week avg</div><div class="mi-delta neu" id="kp-org-d"></div></div>
-    <div class="mi-kpi"><div class="mi-kpi-lbl">Conventional FOB</div><div class="mi-kpi-val" id="kp-conv">-</div><div class="mi-kpi-sub">$/lb &middot; 4-week avg</div></div>
+    <div class="mi-kpi"><div class="mi-kpi-lbl">&#127807; Organic FOB</div><div class="mi-kpi-val" id="kp-org">-</div><div class="mi-kpi-sub">4-week avg</div><div class="mi-delta neu" id="kp-org-d"></div></div>
+    <div class="mi-kpi"><div class="mi-kpi-lbl">Conventional FOB</div><div class="mi-kpi-val" id="kp-conv">-</div><div class="mi-kpi-sub">4-week avg</div></div>
     <div class="mi-kpi"><div class="mi-kpi-lbl">Organic Premium</div><div class="mi-kpi-val" id="kp-spread">-</div><div class="mi-kpi-sub">vs Conventional</div></div>
-    <div class="mi-kpi"><div class="mi-kpi-lbl">My Avg (Orders)</div><div class="mi-kpi-val" id="kp-mine">-</div><div class="mi-kpi-sub">FOB equiv $/lb</div><div class="mi-delta neu" id="kp-mine-d"></div></div>
+    <div class="mi-kpi"><div class="mi-kpi-lbl">My Avg (Orders)</div><div class="mi-kpi-val" id="kp-mine">-</div><div class="mi-kpi-sub">FOB equiv</div><div class="mi-delta neu" id="kp-mine-d"></div></div>
     <div class="mi-kpi"><div class="mi-kpi-lbl">Organic Volume</div><div class="mi-kpi-val" id="kp-vol">-</div><div class="mi-kpi-sub">M lbs &middot; 4 weeks</div></div>
   </div>
   <div class="mi-card">
@@ -5140,7 +5144,7 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
   <div class="mi-card">
     <div class="mi-ch"><span class="mi-ct">Weekly Log</span><span class="mi-hint">Click a week to see individual shipments</span></div>
     <div style="padding:0;overflow-x:auto">
-      <table class="mi-tbl"><thead><tr><th>Week</th><th class="r">Org $/lb</th><th class="r">Org Klbs</th><th class="r">Conv $/lb</th><th class="r">Conv Klbs</th><th class="r">Premium</th></tr></thead><tbody id="mi-wk-tbl"></tbody></table>
+      <table class="mi-tbl"><thead><tr><th>Week</th><th class="r">Org Price</th><th class="r">Org Klbs</th><th class="r">Conv Price</th><th class="r">Conv Klbs</th><th class="r">Premium</th></tr></thead><tbody id="mi-wk-tbl"></tbody></table>
     </div>
   </div>
 </div>
@@ -5163,6 +5167,7 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
       <button class="mi-pill" onclick="miMktCat('Organic',this)">Organic</button>
       <button class="mi-pill" onclick="miMktCat('Conventional',this)">Conventional</button>
     </div>
+    <div class="mi-ptog" id="mi-mkt-view-tog"><button class="mi-pill active" onclick="miMktView('exporters',this)">Exporters (Peru)</button><button class="mi-pill" onclick="miMktView('buyers',this)">Buyers (US)</button></div>
     <div class="mi-date-ctrl"><span>Destination:</span><select id="mi-mkt-country" onchange="miRenderMkt()"></select></div>
   </div>
 
@@ -5181,11 +5186,11 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
   <div class="mi-g2">
     <div>
       <div class="mi-card">
-        <div class="mi-ch"><span class="mi-ct">Top Exporters</span>
+        <div class="mi-ch"><span class="mi-ct" id="mi-mkt-title">Top Exporters</span>
           <div class="mi-ptog"><button class="mi-pill active" onclick="miMktSort('lbs',this)">Volume</button><button class="mi-pill" onclick="miMktSort('usd',this)">Value</button><button class="mi-pill" onclick="miMktSort('p',this)">Price</button></div>
         </div>
         <span class="mi-hint">Click a row to see who they sold to</span>
-        <div style="max-height:480px;overflow-y:auto;margin-top:8px"><table class="mi-tbl"><thead><tr><th>#</th><th>Exporter</th><th class="r">M lbs</th><th class="r">$/lb</th><th class="r">$K</th></tr></thead><tbody id="mi-mkt-tbl"></tbody></table></div>
+        <div style="max-height:480px;overflow-y:auto;margin-top:8px"><table class="mi-tbl"><thead><tr><th>#</th><th id="mi-mkt-colhead">Exporter</th><th class="r">M lbs</th><th class="r">%</th><th class="r">Price</th><th class="r">$K</th></tr></thead><tbody id="mi-mkt-tbl"></tbody></table></div>
       </div>
     </div>
     <div>
@@ -5213,7 +5218,7 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
     <div class="mi-ptog" id="mih-year-picker"></div>
     <div class="mi-ptog" id="mih-metric-tog">
       <button class="mi-pill active" onclick="mihSetMetric('lbs',this)">Volume</button>
-      <button class="mi-pill" onclick="mihSetMetric('p',this)">Price $/lb</button>
+      <button class="mi-pill" onclick="mihSetMetric('p',this)">Price</button>
     </div>
     <div class="mi-ptog" id="mih-mode-tog">
       <button class="mi-pill active" onclick="mihSetMode('Both',this)">Both</button>
@@ -5420,6 +5425,23 @@ function saveD(){try{localStorage.setItem('jlz_mi_v4',JSON.stringify(D));}catch(
 var PC=null,SC=null,SVC=null,SPC=null,miInited=false,mktSortKey='lbs';
 
 var curPriceCountry='United States',curMktCountry='United States',curRangeW=26,curPriceMode='Both',ptDrillOpen=null;
+var MI_UNIT='lb'; // 'lb' | 'case' -- 30 lbs/case is the fixed industry-standard conversion used everywhere else in this app
+function fmtPx(pxPerLb){
+  if(pxPerLb==null||isNaN(pxPerLb))return null;
+  return MI_UNIT==='case' ? '$'+(pxPerLb*30).toFixed(2)+'/case' : '$'+pxPerLb.toFixed(3)+'/lb';
+}
+function fmtPxAxis(pxPerLb){ return MI_UNIT==='case' ? '$'+(pxPerLb*30).toFixed(0) : '$'+pxPerLb.toFixed(2); }
+window.miSetUnit=function(u,btn){
+  MI_UNIT=u;
+  btn.closest('.mi-ptog').querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});
+  btn.classList.add('active');
+  if(typeof renderKPIs==='function')renderKPIs();
+  if(typeof renderPriceChart==='function')renderPriceChart(curRangeW);
+  if(typeof renderWeeklyTable==='function')renderWeeklyTable();
+  if(typeof renderMkt==='function')renderMkt();
+  if(typeof mihRenderAll==='function')mihRenderAll();
+  if(typeof mibRenderAll==='function')mibRenderAll();
+};
 function ge(id){return document.getElementById(id);}
 function qa(s){return document.querySelectorAll(s);}
 function setText(id,v){var el=ge(id);if(el)el.textContent=v;}
@@ -5472,8 +5494,8 @@ function renderKPIs(){
   var ms=(D.ms4&&D.ms4[cc])?D.ms4[cc]:{};
   var org=ms.Organic||{},cv=ms.Conventional||{};
   var op=org.p||0,cp=cv.p||0;
-  setText('kp-org',op?'$'+op.toFixed(3):'-');
-  setText('kp-conv',cp?'$'+cp.toFixed(3):'-');
+  setText('kp-org',op?fmtPx(op):'-');
+  setText('kp-conv',cp?fmtPx(cp):'-');
   if(op&&cp)setText('kp-spread','+'+(((op-cp)/cp)*100).toFixed(1)+'%');
   else setText('kp-spread','-');
   setText('kp-vol',org.v?(org.v).toFixed(1)+'M':'-');
@@ -5489,7 +5511,7 @@ function renderKPIs(){
   if(_valid.length){
     var _totL=0,_totU=0;_valid.forEach(function(o){_totL+=parseFloat(o.netWeightLb);_totU+=parseFloat(o.cifTotal);});
     var myLb=_totL?_totU/_totL:0;
-    setText('kp-mine','$'+myLb.toFixed(3)+'/lb');
+    setText('kp-mine',fmtPx(myLb));
     if(op){var d=((myLb-op)/op*100).toFixed(1);var e2=ge('kp-mine-d');if(e2){e2.textContent=(d>=0?'+':'')+d+'% vs mkt';e2.className='mi-delta neu';}}
   }
   else setText('kp-mine','No orders');
@@ -5534,7 +5556,7 @@ function renderPriceChart(nW){
     {label:'Conventional',data:labels.map(function(l){return cM[l]||null;}),borderColor:'#d97706',fill:false,tension:0.3,pointRadius:0,borderWidth:1.5,borderDash:[4,3],spanGaps:true}
   ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
     plugins:{legend:{position:'top',labels:{font:{size:11},boxWidth:10}},tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': $'+(c.raw||0).toFixed(4)+'/lb (4wk avg)';}}}},
-    scales:{x:{ticks:{maxTicksLimit:12,font:{size:9}},grid:{display:false}},y:{ticks:{callback:function(v){return '$'+v.toFixed(2);},font:{size:10}},grid:{color:'rgba(0,0,0,.04)'},title:{display:true,text:'$/lb FOB',font:{size:9}}}}}
+    scales:{x:{ticks:{maxTicksLimit:12,font:{size:9}},grid:{display:false}},y:{ticks:{callback:function(v){return fmtPxAxis(v);},font:{size:10}},grid:{color:'rgba(0,0,0,.04)'},title:{display:true,text:MI_UNIT==='case'?'$/case FOB':'$/lb FOB',font:{size:9}}}}}
   });
 }
 
@@ -5551,8 +5573,8 @@ function ptDrillHtml(week,colspan){
     return true;
   });
   if(!rows.length)return '<tr><td colspan="'+colspan+'"><div style="padding:6px 10px;color:var(--gray-400);font-size:10.5px">No shipments for this filter.</div></td></tr>';
-  var body=rows.map(function(r){return '<tr><td>'+r.exp+'</td><td>'+r.buyer+'</td><td>'+r.country+'</td><td>'+r.mode+'</td><td>'+r.cat+'</td><td class="r">'+(r.lbs/1000).toFixed(1)+'k</td><td class="r">$'+(r.usd/r.lbs).toFixed(3)+'</td></tr>';}).join('');
-  return '<tr><td colspan="'+colspan+'"><table class="mo-drill"><thead><tr><th>Exporter</th><th>Buyer</th><th>Country</th><th>Mode</th><th>Cat</th><th>Lbs</th><th>$/lb</th></tr></thead><tbody>'+body+'</tbody></table></td></tr>';
+  var body=rows.map(function(r){return '<tr><td>'+r.exp+'</td><td>'+r.buyer+'</td><td>'+r.country+'</td><td>'+r.mode+'</td><td>'+r.cat+'</td><td class="r">'+(r.lbs/1000).toFixed(1)+'k</td><td class="r">'+fmtPx(r.usd/r.lbs)+'</td></tr>';}).join('');
+  return '<tr><td colspan="'+colspan+'"><table class="mo-drill"><thead><tr><th>Exporter</th><th>Buyer</th><th>Country</th><th>Mode</th><th>Cat</th><th>Lbs</th><th>Price</th></tr></thead><tbody>'+body+'</tbody></table></td></tr>';
 }
 window.ptToggleDrill=function(wk){ptDrillOpen=(ptDrillOpen===wk)?null:wk;renderWeeklyTable();};
 function renderWeeklyTable(){
@@ -5563,7 +5585,7 @@ function renderWeeklyTable(){
   var tb=ge('mi-wk-tbl');if(!tb)return;
   tb.innerHTML=all.map(function(wk){var o=oM[wk]||{},c=cM[wk]||{};var prem=(o.p&&c.p)?((o.p-c.p)/c.p*100).toFixed(1)+'%':'-';
     var arrow=(ptDrillOpen===wk)?'\u25be':'\u25b8';
-    var main='<tr><td style="font-weight:600;cursor:pointer" onclick="ptToggleDrill(\''+wk+'\')">'+arrow+' '+wk+'</td><td class="r" style="color:#0d5026;font-weight:600">'+(o.p?'$'+o.p.toFixed(4):'-')+'</td><td class="r">'+(o.v?o.v.toFixed(0):'-')+'</td><td class="r" style="color:#d97706">'+(c.p?'$'+c.p.toFixed(4):'-')+'</td><td class="r">'+(c.v?c.v.toFixed(0):'-')+'</td><td class="r"><span class="mi-bench ok">'+prem+'</span></td></tr>';
+    var main='<tr><td style="font-weight:600;cursor:pointer" onclick="ptToggleDrill(\''+wk+'\')">'+arrow+' '+wk+'</td><td class="r" style="color:#0d5026;font-weight:600">'+(o.p?fmtPx(o.p):'-')+'</td><td class="r">'+(o.v?o.v.toFixed(0):'-')+'</td><td class="r" style="color:#d97706">'+(c.p?fmtPx(c.p):'-')+'</td><td class="r">'+(c.v?c.v.toFixed(0):'-')+'</td><td class="r"><span class="mi-bench ok">'+prem+'</span></td></tr>';
     var drill=(ptDrillOpen===wk)?ptDrillHtml(wk,6):'';
     return main+drill;
   }).join('');
@@ -5575,7 +5597,7 @@ function renderWeeklyTable(){
 // drill-down reads D.shipDet (same source used by "Comprando bien?").
 // ==============================================================
 var MO_TOP8=['United States','Netherlands','Canada','Spain','United Kingdom','Germany','Italy','Dominican Republic']; // keep in sync with processVT's TOP8
-var moRangeW=8, moMode='Both', moCat='All', moSortKey='lbs', moDrillOpen=null;
+var moRangeW=8, moMode='Both', moCat='All', moSortKey='lbs', moDrillOpen=null, moView='exporters';
 
 function moAllWeeks(){var s={};(D.expwk||[]).forEach(function(r){s[r.yw]=true;});return Object.keys(s).sort();}
 function moWeeksTail(n){return moAllWeeks().slice(-n);}
@@ -5627,6 +5649,51 @@ function moEntrants(curWeeks,mode,cat,cg){
   var dropped=Object.keys(priorSet).filter(function(n){return !curSet[n];});
   return{entrants:entrants,dropped:dropped};
 }
+function moRankingBuyers(weeks,mode,cat,cg){
+  var wset={};weeks.forEach(function(w){wset[w]=true;});
+  var agg={};
+  (D.impWk||[]).forEach(function(r){
+    if(r.cg!==cg)return;
+    if(!wset[r.yw])return;
+    if(cat!=='All'&&r.cat!==cat)return;
+    if(mode!=='Both'&&r.mode!==mode)return;
+    if(!agg[r.buyer])agg[r.buyer]={lbs:0,usd:0,n:0};
+    agg[r.buyer].lbs+=r.lbs;agg[r.buyer].usd+=r.usd;agg[r.buyer].n+=(r.n||0);
+  });
+  return Object.keys(agg).map(function(name){var a=agg[name];return{name:name,lbs:a.lbs,usd:a.usd,n:a.n,p:a.lbs?a.usd/a.lbs:0};});
+}
+function moEntrantsBuyers(curWeeks,mode,cat,cg){
+  var priorWeeks=curWeeks.map(moWeekYearAgo);
+  var curSet={},priorSet={};
+  (D.impWk||[]).forEach(function(r){
+    if(r.cg!==cg)return;
+    if(cat!=='All'&&r.cat!==cat)return;
+    if(mode!=='Both'&&r.mode!==mode)return;
+    if(curWeeks.indexOf(r.yw)>=0)curSet[r.buyer]=true;
+    if(priorWeeks.indexOf(r.yw)>=0)priorSet[r.buyer]=true;
+  });
+  var entrants=Object.keys(curSet).filter(function(n){return !priorSet[n];});
+  var dropped=Object.keys(priorSet).filter(function(n){return !curSet[n];});
+  return{entrants:entrants,dropped:dropped};
+}
+function moExportersForBuyer(buyerName,weeks,mode,cat,cg){
+  var wset={};weeks.forEach(function(w){wset[w]=true;});
+  var byExp={};
+  (D.shipDet||[]).forEach(function(r){
+    if(r.buyer!==buyerName)return;
+    if(!wset[r.yw])return;
+    if(cat!=='All'&&r.cat!==cat)return;
+    if(mode!=='Both'&&r.mode!==mode)return;
+    if(cg!=='_ALL'){
+      var rowCg=MO_TOP8.indexOf(r.country)>=0?r.country:'Other';
+      if(rowCg!==cg)return;
+    }
+    var key=r.exp;
+    if(!byExp[key])byExp[key]={exp:r.exp,lbs:0,usd:0};
+    byExp[key].lbs+=r.lbs;byExp[key].usd+=r.usd;
+  });
+  return Object.values(byExp).sort(function(a,b){return b.lbs-a.lbs;});
+}
 function moBuyersFor(name,weeks,mode,cat,cg){
   var wset={};weeks.forEach(function(w){wset[w]=true;});
   var byBuyer={};
@@ -5657,23 +5724,35 @@ window.moToggleDrill=function(name){moDrillOpen=(moDrillOpen===name)?null:name;r
 function initMktDates(){var cm=ge('mi-mkt-country');if(cm)cm.value=curMktCountry;}
 
 function moDrillHtml(name,weeks,colspan){
+  if(moView==='buyers'){
+    var exps=moExportersForBuyer(name,weeks,moMode,moCat,curMktCountry);
+    if(!exps.length)return '<tr><td colspan="'+colspan+'"><div style="padding:6px 10px;color:var(--gray-400);font-size:10.5px">No shipments for this filter.</div></td></tr>';
+    var ebody=exps.map(function(e){return '<tr><td>'+e.exp+'</td><td class="r">'+(e.lbs/1000).toFixed(1)+'k</td><td class="r">'+fmtPx(e.usd/e.lbs)+'</td></tr>';}).join('');
+    return '<tr><td colspan="'+colspan+'"><table class="mo-drill"><thead><tr><th>Exporter (Peru)</th><th>Lbs</th><th>Price</th></tr></thead><tbody>'+ebody+'</tbody></table></td></tr>';
+  }
   var buyers=moBuyersFor(name,weeks,moMode,moCat,curMktCountry);
   if(!buyers.length)return '<tr><td colspan="'+colspan+'"><div style="padding:6px 10px;color:var(--gray-400);font-size:10.5px">No shipments for this filter.</div></td></tr>';
-  var body=buyers.map(function(b){return '<tr><td>'+b.buyer+'</td><td>'+b.country+'</td><td class="r">'+(b.lbs/1000).toFixed(1)+'k</td><td class="r">$'+(b.usd/b.lbs).toFixed(3)+'</td></tr>';}).join('');
-  return '<tr><td colspan="'+colspan+'"><table class="mo-drill"><thead><tr><th>Buyer</th><th>Country</th><th>Lbs</th><th>$/lb</th></tr></thead><tbody>'+body+'</tbody></table></td></tr>';
+  var body=buyers.map(function(b){return '<tr><td>'+b.buyer+'</td><td>'+b.country+'</td><td class="r">'+(b.lbs/1000).toFixed(1)+'k</td><td class="r">'+fmtPx(b.usd/b.lbs)+'</td></tr>';}).join('');
+  return '<tr><td colspan="'+colspan+'"><table class="mo-drill"><thead><tr><th>Buyer</th><th>Country</th><th>Lbs</th><th>Price</th></tr></thead><tbody>'+body+'</tbody></table></td></tr>';
 }
 
+window.miMktView=function(v,btn){btn.closest('.mi-ptog').querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');moView=v;moDrillOpen=null;
+  var th=ge('mi-mkt-colhead');if(th)th.textContent=v==='buyers'?'Buyer (US)':'Exporter';
+  var ti=ge('mi-mkt-title');if(ti)ti.textContent=v==='buyers'?'Top Buyers':'Top Exporters';
+  renderMkt();
+};
 function renderMkt(){
   var weeks=moWeeksTail(moRangeW);
   var cg=curMktCountry||'_ALL';
-  var ranking=moRanking(weeks,moMode,moCat,cg);
+  var isB=moView==='buyers';
+  var ranking=isB?moRankingBuyers(weeks,moMode,moCat,cg):moRanking(weeks,moMode,moCat,cg);
 
   var conc=moConcentration(ranking);
   var cv=ge('mo-conc-val'),cs=ge('mo-conc-sub');
   if(cv)cv.textContent='Top 3: '+conc.top3pct.toFixed(0)+'%';
-  if(cs)cs.textContent='Top 5: '+conc.top5pct.toFixed(0)+'% of volume \u00b7 '+conc.n+' active exporters this period';
+  if(cs)cs.textContent='Top 5: '+conc.top5pct.toFixed(0)+'% of volume \u00b7 '+conc.n+' active '+(isB?'buyers':'exporters')+' this period';
 
-  var ent=moEntrants(weeks,moMode,moCat,cg);
+  var ent=isB?moEntrantsBuyers(weeks,moMode,moCat,cg):moEntrants(weeks,moMode,moCat,cg);
   var ev=ge('mo-entrants-val');
   if(ev){
     var html='';
@@ -5683,14 +5762,16 @@ function renderMkt(){
   }
 
   ranking.sort(function(a,b){return b[moSortKey]-a[moSortKey];});
+  var totalLbs=ranking.reduce(function(s,r){return s+r.lbs;},0);
   var tb=ge('mi-mkt-tbl');
   if(tb){
     tb.innerHTML=ranking.length?ranking.map(function(row,i){
       var short=moShortName(row.name);
-      var main='<tr class="mo-rkrow" onclick="moToggleDrill(\''+row.name.replace(/'/g,"\\'")+'\')"><td style="color:var(--gray-400);font-size:10px">'+(i+1)+'</td><td title="'+row.name.replace(/"/g,'&quot;')+'">'+short+'</td><td class="r">'+(row.lbs/1e6).toFixed(2)+'</td><td class="r">'+(row.p?'$'+row.p.toFixed(3):'-')+'</td><td class="r">'+(row.usd?(row.usd/1000).toFixed(0):'-')+'</td></tr>';
-      var drill=(moDrillOpen===row.name)?moDrillHtml(row.name,weeks,5):'';
+      var pct=totalLbs?(row.lbs/totalLbs*100):0;
+      var main='<tr class="mo-rkrow" onclick="moToggleDrill(\''+row.name.replace(/'/g,"\\'")+'\')"><td style="color:var(--gray-400);font-size:10px">'+(i+1)+'</td><td title="'+row.name.replace(/"/g,'&quot;')+'">'+short+'</td><td class="r">'+(row.lbs/1e6).toFixed(2)+'</td><td class="r">'+pct.toFixed(1)+'%</td><td class="r">'+(row.p?fmtPx(row.p):'-')+'</td><td class="r">'+(row.usd?(row.usd/1000).toFixed(0):'-')+'</td></tr>';
+      var drill=(moDrillOpen===row.name)?moDrillHtml(row.name,weeks,6):'';
       return main+drill;
-    }).join(''):'<tr><td colspan="5" style="text-align:center;color:var(--gray-400);padding:16px">No shipments to this destination in range</td></tr>';
+    }).join(''):'<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:16px">No shipments to this destination in range</td></tr>';
   }
   renderShareChart(ranking);
 }
@@ -5901,10 +5982,10 @@ function mihRenderChart(){
   miKill(ctx);
   SVC=new Chart(ctx.getContext('2d'),{type:'line',data:{labels:labels,datasets:datasets},
     options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
-      plugins:{legend:{position:'top',labels:{font:{size:10},boxWidth:9}},tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': '+(c.raw!=null?(MIH_METRIC==='lbs'?(c.raw/1e6).toFixed(2)+'M lbs':'$'+c.raw.toFixed(3)+'/lb'):'no data');}}}},
-      scales:{x:{ticks:{font:{size:9},maxTicksLimit:16},grid:{display:false}},y:{ticks:{callback:function(v){return MIH_METRIC==='lbs'?(v/1e6).toFixed(1)+'M':'$'+v.toFixed(2);},font:{size:10}},grid:{color:'rgba(0,0,0,.04)'}}}}});
+      plugins:{legend:{position:'top',labels:{font:{size:10},boxWidth:9}},tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': '+(c.raw!=null?(MIH_METRIC==='lbs'?(c.raw/1e6).toFixed(2)+'M lbs':fmtPx(c.raw)):'no data');}}}},
+      scales:{x:{ticks:{font:{size:9},maxTicksLimit:16},grid:{display:false}},y:{ticks:{callback:function(v){return MIH_METRIC==='lbs'?(v/1e6).toFixed(1)+'M':fmtPxAxis(v);},font:{size:10}},grid:{color:'rgba(0,0,0,.04)'}}}}});
   var t=ge('mih-chart-title');
-  if(t)t.textContent=(MIH_METRIC==='lbs'?'Volume':'Price $/lb')+' by calendar week, campaign over campaign'+(MIH_MODE!=='Both'?' ('+MIH_MODE+' only)':'');
+  if(t)t.textContent=(MIH_METRIC==='lbs'?'Volume':'Price')+' by calendar week, campaign over campaign'+(MIH_MODE!=='Both'?' ('+MIH_MODE+' only)':'');
 }
 
 function mihRenderHealthTable(){
@@ -6009,6 +6090,15 @@ function processVT(rows,cb){
   });
   var shipDet=Object.values(sdMap).map(function(w){return{yw:w.yw,mode:w.mode,cat:w.cat,exp:w.exp,buyer:w.buyer,country:w.country,lbs:Math.round(w._l),usd:Math.round(w._u)};});
   var expwk=Object.values(ewMap).filter(function(w){return w.yw>='2022-W01';}).map(function(w){return{yw:w.yw,cat:w.cat,exp:w.exp,mode:w.mode,cg:w.cg,lbs:Math.round(w._l),usd:Math.round(w._u),n:w._n};});
+  var imMap={};
+  fresh.forEach(function(r){if(!r._yw)return;var buyer=r._imp;if(!buyer)return;
+    [r._cg,'_ALL'].forEach(function(cg){
+      var k=r._yw+'|'+r._cat+'|'+buyer+'|'+r._mode+'|'+cg;
+      if(!imMap[k])imMap[k]={yw:r._yw,cat:r._cat,buyer:buyer,mode:r._mode,cg:cg,_l:0,_u:0,_n:0};
+      imMap[k]._l+=r._lbs;imMap[k]._u+=r._usd;imMap[k]._n++;
+    });
+  });
+  var impWk=Object.values(imMap).filter(function(w){return w.yw>='2022-W01';}).map(function(w){return{yw:w.yw,cat:w.cat,buyer:w.buyer,mode:w.mode,cg:w.cg,lbs:Math.round(w._l),usd:Math.round(w._u),n:w._n};});
   // ms4 by country group
   var cut4=new Date(maxD);cut4.setDate(cut4.getDate()-28);var ms4={};
   fresh.filter(function(r){return r._date>=cut4;}).forEach(function(r){
@@ -6036,7 +6126,7 @@ function processVT(rows,cb){
     campMap[key]._l+=r._lbs;campMap[key]._u+=r._usd;
   });
   var campWk=Object.values(campMap).map(function(w){return{cy:w.cy,cw:w.cw,mode:w.mode,cat:w.cat,lbs:Math.round(w._l),usd:Math.round(w._u)};});
-  cb({meta:{data_through:maxD?maxD.toISOString().slice(0,10):'-',total_records:fresh.length,generated:new Date().toISOString().slice(0,10),countries:TOP8.concat(['Other']),incomplete_week:_incWeek},ms4:ms4o,weekly:weekly,sup:sup,mkt:mkt,expwk:expwk,shipDet:shipDet,campWk:campWk});
+  cb({meta:{data_through:maxD?maxD.toISOString().slice(0,10):'-',total_records:fresh.length,generated:new Date().toISOString().slice(0,10),countries:TOP8.concat(['Other']),incomplete_week:_incWeek},ms4:ms4o,weekly:weekly,sup:sup,mkt:mkt,expwk:expwk,shipDet:shipDet,campWk:campWk,impWk:impWk});
 }
 
 function mergeD(ex,inc){
@@ -6065,7 +6155,12 @@ function mergeD(ex,inc){
   // point is long-term history, unlike expwk/shipDet's short retention.
   var cwMap={};(ex.campWk||[]).forEach(function(w){cwMap[w.cy+'|'+w.cw+'|'+w.mode+'|'+w.cat]=w;});(inc.campWk||[]).forEach(function(w){cwMap[w.cy+'|'+w.cw+'|'+w.mode+'|'+w.cat]=w;});
   var campWk=Object.values(cwMap);
-  return Object.assign({},inc,{weekly:weekly,expwk:expwk,shipDet:shipDet,campWk:campWk});
+  var imMap2={};(ex.impWk||[]).forEach(function(w){imMap2[w.yw+'|'+w.cat+'|'+w.buyer+'|'+(w.mode||'?')+'|'+(w.cg||'_ALL')]=w;});(inc.impWk||[]).forEach(function(w){imMap2[w.yw+'|'+w.cat+'|'+w.buyer+'|'+(w.mode||'?')+'|'+(w.cg||'_ALL')]=w;});
+  var allIm=Object.values(imMap2).filter(function(w){return w.yw<=_nowW;});
+  var imWeeks=[];var _seen3={};allIm.forEach(function(w){if(!_seen3[w.yw]){_seen3[w.yw]=1;imWeeks.push(w.yw);}});imWeeks.sort();
+  var keepFromIm=imWeeks.length>EW_MAX_WEEKS?imWeeks[imWeeks.length-EW_MAX_WEEKS]:null;
+  var impWk=keepFromIm?allIm.filter(function(w){return w.yw>=keepFromIm;}):allIm;
+  return Object.assign({},inc,{weekly:weekly,expwk:expwk,shipDet:shipDet,campWk:campWk,impWk:impWk});
 }
 function normImp(name){if(!name||/^(TO ORDER|CONSIGNATARIO|N\/A)/i.test(name.trim()))return 'To Order / Unknown';var n=name.toUpperCase().trim();n=n.replace(/\s+\d{4,}.*/,'').replace(/P\.?O\.?\s*BOX.*/i,'').replace(/[,\.]+$/,'').replace(/\s+/,' ').trim();var NORMS=[[/VIVA TIERRA ORGANIC[.\s]*INC[.\s]*/,'VIVA TIERRA ORGANIC INC'],[/HEATH\s*(AND|Y|&)\s*LEJEUNE[.,\s]*INC[.,\s]*/,'HEATH AND LEJEUNE INC'],[/HEALTH AND LEJEUNE.*/,'HEATH AND LEJEUNE INC'],[/GLOBAL FARMS ENTERPRISES[.,\s]*\.?INC[.,\s]*/,'GLOBAL FARMS ENTERPRISES INC'],[/GLOBAL FARMS ENTERPRISES[.,\s]*$/,'GLOBAL FARMS ENTERPRISES INC'],[/A&A ORGANIC FARMS.*GLOBAL FARMS.*/,'GLOBAL FARMS ENTERPRISES INC'],[/IPOKI B\.?V?\.?\s*$/,'IPOKI BV'],[/IPOKI PRODUCE LLC.*/,'IPOKI PRODUCE LLC'],[/VOELKEL.*/,'VOELKEL GMBH'],[/JLZ P[OD]DUCE.*/,'JLZ PRODUCE'],[/JLZ PRODUCE.*/,'JLZ PRODUCE'],[/ANAWI USA.*/,'ANAWI USA LLC'],[/BROADVIEW PRODUCE.*/,'BROADVIEW PRODUCE CO'],[/I LOVE PRODUCE LLC.*/,'I LOVE PRODUCE LLC'],[/HERMANOS FERNANDEZ.*/,'HERMANOS FERNANDEZ LOPEZ SAU'],[/WEALMOOR.*/,'WEALMOOR LTD'],[/FRUCHTHANSA.*/,'FRUCHTHANSA GMBH'],[/UREN NORTH AMERICA.*/,'UREN NORTH AMERICA'],[/TRINITY DISTRIBUTION.*/,'TRINITY DISTRIBUTION INC'],[/THOMAS FRESH.*/,'THOMAS FRESH INC'],[/MINOR[.,\s]*WEIR.*/,'MINOR WEIR AND WILLIS LTD'],[/FRESH DIRECT PRODUCE.*/,'FRESH DIRECT PRODUCE LTD'],[/SMART GROUP TRADERS.*/,'SMART GROUP TRADERS INC'],[/HLB SPECIALTIES.*/,'HLB SPECIALTIES LLC'],[/MAMAPACH.*/,'MAMAPACH INC'],[/TOTAL PRODUCE.*/,'TOTAL PRODUCE BV']];for(var i=0;i<NORMS.length;i++)if(NORMS[i][0].test(n))return NORMS[i][1];return n.slice(0,45);}
 function normCtry(c){var M={'ESTADOS UNIDOS':'United States','PAÍSES BAJOS':'Netherlands','PAISES BAJOS':'Netherlands','ALEMANIA':'Germany','ESPAÑA':'Spain','ESPA\u00d1A':'Spain','REINO UNIDO':'United Kingdom','BÉLGICA':'Belgium','B\u00c9LGICA':'Belgium','BELGICA':'Belgium','CANADÁ':'Canada','CANAD\u00c1':'Canada','CANADA':'Canada','ITALIA':'Italy','AUSTRALIA':'Australia','JAPÓN':'Japan','JAPON':'Japan','CHILE':'Chile','FRANCIA':'France','SUECIA':'Sweden','DINAMARCA':'Denmark','NORUEGA':'Norway','FINLANDIA':'Finland','SUIZA':'Switzerland','AUSTRIA':'Austria','PORTUGAL':'Portugal','REPÚBLICA DOMINICANA':'Dominican Republic','CHINA':'China','COREA':'South Korea','SINGAPUR':'Singapore','NUEVA ZELANDA':'New Zealand','POLONIA':'Poland','IRLANDA':'Ireland'};return M[c.toUpperCase().trim()]||c.trim();}
@@ -6310,9 +6405,9 @@ function mibDrillHtml(week,colspan){
   }
   var body=rows.map(function(r){
     var ros=mibRosterOf(r.exp);
-    return '<tr><td>'+mibDisplayName2(ros||{name:r.exp})+'</td><td>'+r.buyer+'</td><td>'+r.country+'</td><td>'+r.mode+'</td><td class="r">'+(r.lbs/1000).toFixed(1)+'k</td><td class="r">$'+(r.usd/r.lbs).toFixed(3)+'</td></tr>';
+    return '<tr><td>'+mibDisplayName2(ros||{name:r.exp})+'</td><td>'+r.buyer+'</td><td>'+r.country+'</td><td>'+r.mode+'</td><td class="r">'+(r.lbs/1000).toFixed(1)+'k</td><td class="r">'+fmtPx(r.usd/r.lbs)+'</td></tr>';
   }).join('');
-  return '<tr><td colspan="'+colspan+'"><table class="mib-drilltbl"><thead><tr><th>Exporter</th><th>Buyer</th><th>Country</th><th>Mode</th><th>Lbs</th><th>$/lb</th></tr></thead><tbody>'+body+'</tbody></table></td></tr>';
+  return '<tr><td colspan="'+colspan+'"><table class="mib-drilltbl"><thead><tr><th>Exporter</th><th>Buyer</th><th>Country</th><th>Mode</th><th>Lbs</th><th>Price</th></tr></thead><tbody>'+body+'</tbody></table></td></tr>';
 }
 window.mibToggleDrill=function(week){mibDrillOpen=(mibDrillOpen===week)?null:week;mibRenderTable();};
 
@@ -6353,7 +6448,7 @@ function mibRenderGapCard(){
   }
   var setLabel=selectedEntities.length?(selectedEntities.length+' selected exporter(s)'):'all Informal exporters (default -- pick some below to narrow it)';
   el.innerHTML='<div class="mib-gap-main"><div class="mib-gap-num '+cls+'">'+(cur.gap>=0?'+':'')+cur.gap.toFixed(1)+'%</div>'
-    +'<div class="mib-gap-sub">Real orders average <b>$'+cur.myAvg.toFixed(3)+'/lb</b> (FOB-adjusted) vs. <b>$'+cur.marketPrice.toFixed(3)+'/lb</b> for the comparison set</div>'
+    +'<div class="mib-gap-sub">Real orders average <b>'+fmtPx(cur.myAvg)+'</b> (FOB-adjusted) vs. <b>'+fmtPx(cur.marketPrice)+'</b> for the comparison set</div>'
     +'<span class="mib-gap-trend '+trendCls+'">'+trendTxt+'</span></div>'
     +'<div class="mib-legend" style="margin-top:8px">Comparison set: '+setLabel+' &middot; '+(MIB_DEST==='_ALL'?'worldwide':'US buyers only')+' &middot; '+weeks.length+' week(s)</div>';
 }
@@ -6429,8 +6524,8 @@ function mibRenderChart(){
   miKill(ctx);
   MIB_CHARTS['main']=new Chart(ctx.getContext('2d'),{type:'line',data:{labels:labels,datasets:datasets},
     options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'nearest',intersect:true},
-      plugins:{legend:{position:'top',labels:{font:{size:10.5},boxWidth:10,usePointStyle:true}},tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': '+(c.raw!=null?'$'+c.raw.toFixed(3)+'/lb':'no data');}}}},
-      scales:{x:{ticks:{font:{size:9.5}},grid:{display:false}},y:{ticks:{callback:function(v){return '$'+v.toFixed(2);},font:{size:10}},grid:{color:'rgba(0,0,0,.04)'}}}}});
+      plugins:{legend:{position:'top',labels:{font:{size:10.5},boxWidth:10,usePointStyle:true}},tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': '+(c.raw!=null?fmtPx(c.raw):'no data');}}}},
+      scales:{x:{ticks:{font:{size:9.5}},grid:{display:false}},y:{ticks:{callback:function(v){return fmtPxAxis(v);},font:{size:10}},grid:{color:'rgba(0,0,0,.04)'}}}}});
 }
 
 // -- weekly table (one column per selected exporter + Mine) --
@@ -6448,7 +6543,7 @@ function mibRenderTable(){
     var cells=selectedEntities.map(function(name){
       var by=mibAggMatch(function(e){return e===name;},[wk],MIB_MODE,MIB_CAT,MIB_DEST);
       var p=mibPrice(by[wk]);
-      return '<td>'+(p?'$'+p.toFixed(3):'-')+'</td>';
+      return '<td>'+(p?fmtPx(p):'-')+'</td>';
     }).join('');
     var l=0,u=0;
     MIB_MYSUP.forEach(function(s){var v=(mqAll[s.name]||{})[wk];if(v&&v.l){var adj=mibAdjust(s.name,v.u/v.l);l+=v.l;u+=adj*v.l;}});
