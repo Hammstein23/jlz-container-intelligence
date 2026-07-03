@@ -5233,6 +5233,26 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
     <div class="mi-ch"><span class="mi-ct">Campaign health</span><span class="mi-hint">Air-bridge % = share of the campaign's last ~13 weeks (Mar-May) that moved by air -- how early the harvest ran out</span></div>
     <div class="mi-cb"><table class="mi-tbl"><thead><tr><th>Campaign</th><th class="r">Total Sea</th><th class="r">Total Air</th><th class="r">Air-bridge</th><th class="r">Total volume</th></tr></thead><tbody id="mih-health-tbl"></tbody></table></div>
   </div>
+
+  <div class="mi-card">
+    <div class="mi-ch">
+      <span class="mi-ct">Similar campaigns</span>
+      <div class="mi-ptog" id="mih-ref-tog"></div>
+    </div>
+    <span class="mi-hint">How similar is really similar? Close &lt;=10%, Moderate &lt;=25%, otherwise Weak -- so a "closest match" is never mistaken for a confident one</span>
+    <div class="mi-cb">
+      <div style="display:flex;align-items:center;gap:8px;margin:8px 0">
+        <span style="font-size:10.5px;color:var(--gray-500);font-weight:600">Sort by:</span>
+        <div class="mi-ptog" id="mih-sort-tog">
+          <button class="mi-pill active" onclick="mihSetSortMode('similarity',this)">Similarity (most alike first)</button>
+          <button class="mi-pill" onclick="mihSetSortMode('chrono',this)">Chronological</button>
+        </div>
+      </div>
+      <table class="mi-tbl"><thead><tr><th>Campaign</th><th class="r">Volume at this point</th><th class="r">vs. current</th><th class="r">Match</th><th class="r">Eventual total</th><th class="r">Eventual air-bridge</th></tr></thead><tbody id="mih-sim-tbl"></tbody></table>
+      <div class="mi-hint" style="margin-top:6px">Click a row to add/remove it from the chart below.</div>
+      <div class="mi-wrap" style="height:260px;margin-top:10px"><canvas id="mih-sim-chart"></canvas></div>
+    </div>
+  </div>
 </div>
 
 <div id="mi-s-formal" class="mi-sec">
@@ -5245,6 +5265,18 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
   .mib-datesep{color:var(--gray-400);align-self:center;margin-top:14px;font-size:11px}
   .mib-quickbtn{padding:6px 11px;border-radius:6px;border:1px solid var(--jlz-mid,#1a6b35);background:var(--jlz-light,#e6f0e9);color:var(--jlz-dark,#08381a);font-size:11px;font-weight:700;cursor:pointer}
   .mib-quickbtn.alt{background:var(--white);color:var(--jlz-mid,#1a6b35)}
+  .mib-homecard{background:linear-gradient(135deg,#f0fdf4 0%,#ecfdf5 100%);border:1px solid #bbf7d0;border-radius:9px;padding:16px 20px;margin-bottom:12px}
+  .mib-home-row{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;padding:5px 0}
+  .mib-home-lbl{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-500);font-weight:700;min-width:140px}
+  .mib-home-num{font-family:var(--fd);font-size:18px;font-weight:800;color:var(--jlz-dark)}
+  .mib-simrow{display:flex;align-items:center;gap:10px;padding:6px 9px;border-radius:6px;background:rgba(255,255,255,.6);margin-bottom:5px;font-size:11.5px;flex-wrap:wrap}
+  .mih-matchbadge{font-size:9px;font-weight:700;padding:2px 7px;border-radius:9px;white-space:nowrap}
+  .mih-matchbadge.close{background:#dcfce7;color:#166534}
+  .mih-matchbadge.moderate{background:#fef9c3;color:#854d0e}
+  .mih-matchbadge.weak{background:#f3f4f6;color:#6b7280}
+  tr.mih-simr{cursor:pointer}
+  tr.mih-simr:hover{background:var(--gray-50)}
+  tr.mih-simr.selected{background:var(--jlz-light)}
   .mib-gapcard{background:linear-gradient(135deg,#f0fdf4 0%,#ecfdf5 100%);border:1px solid #bbf7d0;border-radius:9px;padding:16px 20px;margin-bottom:12px}
   .mib-gap-main{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
   .mib-gap-num{font-family:var(--fd);font-size:28px;font-weight:800}
@@ -5287,6 +5319,11 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
   .mib-tagex{background:#fffbeb;color:#d97706;border:1px solid #fde68a;font-size:8.5px;font-weight:700;padding:2px 7px;border-radius:8px;white-space:nowrap}
   @media(max-width:768px){.mib-ctrlbar{flex-direction:column;align-items:stretch}.mib-datesep{display:none}}
   </style>
+
+  <div class="mi-card">
+    <div class="mi-ch"><span class="mi-ct">Where do I stand</span><span class="mi-hint">Always reflects the real current campaign, regardless of the date range below</span></div>
+    <div class="mi-cb"><div class="mib-homecard" id="mib-homecard"></div></div>
+  </div>
 
   <div class="mib-ctrlbar">
     <div class="mib-ctrl-grp"><span class="mib-ctrl-lbl">From</span><input type="date" id="mib-from"><span class="mib-wkref" id="mib-wkref-from"></span></div>
@@ -5729,19 +5766,118 @@ function mihCampWeekToIso(cw,refYear){
   d.setDate(d.getDate()+(cw-1)*7);
   return isoWk(d);
 }
+function campCumThrough(cy,wk){
+  return (D.campWk||[]).filter(function(r){return r.cy===cy&&r.cat==='Organic'&&r.cw<=wk;}).reduce(function(s,r){return s+r.lbs;},0);
+}
+function campTotalVolume(cy){
+  return (D.campWk||[]).filter(function(r){return r.cy===cy&&r.cat==='Organic';}).reduce(function(s,r){return s+r.lbs;},0);
+}
+function campAirBridgePct(cy){
+  var rows=(D.campWk||[]).filter(function(r){return r.cy===cy&&r.cat==='Organic'&&r.cw>=40&&r.cw<=52;});
+  var sea=rows.filter(function(r){return r.mode==='Sea';}).reduce(function(s,r){return s+r.lbs;},0);
+  var air=rows.filter(function(r){return r.mode==='Air';}).reduce(function(s,r){return s+r.lbs;},0);
+  return (sea+air)?air/(sea+air)*100:0;
+}
+function campCurrentWeekNum(){
+  var cy=mihCurrentCamp();if(cy==null)return 0;
+  var rows=(D.campWk||[]).filter(function(r){return r.cy===cy&&r.cat==='Organic';});
+  return rows.length?Math.max.apply(null,rows.map(function(r){return r.cw;})):0;
+}
+function campMatchInfo(pctDiff){
+  var abs=Math.abs(pctDiff);
+  if(abs<=10)return{cls:'close',label:'Close match'};
+  if(abs<=25)return{cls:'moderate',label:'Moderate'};
+  return{cls:'weak',label:'Weak match'};
+}
+function campFindSimilar(refWk,excludeCurrent){
+  var curCy=mihCurrentCamp();
+  var curVal=campCumThrough(curCy,refWk);
+  var rows=mihAllCamps().filter(function(y){return y!==curCy||!excludeCurrent;}).map(function(y){
+    var val=campCumThrough(y,refWk);
+    var diff=val?(curVal-val)/val*100:null;
+    return{cy:y,val:val,diff:diff,total:campTotalVolume(y),air:campAirBridgePct(y)};
+  }).filter(function(r){return r.cy!==curCy&&r.diff!==null;});
+  rows.sort(function(a,b){return Math.abs(a.diff)-Math.abs(b.diff);});
+  return{curVal:curVal,rows:rows};
+}
+
+// -- Historical View: Similar Campaigns comparator --
+var MIH_REF_WEEK=null, MIH_SORT_MODE='similarity', MIH_SIM_SELECTED=[];
+
+function mihRenderRefPicker(){
+  var el=ge('mih-ref-tog');if(!el)return;
+  var maxWk=campCurrentWeekNum();
+  if(MIH_REF_WEEK===null||MIH_REF_WEEK>maxWk)MIH_REF_WEEK=maxWk;
+  var opts=[];
+  for(var w=1;w<=maxWk;w++){
+    opts.push('<button class="mi-pill'+(w===MIH_REF_WEEK?' active':'')+'" onclick="mihSetRefWeek('+w+',this)">Week '+w+(w===maxWk?' (current)':'')+'</button>');
+  }
+  el.innerHTML=opts.join('');
+}
+window.mihSetRefWeek=function(w,btn){
+  MIH_REF_WEEK=w;
+  var box=btn.closest('.mi-ptog');if(box)box.querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});
+  btn.classList.add('active');
+  mihRenderSimTable();mihRenderSimChart();
+};
+window.mihSetSortMode=function(mode,btn){
+  MIH_SORT_MODE=mode;
+  var box=btn.closest('.mi-ptog');if(box)box.querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});
+  btn.classList.add('active');
+  mihRenderSimTable();
+};
+window.mihToggleSimCamp=function(cy){
+  var i=MIH_SIM_SELECTED.indexOf(cy);
+  if(i>=0)MIH_SIM_SELECTED.splice(i,1);else MIH_SIM_SELECTED.push(cy);
+  mihRenderSimTable();mihRenderSimChart();
+};
+
+function mihRenderSimTable(){
+  var tb=ge('mih-sim-tbl');if(!tb)return;
+  var refWk=MIH_REF_WEEK||campCurrentWeekNum();
+  if(refWk<1){tb.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:14px">Load a Veritrade file to see this.</td></tr>';return;}
+  var sim=campFindSimilar(refWk,true);
+  var rows=sim.rows.slice();
+  if(MIH_SORT_MODE==='chrono')rows.sort(function(a,b){return a.cy-b.cy;});
+  tb.innerHTML=rows.map(function(r){
+    var m=campMatchInfo(r.diff);
+    var sel=MIH_SIM_SELECTED.indexOf(r.cy)>=0;
+    return '<tr class="mih-simr'+(sel?' selected':'')+'" onclick="mihToggleSimCamp('+r.cy+')">'
+      +'<td style="color:'+(MIH_PAL[r.cy]||'#888')+';font-weight:700">'+campLabel(r.cy)+'</td>'
+      +'<td class="r">'+(r.val/1e6).toFixed(2)+'M</td>'
+      +'<td class="r">'+(r.diff>=0?'+':'')+r.diff.toFixed(0)+'%</td>'
+      +'<td class="r"><span class="mih-matchbadge '+m.cls+'">'+m.label+'</span></td>'
+      +'<td class="r">'+(r.total/1e6).toFixed(1)+'M</td>'
+      +'<td class="r">'+r.air.toFixed(0)+'%</td></tr>';
+  }).join('')||'<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:14px">Not enough campaign history yet.</td></tr>';
+}
+var MIH_SIM_CHART=null;
+function mihRenderSimChart(){
+  var ctx=ge('mih-sim-chart');if(!ctx)return;
+  var curCy=mihCurrentCamp();if(curCy==null)return;
+  var labels=[];for(var i=1;i<=53;i++)labels.push('Wk'+i);
+  var curCumSeries=[];for(var w=1;w<=53;w++)curCumSeries.push(w<=campCurrentWeekNum()?campCumThrough(curCy,w):null);
+  var datasets=[{label:campLabel(curCy)+' (current)',data:curCumSeries,borderColor:'#1f2937',backgroundColor:'transparent',borderWidth:3,pointRadius:0,tension:.3,spanGaps:true}];
+  MIH_SIM_SELECTED.forEach(function(cy){
+    var s=[];for(var w=1;w<=53;w++){var v=campCumThrough(cy,w);s.push(v>0?v:null);}
+    datasets.push({label:campLabel(cy),data:s,borderColor:MIH_PAL[cy]||'#888',backgroundColor:'transparent',borderWidth:2,pointRadius:0,tension:.3,spanGaps:true,borderDash:[5,3]});
+  });
+  miKill(ctx);
+  MIH_SIM_CHART=new Chart(ctx.getContext('2d'),{type:'line',data:{labels:labels,datasets:datasets},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+      plugins:{legend:{position:'top',labels:{font:{size:10},boxWidth:9}},tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': '+(c.raw!=null?(c.raw/1e6).toFixed(2)+'M lbs cumulative':'no data');}}}},
+      scales:{x:{ticks:{font:{size:9},maxTicksLimit:16},grid:{display:false}},y:{ticks:{callback:function(v){return (v/1e6).toFixed(0)+'M';},font:{size:10}},grid:{color:'rgba(0,0,0,.04)'}}}}});
+}
+
 function mihRenderStatcard(){
   var el=ge('mih-statcard');if(!el)return;
   var curY=mihCurrentCamp();
   if(curY==null){el.innerHTML='<div class="mih-stat-sub">Load a Veritrade file to see this.</div>';return;}
-  var allW=(D.campWk||[]).filter(function(r){return r.cy===curY&&r.cat==='Organic';});
-  var curWk=allW.length?Math.max.apply(null,allW.map(function(r){return r.cw;})):0;
+  var curWk=campCurrentWeekNum();
   var priorYears=mihAllCamps().filter(function(y){return y<curY&&y>=curY-3;});
   if(!priorYears.length||curWk<1){el.innerHTML='<div class="mih-stat-sub">Not enough campaign history yet at this point.</div>';return;}
-  function cumThrough(y,wk){
-    return (D.campWk||[]).filter(function(r){return r.cy===y&&r.cat==='Organic'&&r.cw<=wk;}).reduce(function(s,r){return s+r.lbs;},0);
-  }
-  var curCum=cumThrough(curY,curWk);
-  var priorCums=priorYears.map(function(y){return cumThrough(y,curWk);});
+  var curCum=campCumThrough(curY,curWk);
+  var priorCums=priorYears.map(function(y){return campCumThrough(y,curWk);});
   var avgPrior=priorCums.reduce(function(a,b){return a+b;},0)/priorCums.length;
   var pct=avgPrior?((curCum-avgPrior)/avgPrior*100):null;
   var cls=pct==null?'':(pct>=0?'style="color:#15803d"':'style="color:#dc2626"');
@@ -5801,6 +5937,9 @@ function mihRenderAll(){
   mihRenderStatcard();
   mihRenderChart();
   mihRenderHealthTable();
+  mihRenderRefPicker();
+  mihRenderSimTable();
+  mihRenderSimChart();
 }
 function renderSeasonality(){ mihRenderAll(); }
 
@@ -6353,8 +6492,37 @@ window.mibSetMode=function(m,btn){var box=btn.closest('.mi-ptog');if(box)box.que
 window.mibSetDest=function(d,btn){var box=btn.closest('.mi-ptog');if(box)box.querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');MIB_DEST=d;mibRenderAll();};
 window.mibSetCat=function(c,btn){var box=btn.closest('.mi-ptog');if(box)box.querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');MIB_CAT=c;mibRenderAll();};
 
+function mibRenderHomeCard(){
+  var el=ge('mib-homecard');if(!el)return;
+  var curY=mihCurrentCamp();
+  if(curY==null){el.innerHTML='<div class="mib-home-sub">Load a Veritrade file to see this.</div>';return;}
+  var curWk=campCurrentWeekNum();
+  var priorYears=mihAllCamps().filter(function(y){return y<curY&&y>=curY-3;});
+  if(!priorYears.length||curWk<1){el.innerHTML='<div class="mib-home-sub">Not enough campaign history yet.</div>';return;}
+  var curCum=campCumThrough(curY,curWk);
+  var priorCums=priorYears.map(function(y){return campCumThrough(y,curWk);});
+  var avgPrior=priorCums.reduce(function(a,b){return a+b;},0)/priorCums.length;
+  var pct=avgPrior?((curCum-avgPrior)/avgPrior*100):null;
+  var isoNow=mihCampWeekToIso(curWk,curY);
+  var sim=campFindSimilar(curWk,true);
+  var top2=sim.rows.slice(0,2);
+
+  var html='<div class="mib-home-row"><span class="mib-home-lbl">Campaign</span><span class="mib-home-num">'+campLabel(curY)+', week '+curWk+' (calendar '+isoNow+')</span></div>';
+  html+='<div class="mib-home-row"><span class="mib-home-lbl">Vs. typical pace</span><span class="mib-home-num" style="color:'+(pct>=0?'#15803d':'#dc2626')+'">'+(pct!=null?((pct>=0?'+':'')+pct.toFixed(0)+'%'):'-')+'</span><span style="color:var(--gray-500);font-size:11px">'+(curCum/1e6).toFixed(2)+'M lbs so far vs. '+(avgPrior/1e6).toFixed(2)+'M typical ('+priorYears.map(campLabel).join(', ')+')</span></div>';
+  if(top2.length){
+    html+='<div class="mib-home-row" style="align-items:flex-start"><span class="mib-home-lbl">Most similar campaigns</span><div style="flex:1">';
+    top2.forEach(function(r){
+      var m=campMatchInfo(r.diff);
+      html+='<div class="mib-simrow"><span class="mih-matchbadge '+m.cls+'">'+m.label+' ('+(r.diff>=0?'+':'')+r.diff.toFixed(0)+'%)</span> <b>'+campLabel(r.cy)+'</b> ended at <b>'+(r.total/1e6).toFixed(1)+'M lbs</b> total, '+r.air.toFixed(0)+'% air-bridge</div>';
+    });
+    html+='</div></div>';
+  }
+  el.innerHTML=html;
+}
+
 function mibRenderAll(){
   if(!ge('mib-from'))return;
+  mibRenderHomeCard();
   mibUpdateWkRefs();
   mifRenderChips();
   mifRenderRoster(ge('mif-search')?ge('mif-search').value:'');
