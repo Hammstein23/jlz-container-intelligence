@@ -5225,7 +5225,7 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
   <div class="mih-statcard" id="mih-statcard"></div>
 
   <div class="mi-card">
-    <div class="mi-ch"><span class="mi-ct" id="mih-chart-title">Volume, week since June 1 -- campaign over campaign</span><span class="mi-hint">Organic &middot; week 1 = first week of June</span></div>
+    <div class="mi-ch"><span class="mi-ct" id="mih-chart-title">Volume, week since June 1 -- campaign over campaign</span><span class="mi-hint">Organic &middot; x-axis shows the calendar week each campaign-week typically falls in, so campaigns still line up for comparison</span></div>
     <div class="mi-cb"><div class="mi-wrap"><canvas id="mih-chart"></canvas></div></div>
   </div>
 
@@ -5724,6 +5724,11 @@ function mihRenderYearPicker(){
   el.innerHTML=avgChip+chips;
 }
 
+function mihCampWeekToIso(cw,refYear){
+  var d=new Date(refYear,5,1);
+  d.setDate(d.getDate()+(cw-1)*7);
+  return isoWk(d);
+}
 function mihRenderStatcard(){
   var el=ge('mih-statcard');if(!el)return;
   var curY=mihCurrentCamp();
@@ -5740,13 +5745,15 @@ function mihRenderStatcard(){
   var avgPrior=priorCums.reduce(function(a,b){return a+b;},0)/priorCums.length;
   var pct=avgPrior?((curCum-avgPrior)/avgPrior*100):null;
   var cls=pct==null?'':(pct>=0?'style="color:#15803d"':'style="color:#dc2626"');
+  var isoNow=mihCampWeekToIso(curWk,curY);
   el.innerHTML='<div class="mih-stat-num" '+cls+'>'+(pct!=null?((pct>=0?'+':'')+pct.toFixed(0)+'%'):'-')+'</div>'
-    +'<div class="mih-stat-sub">Campaign '+campLabel(curY)+' is '+curWk+' week(s) in -- cumulative volume vs. the '+priorYears.length+'-campaign average ('+priorYears.map(campLabel).join(', ')+') at the same point &mdash; '+(curCum/1e6).toFixed(2)+'M lbs so far vs. '+(avgPrior/1e6).toFixed(2)+'M lbs typical.</div>';
+    +'<div class="mih-stat-sub">Campaign '+campLabel(curY)+' is '+curWk+' week(s) in (calendar '+isoNow+') -- cumulative volume vs. the '+priorYears.length+'-campaign average ('+priorYears.map(campLabel).join(', ')+') at the same point &mdash; '+(curCum/1e6).toFixed(2)+'M lbs so far vs. '+(avgPrior/1e6).toFixed(2)+'M lbs typical.</div>';
 }
 
 function mihRenderChart(){
   var ctx=ge('mih-chart');if(!ctx)return;
-  var labels=[];for(var i=1;i<=53;i++)labels.push('Wk '+i);
+  var refY=mihCurrentCamp();if(refY==null){var _ac=mihAllCamps();refY=_ac.length?_ac[_ac.length-1]:new Date().getFullYear();}
+  var labels=[];for(var i=1;i<=53;i++){var _iso=mihCampWeekToIso(i,refY);labels.push('W'+_iso.slice(6));}
   var datasets=[];
   if(MIH_SHOW_AVG){
     datasets.push({label:'Average',data:mihAverageSeries(MIH_MODE,MIH_METRIC),borderColor:'#1f2937',backgroundColor:'transparent',spanGaps:true,tension:.3,pointRadius:0,borderWidth:2.5,borderDash:[6,4]});
@@ -5761,7 +5768,7 @@ function mihRenderChart(){
       plugins:{legend:{position:'top',labels:{font:{size:10},boxWidth:9}},tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': '+(c.raw!=null?(MIH_METRIC==='lbs'?(c.raw/1e6).toFixed(2)+'M lbs':'$'+c.raw.toFixed(3)+'/lb'):'no data');}}}},
       scales:{x:{ticks:{font:{size:9},maxTicksLimit:16},grid:{display:false}},y:{ticks:{callback:function(v){return MIH_METRIC==='lbs'?(v/1e6).toFixed(1)+'M':'$'+v.toFixed(2);},font:{size:10}},grid:{color:'rgba(0,0,0,.04)'}}}}});
   var t=ge('mih-chart-title');
-  if(t)t.textContent=(MIH_METRIC==='lbs'?'Volume':'Price $/lb')+', week since June 1 -- campaign over campaign'+(MIH_MODE!=='Both'?' ('+MIH_MODE+' only)':'');
+  if(t)t.textContent=(MIH_METRIC==='lbs'?'Volume':'Price $/lb')+' by calendar week, campaign over campaign'+(MIH_MODE!=='Both'?' ('+MIH_MODE+' only)':'');
 }
 
 function mihRenderHealthTable(){
