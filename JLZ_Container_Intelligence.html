@@ -5390,7 +5390,7 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
   </div>
 
   <div class="mi-card">
-    <div class="mi-ch"><span class="mi-ct">CIF/DDP to FOB conversion</span><span class="mi-hint">You control these numbers -- no default is invented here</span></div>
+    <div class="mi-ch"><span class="mi-ct">FOB conversion coverage</span><span class="mi-hint">Derived per order from your entered costs -- managed in Orders</span></div>
     <div class="mi-cb"><div class="mib-fobset" id="mib-fob-settings"></div></div>
   </div>
 
@@ -6253,18 +6253,18 @@ window.mifRenderRoster=function(filterText){
 // D.shipDet (16wk) for shipment-level drill-down. Formal/Informal
 // classification comes from mifClassOf (defined above, unchanged).
 // ==============================================================
+// MIB_MYSUP now only holds identification (name + name-matching regex).
+// Incoterm is NOT hardcoded here anymore because each real order carries its own
+// incoterm/mode/costs; a supplier can have DDP-air and CIF-sea orders in the same
+// campaign, and the old single-incoterm-per-supplier assumption produced silently
+// wrong FOB comparisons.
 var MIB_MYSUP=[
-  {name:'Anawi',pat:/A.?AWI/i,incoterm:'DDP'},
-  {name:'Interloom',pat:/INTERLOOM/i,incoterm:'CIF'},
-  {name:'Hamilton',pat:/HAMILLTON|HAMILTON/i,incoterm:'CIF'},
-  {name:'Elisur',pat:/ELISUR/i,incoterm:'CIF'}
+  {name:'Anawi',pat:/A.?AWI/i},
+  {name:'Interloom',pat:/INTERLOOM/i},
+  {name:'Hamilton',pat:/HAMILLTON|HAMILTON/i},
+  {name:'Elisur',pat:/ELISUR/i}
 ];
 var MIB_MODE='Both',MIB_DEST='_ALL',MIB_CAT='Organic';
-var MIB_FOB_LS='jlz_mib_fob_settings';
-var mibFob={};
-try{mibFob=JSON.parse(localStorage.getItem(MIB_FOB_LS)||'{}')||{};}catch(e){mibFob={};}
-function mibSaveFob(){try{localStorage.setItem(MIB_FOB_LS,JSON.stringify(mibFob));}catch(e){}}
-function mibFobOf(name){return mibFob[name]||{freight:0,dest:0};}
 var mibDrillOpen=null;
 var MIB_CHARTS={};
 
@@ -6318,14 +6318,33 @@ function mibDetailFor(matchFn,week,mode,cat,dest){
     return matchFn(r.exp);
   });
 }
-// -- real ORDERS -> FOB-adjusted "mis cotizaciones", by supplier, aligned by ETD --
+// -- Per-order FOB derivation --
+// FOB = cifTotal - international freight - insurance - (customs if DDP)
+// destHandlingUsd is intentionally NOT subtracted: it's a JLZ post-arrival cost
+// (dock-to-warehouse) that was never part of the negotiated FOB with the supplier.
+// It's captured on the order to enrich landed cost analysis (Pricing module),
+// not the market-comparison FOB shown here.
+function mibOrderFobUsd(o){
+  var cif=parseFloat(o.cifTotal)||0;
+  if(cif<=0)return 0;
+  var freight=parseFloat(o.freightUsd)||0;
+  var insurance=parseFloat(o.insuranceUsd)||0;
+  var customs=(o.incoterm==='DDP')?(parseFloat(o.customsUsd)||0):0;
+  var fob=cif-freight-insurance-customs;
+  return fob>0?fob:0;
+}
+// -- real ORDERS -> pre-FOB-adjusted "mis cotizaciones", by supplier, aligned by ETD --
+// Aggregation is done in FOB-USD terms (not raw CIF), so mixing orders with different
+// modes/incoterms in the same week no longer distorts the average.
 function mibMyQuotes(weeks){
   var wset={};weeks.forEach(function(w){wset[w]=true;});
   var orders=(typeof bpAllOrders==='function')?bpAllOrders():[];
   var out={};MIB_MYSUP.forEach(function(s){out[s.name]={};});
   orders.forEach(function(o){
-    var c=parseFloat(o.cifTotal)||0,l=parseFloat(o.netWeightLb)||0;
-    if(c<=0||l<=0)return;
+    var l=parseFloat(o.netWeightLb)||0;
+    if(l<=0)return;
+    var fobUsd=mibOrderFobUsd(o);
+    if(fobUsd<=0)return;
     var supMatch=null;
     MIB_MYSUP.forEach(function(s){if(!supMatch&&s.pat.test(o.supplier||''))supMatch=s;});
     if(!supMatch)return;
@@ -6334,16 +6353,11 @@ function mibMyQuotes(weeks){
     var d=mibParseDate(String(ds).slice(0,10));
     var wk=isoWk(d);if(!wset[wk])return;
     if(!out[supMatch.name][wk])out[supMatch.name][wk]={l:0,u:0,n:0};
-    out[supMatch.name][wk].l+=l;out[supMatch.name][wk].u+=c;out[supMatch.name][wk].n++;
+    // u now holds FOB-USD (already net of freight/insurance/customs), NOT raw CIF.
+    // Downstream, u/l gives FOB $/lb directly with no further adjustment needed.
+    out[supMatch.name][wk].l+=l;out[supMatch.name][wk].u+=fobUsd;out[supMatch.name][wk].n++;
   });
   return out;
-}
-function mibAdjust(supplierName,rawPerLb){
-  var f=mibFobOf(supplierName);
-  var v=rawPerLb-(parseFloat(f.freight)||0);
-  var sup=MIB_MYSUP.filter(function(s){return s.name===supplierName;})[0];
-  if(sup&&sup.incoterm==='DDP')v-=(parseFloat(f.dest)||0);
-  return Math.max(0,v);
 }
 
 // -- full live roster: every exporter (trailing 12mo), tagged Formal/Informal/Mine --
@@ -6430,8 +6444,8 @@ function mibComputeGap(weeks){
   MIB_MYSUP.forEach(function(s){
     Object.keys(mq[s.name]||{}).forEach(function(w){
       var v=mq[s.name][w];if(!v.l)return;
-      var adj=mibAdjust(s.name,v.u/v.l);
-      myLbs+=v.l;myUsd+=adj*v.l;
+      // v.u is already FOB-USD (net of freight/insurance/customs per-order); v.u/v.l is FOB $/lb.
+      myLbs+=v.l;myUsd+=v.u;
     });
   });
   var myAvg=myLbs?myUsd/myLbs:null;
@@ -6480,18 +6494,50 @@ function mibRenderSelChips(){
   }).join('')||'<span style="color:var(--gray-400);font-size:11px">No exporters selected -- pick some below, or use "+ Add my suppliers".</span>';
 }
 
-// -- FOB settings --
+// -- FOB conversion status panel --
+// The old per-supplier freight/dest inputs are gone. Each order now carries its own
+// international freight, insurance, and customs values; FOB is derived per-order in
+// mibOrderFobUsd(). This panel just reports coverage so Juan sees which orders still
+// need cost fields filled in to be included in the FOB gap calculation.
 function mibRenderFobSettings(){
   var el=ge('mib-fob-settings');if(!el)return;
-  el.innerHTML=MIB_MYSUP.map(function(s){
-    var f=mibFobOf(s.name);
-    var destRow=s.incoterm==='DDP'?('<label>Destination import costs $/lb</label><input type="number" step="0.01" min="0" value="'+(f.dest||0)+'" onchange="mibSetFob(\''+s.name+'\',\'dest\',this.value)">'):'';
-    return '<div class="mib-fobrow"><span class="nm">'+s.name+'</span><span class="ic">'+s.incoterm+'</span>'
-      +'<label>Freight+insurance $/lb</label><input type="number" step="0.01" min="0" value="'+(f.freight||0)+'" onchange="mibSetFob(\''+s.name+'\',\'freight\',this.value)">'
-      +destRow+'</div>';
+  var orders=(typeof bpAllOrders==='function')?bpAllOrders():[];
+  // Count only orders that match one of my suppliers (others don't get FOB-compared here anyway)
+  var mine=orders.filter(function(o){
+    return MIB_MYSUP.some(function(s){return s.pat.test(o.supplier||'');});
+  });
+  var rows=MIB_MYSUP.map(function(s){
+    var supOrders=mine.filter(function(o){return s.pat.test(o.supplier||'');});
+    if(supOrders.length===0)return '<div class="mib-fobrow"><span class="nm">'+s.name+'</span><span style="color:var(--gray-400);font-size:11px">no orders</span></div>';
+    var withCosts=supOrders.filter(function(o){
+      // "Complete" means: has cifTotal + netWeightLb + at least freight or insurance set (and customs if DDP).
+      // Zero freight is valid for DDP (bundled) so we don't require it there.
+      if(!(parseFloat(o.cifTotal)>0)||!(parseFloat(o.netWeightLb)>0))return false;
+      var hasFreight=(parseFloat(o.freightUsd)||0)>0;
+      var hasInsurance=(parseFloat(o.insuranceUsd)||0)>0;
+      if(o.incoterm==='DDP'){
+        var hasCustoms=(parseFloat(o.customsUsd)||0)>0;
+        // DDP: freight can be $0 (bundled), so accept as "complete" if insurance+customs are set.
+        return hasInsurance&&hasCustoms;
+      }
+      // CIF/other: need at least freight; insurance strongly recommended.
+      return hasFreight;
+    }).length;
+    var missing=supOrders.length-withCosts;
+    var color=missing===0?'var(--green-700)':(missing===supOrders.length?'var(--red-600)':'var(--amber-700)');
+    var pct=Math.round(100*withCosts/supOrders.length);
+    return '<div class="mib-fobrow">'
+      +'<span class="nm">'+s.name+'</span>'
+      +'<span style="font-size:11px;color:var(--gray-500)">'+supOrders.length+' order'+(supOrders.length===1?'':'s')+'</span>'
+      +'<span style="font-size:11px;font-weight:600;color:'+color+'">'+withCosts+'/'+supOrders.length+' with FOB costs ('+pct+'%)</span>'
+      +(missing>0?'<span style="font-size:10px;color:var(--gray-500);margin-left:4px">'+missing+' need freight/insurance'+(supOrders.some(function(o){return o.incoterm==='DDP';})?'/customs':'')+'</span>':'')
+      +'</div>';
   }).join('');
+  el.innerHTML='<div style="font-size:11px;color:var(--gray-600);margin-bottom:8px;line-height:1.5">'
+    +'FOB is derived per-order from each order&#39;s <b>International freight</b>, <b>Insurance</b>, and (for DDP) <b>Customs &amp; brokerage</b>. '
+    +'Fill these in the <b>Orders</b> module &mdash; the FOB gap card and overlay chart use only orders with these costs set.'
+    +'</div>'+rows;
 }
-window.mibSetFob=function(name,field,val){if(!mibFob[name])mibFob[name]={freight:0,dest:0};mibFob[name][field]=parseFloat(val)||0;mibSaveFob();mibRenderAll();};
 
 // -- main overlay chart: one line per selected exporter, point shape = dominant mode, plus my real shipments --
 function mibDominantModeShape(name,week){
@@ -6520,7 +6566,7 @@ function mibRenderChart(){
   var mq=mibMyQuotes(weeks);
   var myData=weeks.map(function(w){
     var l=0,u=0;
-    MIB_MYSUP.forEach(function(s){var v=(mq[s.name]||{})[w];if(v&&v.l){var adj=mibAdjust(s.name,v.u/v.l);l+=v.l;u+=adj*v.l;}});
+    MIB_MYSUP.forEach(function(s){var v=(mq[s.name]||{})[w];if(v&&v.l){l+=v.l;u+=v.u;}});
     return l?u/l:null;
   });
   datasets.push({label:'My shipments (real orders)',data:myData,borderColor:'#000',backgroundColor:'#000',showLine:false,pointStyle:'star',pointRadius:9,pointBorderColor:'#000'});
@@ -6550,7 +6596,7 @@ function mibRenderTable(){
       return '<td>'+(p?fmtPx(p):'-')+'</td>';
     }).join('');
     var l=0,u=0;
-    MIB_MYSUP.forEach(function(s){var v=(mqAll[s.name]||{})[wk];if(v&&v.l){var adj=mibAdjust(s.name,v.u/v.l);l+=v.l;u+=adj*v.l;}});
+    MIB_MYSUP.forEach(function(s){var v=(mqAll[s.name]||{})[wk];if(v&&v.l){l+=v.l;u+=v.u;}});
     var mine=l?'$'+(u/l).toFixed(3):'-';
     var main='<tr><td style="cursor:pointer" onclick="mibToggleDrill(\''+wk+'\')">'+arrow+'</td><td>'+mibShortWk(wk)+flag+'</td>'+cells+'<td style="color:#d97706;font-weight:600">'+mine+'</td></tr>';
     var drill=(mibDrillOpen===wk)?mibDrillHtml(wk,colspan):'';
@@ -10671,6 +10717,9 @@ function saveOrderEdit() {
       netWeightLb:     getNum('ord-edit-netWeightLb'),
       cifPriceCase:    getNum('ord-edit-cifPriceCase'),
       freightUsd:      getNum('ord-edit-freightUsd') || 0,
+      insuranceUsd:    getNum('ord-edit-insuranceUsd') || 0,
+      customsUsd:      getNum('ord-edit-customsUsd') || 0,
+      destHandlingUsd: getNum('ord-edit-destHandlingUsd') || 0,
       cifTotal:        getNum('ord-edit-cifTotal'),
       orderDate:       getDate('ord-edit-orderDate'),
       etdEstimated:    newEtdEst,
@@ -10841,6 +10890,9 @@ function newOrderInline() {
     netWeightLb:      39600,
     cifPriceCase:     null,
     freightUsd:       0,
+    insuranceUsd:     0,   // Estimated insurance (used to derive FOB in Market Intel)
+    customsUsd:       0,   // Estimated customs & brokerage (DDP only; used to derive FOB)
+    destHandlingUsd:  0,   // Estimated destination handling & delivery (not part of FOB, used for landed cost)
     cifTotal:         null,
     orderDate:        null,
     etdEstimated:     null,
@@ -10999,9 +11051,14 @@ function buildOrderViewMode(o) {
         field('Price $/lb (calc)', cifLb ? '$' + cifLb.toFixed(4) : '—', { color: 'var(--gray-500)' })
       )
     + row2(
-        field('Freight (USD)',  o.freightUsd ? '$' + o.freightUsd.toLocaleString() : (o.incoterm === 'DDP' ? '$0 (DDP)' : '—')),
+        field('International freight (USD)',  o.freightUsd ? '$' + o.freightUsd.toLocaleString() : (o.incoterm === 'DDP' ? '$0 (bundled in DDP)' : '—')),
         field('Total price',    o.cifTotal ? '$' + o.cifTotal.toLocaleString() : '—')
       )
+    + row2(
+        field('Insurance (USD)',       o.insuranceUsd ? '$' + o.insuranceUsd.toLocaleString() : '—'),
+        field('Customs & brokerage (USD)', o.customsUsd ? '$' + o.customsUsd.toLocaleString() : (o.incoterm === 'DDP' ? '—' : 'n/a (not DDP)'))
+      )
+    + field('Destination handling & delivery (USD)', o.destHandlingUsd ? '$' + o.destHandlingUsd.toLocaleString() : '—', { color: 'var(--gray-500)' })
     + '</div>'
 
     // ── Group 3: Dates (expanded by default — most-edited)
@@ -11191,9 +11248,14 @@ function buildOrderEditForm(o) {
       )
     + row2(
         inp('Price $/case', 'ord-edit-cifPriceCase', o.cifPriceCase, { type: 'number', placeholder: 'price you pay per case (CIF/DDP/FOB depending on incoterm)' }),
-        inp('Freight (USD)', 'ord-edit-freightUsd', o.freightUsd, { type: 'number', placeholder: 'set $0 for DDP (vendor pays)' })
+        inp('International freight (USD)', 'ord-edit-freightUsd', o.freightUsd, { type: 'number', placeholder: 'ocean or air freight; set $0 for DDP (bundled)' })
       )
     + inp('Total price (USD)', 'ord-edit-cifTotal', o.cifTotal, { type: 'number', placeholder: 'auto: cases × $/case' })
+    + row2(
+        inp('Insurance (USD)', 'ord-edit-insuranceUsd', o.insuranceUsd, { type: 'number', placeholder: 'cargo insurance premium' }),
+        inp('Customs & brokerage (USD)', 'ord-edit-customsUsd', o.customsUsd, { type: 'number', placeholder: 'DDP: duty + broker fees; leave $0 for CIF' })
+      )
+    + inp('Destination handling & delivery (USD)', 'ord-edit-destHandlingUsd', o.destHandlingUsd, { type: 'number', placeholder: 'terminal + drayage from port/airport to warehouse' })
 
     // ── Dates ──
     + grp('Dates · estimated vs actual')
@@ -11276,7 +11338,10 @@ const ORD_HEADER_ALIASES = {
   supplier:         ['supplier', 'vendor'],
   cases:            ['cases', 'boxes', 'qty', 'quantity'],
   netWeightLb:      ['net weight lb', 'net weight'],
-  freightUsd:       ['freight usd', 'freight'],
+  freightUsd:       ['international freight usd', 'international freight', 'freight usd', 'freight'],
+  insuranceUsd:     ['insurance usd', 'insurance'],
+  customsUsd:       ['customs brokerage usd', 'customs usd', 'customs', 'brokerage usd', 'brokerage', 'customs and brokerage', 'customs & brokerage'],
+  destHandlingUsd:  ['destination handling usd', 'destination handling', 'dest handling', 'destination handling delivery usd', 'destination handling and delivery', 'destination handling & delivery'],
   // The CIF price columns lose their (USD x ...) suffix in the normalizer,
   // so both lb and case variants would collapse to "cif price". We
   // re-disambiguate them at the column-detection stage using the raw header.
@@ -11588,6 +11653,9 @@ function ordParsePaste(raw) {
       netWeightLb:      netWeightLb,
       cifPriceCase:     cifPriceCase,
       freightUsd:       ordParseNum(raw.freightUsd) || 0,
+      insuranceUsd:     ordParseNum(raw.insuranceUsd) || 0,
+      customsUsd:       ordParseNum(raw.customsUsd) || 0,
+      destHandlingUsd:  ordParseNum(raw.destHandlingUsd) || 0,
       cifTotal:         cifTotal,
       orderDate:        null,   // not in Sheet; user can fill manually later
       etdEstimated:     etdEst,
@@ -14932,6 +15000,20 @@ async function pullOrdersFromSheet(silent) {
         if (ch.eta.length > 0) o.etaChangeHistory = ch.eta;
       }
       return o;
+    });
+    // Preserve LOCAL-ONLY fields that don't live in the Sheet schema.
+    // Without this, values entered locally (like the FOB-conversion cost estimates)
+    // would be silently wiped on every startup by the auto-pull.
+    // TODO: when Code.gs adds columns for these fields, this preservation can be removed.
+    const LOCAL_ONLY_ORDER_FIELDS = ['insuranceUsd', 'customsUsd', 'destHandlingUsd'];
+    const localByPo = {};
+    (getOrders() || []).forEach(o => { if (o.jlzPo) localByPo[o.jlzPo] = o; });
+    orders.forEach(o => {
+      const local = localByPo[o.jlzPo];
+      if (!local) return;
+      LOCAL_ONLY_ORDER_FIELDS.forEach(f => {
+        if (o[f] === undefined && local[f] !== undefined) o[f] = local[f];
+      });
     });
     saveOrders(orders);
     window._ordersData = orders;
