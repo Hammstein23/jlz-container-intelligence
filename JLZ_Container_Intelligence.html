@@ -5119,18 +5119,18 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
 </div>
 
 <div class="mi-subnav">
-  <button class="mi-snb active" onclick="miSec('prices',this)">Price Trends</button>
+  <button class="mi-snb active" onclick="miSec('formal',this)">Procurement Intelligence</button>
   <button class="mi-snb" onclick="miSec('market',this)">Market Overview</button>
-  <button class="mi-snb" onclick="miSec('seasonality',this)">Historical View</button>
-  <button class="mi-snb" onclick="miSec('formal',this)">Procurement Intelligence</button>
+  <button class="mi-snb" onclick="miSec('seasonality',this)">Campaign History</button>
+  <button class="mi-snb" onclick="miSec('prices',this)">Price Trends</button>
 </div>
 
-<div id="mi-s-prices" class="mi-sec active">
+<div id="mi-s-prices" class="mi-sec">
   <div class="mi-krow">
     <div class="mi-kpi"><div class="mi-kpi-lbl">&#127807; Organic FOB</div><div class="mi-kpi-val" id="kp-org">-</div><div class="mi-kpi-sub">4-week avg</div><div class="mi-delta neu" id="kp-org-d"></div></div>
     <div class="mi-kpi"><div class="mi-kpi-lbl">Conventional FOB</div><div class="mi-kpi-val" id="kp-conv">-</div><div class="mi-kpi-sub">4-week avg</div></div>
     <div class="mi-kpi"><div class="mi-kpi-lbl">Organic Premium</div><div class="mi-kpi-val" id="kp-spread">-</div><div class="mi-kpi-sub">vs Conventional</div></div>
-    <div class="mi-kpi"><div class="mi-kpi-lbl">My Avg (Orders)</div><div class="mi-kpi-val" id="kp-mine">-</div><div class="mi-kpi-sub">FOB equiv</div><div class="mi-delta neu" id="kp-mine-d"></div></div>
+    
     <div class="mi-kpi"><div class="mi-kpi-lbl">Organic Volume</div><div class="mi-kpi-val" id="kp-vol">-</div><div class="mi-kpi-sub">M lbs &middot; 4 weeks</div></div>
   </div>
   <div class="mi-card">
@@ -5260,7 +5260,7 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
   </div>
 </div>
 
-<div id="mi-s-formal" class="mi-sec">
+<div id="mi-s-formal" class="mi-sec active">
   <style>
   .mib-ctrlbar{background:var(--white);border:1px solid var(--gray-200);border-radius:9px;padding:12px 16px;margin-bottom:12px;display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end}
   .mib-ctrl-grp{display:flex;flex-direction:column;gap:5px}
@@ -5362,11 +5362,6 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
   <div class="mib-gapcard" id="mib-gapcard"></div>
 
   <div class="mi-card">
-    <div class="mi-ch"><span class="mi-ct">CIF/DDP to FOB conversion</span><span class="mi-hint">You control these numbers -- no default is invented here</span></div>
-    <div class="mi-cb"><div class="mib-fobset" id="mib-fob-settings"></div></div>
-  </div>
-
-  <div class="mi-card">
     <div class="mi-ch"><span class="mi-ct">Compare exporters</span><span class="mi-hint">Pick up to 6, sorted by trailing-12mo volume</span></div>
     <div class="mi-cb">
       <div style="display:flex;gap:8px;margin-bottom:9px">
@@ -5392,6 +5387,11 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
   <div class="mi-card">
     <div class="mi-ch"><span class="mi-ct">Weekly detail</span><span class="mi-hint">Click a week to see individual shipments (exporter, buyer, country, mode)</span></div>
     <div class="mi-cb"><div style="overflow-x:auto"><table class="mib-wk" id="mib-wk-table"><thead></thead><tbody id="mib-wk-body"></tbody></table></div></div>
+  </div>
+
+  <div class="mi-card">
+    <div class="mi-ch"><span class="mi-ct">CIF/DDP to FOB conversion</span><span class="mi-hint">You control these numbers -- no default is invented here</span></div>
+    <div class="mi-cb"><div class="mib-fobset" id="mib-fob-settings"></div></div>
   </div>
 
   <div class="mi-card">
@@ -5506,15 +5506,6 @@ function renderKPIs(){
     var ra=wavg(r4),pa=wavg(p4);
     if(ra&&pa){var pct=((ra-pa)/pa*100).toFixed(1);if(el){el.textContent=(pct>=0?'+':'')+pct+'% vs prior 4w';el.className='mi-delta '+(pct>=0?'up':'dn');}}
   } else if(el){el.textContent='';}
-  var _ords=(typeof bpAllOrders==='function')?bpAllOrders():[];
-  var _valid=_ords.filter(function(o){return parseFloat(o.cifTotal)>0&&parseFloat(o.netWeightLb)>0;});
-  if(_valid.length){
-    var _totL=0,_totU=0;_valid.forEach(function(o){_totL+=parseFloat(o.netWeightLb);_totU+=parseFloat(o.cifTotal);});
-    var myLb=_totL?_totU/_totL:0;
-    setText('kp-mine',fmtPx(myLb));
-    if(op){var d=((myLb-op)/op*100).toFixed(1);var e2=ge('kp-mine-d');if(e2){e2.textContent=(d>=0?'+':'')+d+'% vs mkt';e2.className='mi-delta neu';}}
-  }
-  else setText('kp-mine','No orders');
 }
 
 function wavg(rows){var tv=rows.reduce(function(s,r){return s+(r.v||0);},0);if(!tv)return 0;return rows.reduce(function(s,r){return s+(r.p||0)*(r.v||0);},0)/tv;}
@@ -5713,6 +5704,18 @@ function moBuyersFor(name,weeks,mode,cat,cg){
   return Object.values(byBuyer).sort(function(a,b){return b.lbs-a.lbs;});
 }
 function moShortName(name){return name.length>28?name.slice(0,28)+'...':name;}
+window.moCompareInPI=function(name,evt){
+  if(evt)evt.stopPropagation();
+  if(typeof selectedEntities!=='undefined'&&selectedEntities.indexOf(name)<0&&selectedEntities.length<MIB_MAX_SEL){
+    selectedEntities.push(name);
+    mibSaveSelected();
+  }
+  qa('.mi-sec').forEach(function(el){el.classList.remove('active');});
+  qa('.mi-snb').forEach(function(el){el.classList.remove('active');});
+  var sec=ge('mi-s-formal');if(sec)sec.classList.add('active');
+  qa('.mi-snb').forEach(function(b){if((b.getAttribute('onclick')||'').indexOf("'formal'")>=0)b.classList.add('active');});
+  if(typeof mibRenderAll==='function')mibRenderAll();
+};
 
 window.miMktRange=function(n,btn){btn.closest('.mi-ptog').querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');moRangeW=n;moDrillOpen=null;renderMkt();};
 window.miMktMode=function(m,btn){btn.closest('.mi-ptog').querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');moMode=m;renderMkt();};
@@ -5768,7 +5771,8 @@ function renderMkt(){
     tb.innerHTML=ranking.length?ranking.map(function(row,i){
       var short=moShortName(row.name);
       var pct=totalLbs?(row.lbs/totalLbs*100):0;
-      var main='<tr class="mo-rkrow" onclick="moToggleDrill(\''+row.name.replace(/'/g,"\\'")+'\')"><td style="color:var(--gray-400);font-size:10px">'+(i+1)+'</td><td title="'+row.name.replace(/"/g,'&quot;')+'">'+short+'</td><td class="r">'+(row.lbs/1e6).toFixed(2)+'</td><td class="r">'+pct.toFixed(1)+'%</td><td class="r">'+(row.p?fmtPx(row.p):'-')+'</td><td class="r">'+(row.usd?(row.usd/1000).toFixed(0):'-')+'</td></tr>';
+      var cmpLink=isB?'':(' <a href="javascript:void(0)" onclick="moCompareInPI(\''+row.name.replace(/'/g,"\\'")+'\',event)" style="font-size:9px;color:var(--jlz-mid);text-decoration:underline;margin-left:6px;white-space:nowrap">Compare in PI</a>');
+      var main='<tr class="mo-rkrow" onclick="moToggleDrill(\''+row.name.replace(/'/g,"\\'")+'\')"><td style="color:var(--gray-400);font-size:10px">'+(i+1)+'</td><td title="'+row.name.replace(/"/g,'&quot;')+'">'+short+cmpLink+'</td><td class="r">'+(row.lbs/1e6).toFixed(2)+'</td><td class="r">'+pct.toFixed(1)+'%</td><td class="r">'+(row.p?fmtPx(row.p):'-')+'</td><td class="r">'+(row.usd?(row.usd/1000).toFixed(0):'-')+'</td></tr>';
       var drill=(moDrillOpen===row.name)?moDrillHtml(row.name,weeks,6):'';
       return main+drill;
     }).join(''):'<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:16px">No shipments to this destination in range</td></tr>';
