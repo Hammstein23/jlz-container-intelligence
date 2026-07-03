@@ -5447,8 +5447,14 @@ function renderKPIs(){
     var ra=wavg(r4),pa=wavg(p4);
     if(ra&&pa){var pct=((ra-pa)/pa*100).toFixed(1);if(el){el.textContent=(pct>=0?'+':'')+pct+'% vs prior 4w';el.className='mi-delta '+(pct>=0?'up':'dn');}}
   } else if(el){el.textContent='';}
-  var mc=getMyCase();
-  if(mc){var myLb=mc/(13.6*2.20462);setText('kp-mine','$'+myLb.toFixed(3)+'/lb');if(op){var d=((myLb-op)/op*100).toFixed(1);var e2=ge('kp-mine-d');if(e2){e2.textContent=(d>=0?'+':'')+d+'% vs mkt';e2.className='mi-delta neu';}}}
+  var _ords=(typeof bpAllOrders==='function')?bpAllOrders():[];
+  var _valid=_ords.filter(function(o){return parseFloat(o.cifTotal)>0&&parseFloat(o.netWeightLb)>0;});
+  if(_valid.length){
+    var _totL=0,_totU=0;_valid.forEach(function(o){_totL+=parseFloat(o.netWeightLb);_totU+=parseFloat(o.cifTotal);});
+    var myLb=_totL?_totU/_totL:0;
+    setText('kp-mine','$'+myLb.toFixed(3)+'/lb');
+    if(op){var d=((myLb-op)/op*100).toFixed(1);var e2=ge('kp-mine-d');if(e2){e2.textContent=(d>=0?'+':'')+d+'% vs mkt';e2.className='mi-delta neu';}}
+  }
   else setText('kp-mine','No orders');
 }
 
