@@ -5388,18 +5388,18 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
     </div>
     <div class="mi-cb">
       <div class="mib-legend" style="margin-bottom:4px">
-        <span style="display:inline-block;width:14px;height:9px;background:rgba(37,99,235,.16);border-radius:2px;vertical-align:middle"></span> Formal band P25&ndash;P75 &nbsp;
+        <span style="display:inline-block;width:14px;height:9px;background:rgba(37,99,235,.16);border-radius:2px;vertical-align:middle"></span> Formal band P25&ndash;P75 (min&ndash;max when &lt;4 exporters that week) &nbsp;
         <span style="display:inline-block;width:16px;border-top:2px solid #2563eb;vertical-align:middle"></span> Formal median &nbsp;&middot;&nbsp;
         <span style="display:inline-block;width:14px;height:9px;background:rgba(107,114,128,.16);border-radius:2px;vertical-align:middle"></span> Informal band &nbsp;
         <span style="display:inline-block;width:16px;border-top:2px dashed #6b7280;vertical-align:middle"></span> Informal median &nbsp;&middot;&nbsp;
         <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f59e0b;border:2px solid #78350f;vertical-align:middle"></span> My PO (hover: PO#, gaps)
       </div>
       <div id="mib-band-sea-wrap">
-        <div class="mib-band-t">Sea &mdash; FOB</div>
+        <div class="mib-band-t">Sea &mdash; FOB<span id="mib-band-note-sea" style="text-transform:none;letter-spacing:0;font-weight:400;color:var(--gray-400)"></span></div>
         <div class="mi-wrap" style="height:225px"><canvas id="mib-band-sea"></canvas></div>
       </div>
       <div id="mib-band-air-wrap">
-        <div class="mib-band-t">Air &mdash; FOB</div>
+        <div class="mib-band-t">Air &mdash; FOB<span id="mib-band-note-air" style="text-transform:none;letter-spacing:0;font-weight:400;color:var(--gray-400)"></span></div>
         <div class="mi-wrap" style="height:225px"><canvas id="mib-band-air"></canvas></div>
       </div>
     </div>
@@ -6507,12 +6507,19 @@ window.mibSetBandView=function(v,btn){
   mibRenderBands();
 };
 
-var MIB_EXP_OPEN=false; // demoted exporter section collapsed by default
-window.mibToggleExpSection=function(){
-  MIB_EXP_OPEN=!MIB_EXP_OPEN;
+// Demoted exporter section — collapsed by default, but the open/closed state
+// persists across sessions so users who work with it don't re-open it every time.
+var MIB_EXP_OPEN=false;
+try{MIB_EXP_OPEN=localStorage.getItem('jlz_mib_exp_open')==='1';}catch(e){}
+function mibSyncExpSection(){
   var sec=ge('mib-exp-section'),arr=ge('mib-exp-arrow');
   if(sec)sec.style.display=MIB_EXP_OPEN?'block':'none';
   if(arr)arr.innerHTML=MIB_EXP_OPEN?'&#9662;':'&#9656;';
+}
+window.mibToggleExpSection=function(){
+  MIB_EXP_OPEN=!MIB_EXP_OPEN;
+  try{localStorage.setItem('jlz_mib_exp_open',MIB_EXP_OPEN?'1':'0');}catch(e){}
+  mibSyncExpSection();
   // Charts can't size themselves inside display:none — (re)render on expand.
   if(MIB_EXP_OPEN){mibRenderChart();mibRenderTable();}
 };
@@ -6551,8 +6558,9 @@ function mibBandStats(weeks,mode,formality){
   });
   var out={};
   Object.keys(by).forEach(function(w){
-    var pts=by[w];var lbs=0;pts.forEach(function(x){lbs+=x.l;});
-    out[w]={p25:mibWPct(pts,.25),med:mibWPct(pts,.5),p75:mibWPct(pts,.75),lbs:lbs,n:pts.length};
+    var pts=by[w];var lbs=0,mn=Infinity,mx=-Infinity;
+    pts.forEach(function(x){lbs+=x.l;if(x.p<mn)mn=x.p;if(x.p>mx)mx=x.p;});
+    out[w]={p25:mibWPct(pts,.25),med:mibWPct(pts,.5),p75:mibWPct(pts,.75),min:mn,max:mx,lbs:lbs,n:pts.length};
   });
   return out;
 }
@@ -6716,15 +6724,26 @@ function mibRenderBands(){
     var iS=mibBandStats(weeks,mode,'Informal');
     var labels=weeks.map(mibShortWk);
     function series(stats,field){return weeks.map(function(w){var s=stats[w];return(s&&s[field]!=null)?s[field]:null;});}
+    // Band edges: P25-P75 when the week has >=4 exporters; min-max fallback for
+    // thin weeks (with 1-2 formal exporters the percentiles converge to a single
+    // value and the band collapses into an invisible sliver).
+    function bandEdge(stats,hi){return weeks.map(function(w){var s=stats[w];if(!s)return null;if(s.n>=4)return hi?s.p75:s.p25;return hi?s.max:s.min;});}
+    // Per-panel sample-size note so thin data is visible, not mysterious
+    function avgN(stats){var t=0,c=0;Object.keys(stats).forEach(function(k){t+=stats[k].n;c++;});return c?t/c:0;}
+    var note=ge('mib-band-note-'+mode.toLowerCase());
+    if(note){
+      var fN=avgN(fS),iN=avgN(iS);
+      note.textContent=' \u00b7 formal ~'+fN.toFixed(1)+' exporters/wk'+(fN>0&&fN<2?' (thin \u2014 band shows min\u2013max)':'')+' \u00b7 informal ~'+iN.toFixed(1)+'/wk';
+    }
     var datasets=[];
     if(MIB_BANDVIEW!=='informal'){
-      datasets.push({label:'_F75',data:series(fS,'p75'),borderColor:'transparent',backgroundColor:'rgba(37,99,235,.16)',pointRadius:0,fill:'+1',tension:.3,spanGaps:true});
-      datasets.push({label:'_F25',data:series(fS,'p25'),borderColor:'transparent',backgroundColor:'transparent',pointRadius:0,tension:.3,spanGaps:true});
-      datasets.push({label:'Formal median',data:series(fS,'med'),borderColor:'#2563eb',backgroundColor:'transparent',pointRadius:0,borderWidth:2,tension:.3,spanGaps:true});
+      datasets.push({label:'_F75',data:bandEdge(fS,true),borderColor:'transparent',backgroundColor:'rgba(37,99,235,.16)',pointRadius:0,fill:'+1',tension:.3,spanGaps:true});
+      datasets.push({label:'_F25',data:bandEdge(fS,false),borderColor:'transparent',backgroundColor:'transparent',pointRadius:0,tension:.3,spanGaps:true});
+      datasets.push({label:'Formal median',data:series(fS,'med'),borderColor:'#2563eb',backgroundColor:'transparent',pointRadius:2.5,pointBackgroundColor:'#2563eb',borderWidth:2,tension:.3,spanGaps:true});
     }
     if(MIB_BANDVIEW!=='formal'){
-      datasets.push({label:'_I75',data:series(iS,'p75'),borderColor:'transparent',backgroundColor:'rgba(107,114,128,.16)',pointRadius:0,fill:'+1',tension:.3,spanGaps:true});
-      datasets.push({label:'_I25',data:series(iS,'p25'),borderColor:'transparent',backgroundColor:'transparent',pointRadius:0,tension:.3,spanGaps:true});
+      datasets.push({label:'_I75',data:bandEdge(iS,true),borderColor:'transparent',backgroundColor:'rgba(107,114,128,.16)',pointRadius:0,fill:'+1',tension:.3,spanGaps:true});
+      datasets.push({label:'_I25',data:bandEdge(iS,false),borderColor:'transparent',backgroundColor:'transparent',pointRadius:0,tension:.3,spanGaps:true});
       datasets.push({label:'Informal median',data:series(iS,'med'),borderColor:'#6b7280',backgroundColor:'transparent',pointRadius:0,borderWidth:2,borderDash:[5,4],tension:.3,spanGaps:true});
     }
     var myPts=pos.filter(function(p){return p.mode===mode;}).map(function(p){
@@ -7072,8 +7091,9 @@ function mibRenderAll(){
   mibRenderScorecard();
   mibRenderBands();
   mibRenderAirBridge();
-  // Demoted exporter section: charts can't size inside display:none, so only
-  // render when the section is expanded (mibToggleExpSection re-renders on open).
+  // Demoted exporter section: restore persisted open/closed state, and only
+  // render its charts when expanded (they can't size inside display:none).
+  mibSyncExpSection();
   if(MIB_EXP_OPEN){mibRenderChart();mibRenderTable();}
 }
 function mibEnsureDefaultRange(){
