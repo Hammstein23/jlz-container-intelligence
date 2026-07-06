@@ -5282,13 +5282,19 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
   tr.mih-simr{cursor:pointer}
   tr.mih-simr:hover{background:var(--gray-50)}
   tr.mih-simr.selected{background:var(--jlz-light)}
-  .mib-gapcard{background:linear-gradient(135deg,#f0fdf4 0%,#ecfdf5 100%);border:1px solid #bbf7d0;border-radius:9px;padding:16px 20px;margin-bottom:12px}
-  .mib-gap-main{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
-  .mib-gap-num{font-family:var(--fd);font-size:28px;font-weight:800}
-  .mib-gap-num.close{color:#15803d} .mib-gap-num.wide{color:#dc2626} .mib-gap-num.flat{color:var(--gray-500)}
-  .mib-gap-sub{font-size:12px;color:var(--gray-600)}
-  .mib-gap-trend{font-size:11px;font-weight:700;padding:2px 9px;border-radius:12px}
-  .mib-gap-trend.closing{background:#dcfce7;color:#166534} .mib-gap-trend.widening{background:#fee2e2;color:#b91c1c} .mib-gap-trend.flat{background:var(--gray-100);color:var(--gray-500)}
+  .mib-kpigrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+  .mib-kpi{background:var(--gray-50);border:1px solid var(--gray-100);border-radius:var(--r);padding:11px 13px}
+  .mib-kpi-l{font-size:10px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:.05em;font-family:var(--fm)}
+  .mib-kpi-v{font-family:var(--fd);font-size:24px;font-weight:800;margin:3px 0 1px}
+  .mib-kpi-v.good{color:#15803d} .mib-kpi-v.bad{color:#b91c1c} .mib-kpi-v.warn{color:#b45309} .mib-kpi-v.neut{color:var(--gray-600)}
+  .mib-kpi-s{font-size:10.5px;color:var(--gray-500)}
+  .mib-chip{font-size:10.5px;font-weight:600;padding:2px 9px;border-radius:10px;display:inline-block;white-space:nowrap}
+  .mib-chip.green{background:#dcfce7;color:#166534} .mib-chip.amber{background:#fef3c7;color:#92400e}
+  .mib-chip.red{background:#fee2e2;color:#b91c1c} .mib-chip.gray{background:var(--gray-100);color:var(--gray-500)}
+  .mib-score-drill td{background:var(--gray-50);font-size:11px;color:var(--gray-600);padding:6px 10px}
+  .mib-band-t{font-size:10px;font-weight:700;color:var(--gray-500);font-family:var(--fm);text-transform:uppercase;letter-spacing:.05em;margin:12px 0 6px}
+  .mib-exp-head{cursor:pointer;user-select:none}
+  .mib-exp-head:hover{background:var(--gray-50)}
   .mib-fobset{background:var(--gray-50);border:1px solid var(--gray-100);border-radius:5px;padding:10px 13px}
   .mib-fobrow{display:flex;align-items:center;gap:9px;padding:5px 0;border-bottom:1px solid var(--gray-100);flex-wrap:wrap}
   .mib-fobrow:last-child{border-bottom:none}
@@ -5359,8 +5365,64 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
     </div>
   </div>
 
-  <div class="mib-gapcard" id="mib-gapcard"></div>
+  <!-- ① Am I buying well? — mode-matched verdict KPIs (replaces the old single gap card) -->
+  <div class="mi-card">
+    <div class="mi-ch"><span class="mi-ct">Am I buying well?</span><span class="mi-hint">vs formal exporters &middot; mode-matched &middot; same weeks &middot; per-order FOB</span></div>
+    <div class="mi-cb"><div class="mib-kpigrid" id="mib-kpis"></div></div>
+  </div>
 
+  <!-- ② Supplier scorecard -->
+  <div class="mi-card">
+    <div class="mi-ch"><span class="mi-ct">Supplier scorecard</span><span class="mi-hint">Gap vs formal market of same mode + weeks &middot; click a row for its POs</span></div>
+    <div class="mi-cb"><div style="overflow-x:auto"><table class="mib-wk" id="mib-score-table"><thead></thead><tbody id="mib-score-body"></tbody></table></div></div>
+  </div>
+
+  <!-- ③ Market position — dual bands per mode with my POs -->
+  <div class="mi-card">
+    <div class="mi-ch"><span class="mi-ct">Market position</span>
+      <div class="mi-ptog" id="mib-band-tog">
+        <button class="mi-pill active" onclick="mibSetBandView('both',this)">Formal + informal</button>
+        <button class="mi-pill" onclick="mibSetBandView('formal',this)">Formal only</button>
+        <button class="mi-pill" onclick="mibSetBandView('informal',this)">Informal only</button>
+      </div>
+    </div>
+    <div class="mi-cb">
+      <div class="mib-legend" style="margin-bottom:4px">
+        <span style="display:inline-block;width:14px;height:9px;background:rgba(37,99,235,.16);border-radius:2px;vertical-align:middle"></span> Formal band P25&ndash;P75 &nbsp;
+        <span style="display:inline-block;width:16px;border-top:2px solid #2563eb;vertical-align:middle"></span> Formal median &nbsp;&middot;&nbsp;
+        <span style="display:inline-block;width:14px;height:9px;background:rgba(107,114,128,.16);border-radius:2px;vertical-align:middle"></span> Informal band &nbsp;
+        <span style="display:inline-block;width:16px;border-top:2px dashed #6b7280;vertical-align:middle"></span> Informal median &nbsp;&middot;&nbsp;
+        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f59e0b;border:2px solid #78350f;vertical-align:middle"></span> My PO (hover: PO#, gaps)
+      </div>
+      <div id="mib-band-sea-wrap">
+        <div class="mib-band-t">Sea &mdash; FOB</div>
+        <div class="mi-wrap" style="height:225px"><canvas id="mib-band-sea"></canvas></div>
+      </div>
+      <div id="mib-band-air-wrap">
+        <div class="mib-band-t">Air &mdash; FOB</div>
+        <div class="mi-wrap" style="height:225px"><canvas id="mib-band-air"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ④ Air bridge monitor -->
+  <div class="mi-card">
+    <div class="mi-ch"><span class="mi-ct">Air bridge monitor</span><span class="mi-hint">Did the market fly too? Aligned by campaign week &middot; benchmark: total market (Veritrade campaign history has no per-exporter split)</span></div>
+    <div class="mi-cb">
+      <div class="mib-kpigrid" id="mib-ab-kpis" style="margin-bottom:12px"></div>
+      <div class="mib-legend" id="mib-ab-legend" style="margin-bottom:4px"></div>
+      <div class="mi-wrap" style="height:225px"><canvas id="mib-ab-chart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- ⑤ Track specific exporters — DEMOTED, collapsed by default -->
+  <div class="mi-card">
+    <div class="mi-ch mib-exp-head" onclick="mibToggleExpSection()">
+      <span class="mi-ct"><span id="mib-exp-arrow">&#9656;</span> Track specific exporters</span>
+      <span class="mi-hint">Exporter comparison chart (sea solid / air dashed) + weekly detail</span>
+    </div>
+  </div>
+  <div id="mib-exp-section" style="display:none">
   <div class="mi-card">
     <div class="mi-ch"><span class="mi-ct">Compare exporters</span><span class="mi-hint">Pick up to 6, sorted by trailing-12mo volume</span></div>
     <div class="mi-cb">
@@ -5373,13 +5435,13 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
   </div>
 
   <div class="mi-card">
-    <div class="mi-ch"><span class="mi-ct">Selling price -- selected exporters vs. my shipments</span><span class="mi-hint">Point shape = mode that week (not color, so exporter colors stay readable)</span></div>
+    <div class="mi-ch"><span class="mi-ct">Selling price -- selected exporters vs. my shipments</span><span class="mi-hint">Solid line = Sea, dashed = Air &middot; color identifies the exporter</span></div>
     <div class="mi-cb">
       <div class="mib-selchips" id="mib-sel-chips"></div>
       <div class="mi-wrap" style="height:320px"><canvas id="mib-chart-main"></canvas></div>
       <div class="mib-legend">
-        <b>Shapes:</b> &#9679; Sea &nbsp; &#9650; Air &nbsp; &#9670; Mixed (both modes that week) &nbsp; &#9733; My shipment (real orders) &middot;
-        <b>Colors</b> identify each exporter -- see chips above.
+        <b>Lines:</b> solid + filled &#9679; = Sea &nbsp; dashed + hollow &#9675; = Air &middot;
+        <b>My POs:</b> <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f59e0b;border:2px solid #78350f;vertical-align:middle"></span> Sea &nbsp;<span style="display:inline-block;width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:10px solid #f59e0b;vertical-align:middle"></span> Air &mdash; one point per PO, hover for PO#, incoterm, price.
       </div>
     </div>
   </div>
@@ -5388,6 +5450,7 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
     <div class="mi-ch"><span class="mi-ct">Weekly detail</span><span class="mi-hint">Click a week to see individual shipments (exporter, buyer, country, mode)</span></div>
     <div class="mi-cb"><div style="overflow-x:auto"><table class="mib-wk" id="mib-wk-table"><thead></thead><tbody id="mib-wk-body"></tbody></table></div></div>
   </div>
+  </div><!-- end mib-exp-section -->
 
   <div class="mi-card">
     <div class="mi-ch"><span class="mi-ct">FOB conversion coverage</span><span class="mi-hint">Derived per order from your entered costs -- managed in Orders</span></div>
@@ -6380,11 +6443,6 @@ function mibFullRoster(){
 function mibDisplayName2(r){if(!r)return '?';if(r.label)return r.label;return r.name.length>36?r.name.slice(0,36)+'\u2026':r.name;}
 function mibRosterOf(name){var full=mibFullRoster();for(var i=0;i<full.length;i++)if(full[i].name===name)return full[i];return null;}
 function mibAllWeeksSorted(){var s={};(D.expwk||[]).forEach(function(r){if(r.cg==='_ALL')s[r.yw]=true;});return Object.keys(s).sort();}
-function mibPriorWeeks(weeks){
-  if(!weeks.length)return [];
-  var allW=mibAllWeeksSorted();var idx=allW.indexOf(weeks[0]);if(idx<0)return [];
-  var n=weeks.length;return allW.slice(Math.max(0,idx-n),idx);
-}
 
 // -- selection state (persisted) --
 var MIB_SEL_LS='jlz_mib_selected_entities';
@@ -6425,50 +6483,367 @@ function mibDrillHtml(week,colspan){
     var ros=mibRosterOf(r.exp);
     return '<tr><td>'+mibDisplayName2(ros||{name:r.exp})+'</td><td>'+r.buyer+'</td><td>'+r.country+'</td><td>'+r.mode+'</td><td class="r">'+(r.lbs/1000).toFixed(1)+'k</td><td class="r">'+fmtPx(r.usd/r.lbs)+'</td></tr>';
   }).join('');
-  return '<tr><td colspan="'+colspan+'"><table class="mib-drilltbl"><thead><tr><th>Exporter</th><th>Buyer</th><th>Country</th><th>Mode</th><th>Lbs</th><th>Price</th></tr></thead><tbody>'+body+'</tbody></table></td></tr>';
+  // My own POs of this week — individual, highlighted, FOB-derived
+  var myRows=mibMyPOs([week]).filter(function(p){
+    return MIB_MODE==='Both'||p.mode===MIB_MODE;
+  }).map(function(p){
+    return '<tr style="background:#fffbeb"><td style="font-weight:700;color:#92400e">'+p.po+' (mine) \u00b7 '+p.sup+'</td><td>JLZ Produce</td><td>United States</td><td>'+p.mode+' '+p.incoterm+'</td><td class="r">'+(p.lbs/1000).toFixed(1)+'k</td><td class="r" style="font-weight:700;color:#92400e">'+fmtPx(p.fobLb)+'</td></tr>';
+  }).join('');
+  return '<tr><td colspan="'+colspan+'"><table class="mib-drilltbl"><thead><tr><th>Exporter</th><th>Buyer</th><th>Country</th><th>Mode</th><th>Lbs</th><th>Price</th></tr></thead><tbody>'+body+myRows+'</tbody></table></td></tr>';
 }
 window.mibToggleDrill=function(week){mibDrillOpen=(mibDrillOpen===week)?null:week;mibRenderTable();};
 
-// -- gap-to-close: real orders (FOB-adjusted) vs. the chosen comparison set --
-function mibComputeGap(weeks){
-  if(!weeks.length)return{marketPrice:null,myAvg:null,gap:null};
-  var compareSet=selectedEntities.length?selectedEntities:mibFullRoster().filter(function(r){return !r.isFormal;}).map(function(r){return r.name;});
-  var totLbs=0,totUsd=0;
-  compareSet.forEach(function(name){
-    var by=mibAggMatch(function(e){return e===name;},weeks,MIB_MODE,MIB_CAT,MIB_DEST);
-    weeks.forEach(function(w){var v=by[w];if(v){totLbs+=v.lbs;totUsd+=v.usd;}});
-  });
-  var marketPrice=totLbs?totUsd/totLbs:null;
-  var mq=mibMyQuotes(weeks);
-  var myLbs=0,myUsd=0;
-  MIB_MYSUP.forEach(function(s){
-    Object.keys(mq[s.name]||{}).forEach(function(w){
-      var v=mq[s.name][w];if(!v.l)return;
-      // v.u is already FOB-USD (net of freight/insurance/customs per-order); v.u/v.l is FOB $/lb.
-      myLbs+=v.l;myUsd+=v.u;
-    });
-  });
-  var myAvg=myLbs?myUsd/myLbs:null;
-  var gap=(marketPrice&&myAvg!=null)?((myAvg-marketPrice)/marketPrice*100):null;
-  return{marketPrice:marketPrice,myAvg:myAvg,gap:gap};
+// ══════════════════════════════════════════════════════════════
+// "AM I BUYING WELL?" — redesigned procurement intelligence engine
+// Replaces the old single mixed-mode gap card. Everything below is
+// mode-matched (sea vs sea, air vs air) and formality-aware.
+// ══════════════════════════════════════════════════════════════
+
+var MIB_BANDVIEW='both'; // 'both' | 'formal' | 'informal'
+window.mibSetBandView=function(v,btn){
+  MIB_BANDVIEW=v;
+  btn.closest('.mi-ptog').querySelectorAll('.mi-pill').forEach(function(b){b.classList.remove('active');});
+  btn.classList.add('active');
+  mibRenderBands();
+};
+
+var MIB_EXP_OPEN=false; // demoted exporter section collapsed by default
+window.mibToggleExpSection=function(){
+  MIB_EXP_OPEN=!MIB_EXP_OPEN;
+  var sec=ge('mib-exp-section'),arr=ge('mib-exp-arrow');
+  if(sec)sec.style.display=MIB_EXP_OPEN?'block':'none';
+  if(arr)arr.innerHTML=MIB_EXP_OPEN?'&#9662;':'&#9656;';
+  // Charts can't size themselves inside display:none — (re)render on expand.
+  if(MIB_EXP_OPEN){mibRenderChart();mibRenderTable();}
+};
+
+// Weighted percentile over [{p:price,l:lbs}] — walks cumulative lbs.
+function mibWPct(points,q){
+  if(!points.length)return null;
+  var sorted=points.slice().sort(function(a,b){return a.p-b.p;});
+  var tot=0;sorted.forEach(function(x){tot+=x.l;});
+  if(tot<=0)return null;
+  var target=q*tot,cum=0;
+  for(var i=0;i<sorted.length;i++){cum+=sorted[i].l;if(cum>=target)return sorted[i].p;}
+  return sorted[sorted.length-1].p;
 }
-function mibRenderGapCard(){
-  var el=ge('mib-gapcard');if(!el)return;
+
+// Per-week price distribution across exporters of one mode + formality class.
+// formality: 'Formal' | 'Informal' | null (all). Returns {week:{p25,med,p75,lbs,n}}.
+// Source: D.expwk (exporter-week aggregates) — each exporter's weekly avg price,
+// weighted by its lbs, is one point in the distribution.
+function mibBandStats(weeks,mode,formality){
+  var wset={};weeks.forEach(function(w){wset[w]=1;});
+  var cls={};
+  var by={};
+  (D.expwk||[]).forEach(function(r){
+    if(r.cg!==MIB_DEST)return;
+    if(!wset[r.yw])return;
+    if(r.cat!==MIB_CAT)return;
+    if(r.mode!==mode)return;
+    if(!(r.lbs>0&&r.usd>0))return;
+    if(formality){
+      if(cls[r.exp]===undefined)cls[r.exp]=(typeof mifClassOf==='function')?mifClassOf(r.exp):'Informal';
+      if(cls[r.exp]!==formality)return;
+    }
+    if(!by[r.yw])by[r.yw]=[];
+    by[r.yw].push({p:r.usd/r.lbs,l:r.lbs});
+  });
+  var out={};
+  Object.keys(by).forEach(function(w){
+    var pts=by[w];var lbs=0;pts.forEach(function(x){lbs+=x.l;});
+    out[w]={p25:mibWPct(pts,.25),med:mibWPct(pts,.5),p75:mibWPct(pts,.75),lbs:lbs,n:pts.length};
+  });
+  return out;
+}
+
+// My real POs in range as individual records (one per PO — never averaged).
+// fobLb comes from mibOrderFobUsd (per-order costs entered in Orders).
+function mibMyPOs(weeks){
+  var wset={};weeks.forEach(function(w){wset[w]=1;});
+  var orders=(typeof bpAllOrders==='function')?bpAllOrders():[];
+  var out=[];
+  orders.forEach(function(o){
+    var l=parseFloat(o.netWeightLb)||0;if(l<=0)return;
+    var fob=mibOrderFobUsd(o);if(fob<=0)return;
+    var sup=null;MIB_MYSUP.forEach(function(s){if(!sup&&s.pat.test(o.supplier||''))sup=s;});
+    if(!sup)return;
+    var ds=o.etdActual||o.etdEstimated||o.arrivalActual||o.arrivalEstimated;if(!ds)return;
+    var wk=isoWk(mibParseDate(String(ds).slice(0,10)));if(!wset[wk])return;
+    out.push({po:o.jlzPo||'?',sup:sup.name,incoterm:o.incoterm||'',mode:(o.mode==='air')?'Air':'Sea',wk:wk,fobLb:fob/l,lbs:l,cases:parseFloat(o.cases)||0,dateStr:String(ds).slice(0,10)});
+  });
+  out.sort(function(a,b){return a.dateStr<b.dateStr?-1:1;});
+  return out;
+}
+
+// Lbs-weighted benchmark for a set of POs: Σ(median(po.wk) × po.lbs) / Σlbs.
+// Each PO is compared against the market of ITS OWN week and mode.
+function mibBenchFor(pos,statsByMode){
+  var num=0,den=0;
+  pos.forEach(function(p){
+    var st=(statsByMode[p.mode]||{})[p.wk];
+    if(!st||st.med==null)return;
+    num+=st.med*p.lbs;den+=p.lbs;
+  });
+  return den?num/den:null;
+}
+function mibMyAvg(pos){
+  var num=0,den=0;
+  pos.forEach(function(p){num+=p.fobLb*p.lbs;den+=p.lbs;});
+  return den?num/den:null;
+}
+
+// ── ① KPIs: Am I buying well? ──
+function mibRenderKpis(){
+  var el=ge('mib-kpis');if(!el)return;
   var weeks=mibWeeksInRange(ge('mib-from').value,ge('mib-to').value).sort();
-  var cur=mibComputeGap(weeks);
-  if(cur.gap==null){el.innerHTML='<div class="mib-gap-sub">Not enough data (real orders + market data) in this range/selection to compute a gap.</div>';return;}
-  var prior=mibComputeGap(mibPriorWeeks(weeks));
-  var cls=cur.gap>5?'wide':(cur.gap<-5?'close':'flat');
-  var trendCls='flat',trendTxt='flat vs. prior period';
-  if(prior.gap!=null){
-    if(Math.abs(cur.gap)<Math.abs(prior.gap)-1){trendCls='closing';trendTxt='closing vs. prior period';}
-    else if(Math.abs(cur.gap)>Math.abs(prior.gap)+1){trendCls='widening';trendTxt='widening vs. prior period';}
+  var pos=mibMyPOs(weeks);
+  var fStats={Sea:mibBandStats(weeks,'Sea','Formal'),Air:mibBandStats(weeks,'Air','Formal')};
+  var iStats={Sea:mibBandStats(weeks,'Sea','Informal'),Air:mibBandStats(weeks,'Air','Informal')};
+  var html='';
+  ['Sea','Air'].forEach(function(mode){
+    var mp=pos.filter(function(p){return p.mode===mode;});
+    var my=mibMyAvg(mp);
+    var fb=mibBenchFor(mp,fStats);
+    var ib=mibBenchFor(mp,iStats);
+    var gap=(my!=null&&fb)?((my-fb)/fb*100):null;
+    var prem=(my!=null&&ib)?((my-ib)/ib*100):null;
+    var cls=gap==null?'neut':(gap<=-1?'good':(gap>=1?'bad':'neut'));
+    html+='<div class="mib-kpi"><div class="mib-kpi-l">'+mode+' &middot; vs formal market</div>'
+      +'<div class="mib-kpi-v '+cls+'">'+(gap==null?'&mdash;':((gap>=0?'+':'')+gap.toFixed(1)+'%'))+'</div>'
+      +'<div class="mib-kpi-s">'+(my!=null?('My '+fmtPx(my)+' vs '+(fb?fmtPx(fb):'&mdash;')+' &middot; '+mp.length+' PO'+(mp.length===1?'':'s')):('No '+mode.toLowerCase()+' POs in range'))+'</div></div>';
+    html+='<div class="mib-kpi"><div class="mib-kpi-l">Formality premium &middot; '+mode+'</div>'
+      +'<div class="mib-kpi-v neut">'+(prem==null?'&mdash;':((prem>=0?'+':'')+prem.toFixed(1)+'%'))+'</div>'
+      +'<div class="mib-kpi-s">'+(prem==null?'Needs '+mode.toLowerCase()+' POs + informal data':'vs informal median &mdash; the integrity cost you resell')+'</div></div>';
+  });
+  el.innerHTML=html;
+}
+
+// ── ② Supplier scorecard ──
+var mibScoreDrillOpen=null;
+window.mibToggleScoreDrill=function(key){mibScoreDrillOpen=(mibScoreDrillOpen===key)?null:key;mibRenderScorecard();};
+function mibRenderScorecard(){
+  var body=ge('mib-score-body');if(!body)return;
+  var thead=ge('mib-score-table').querySelector('thead');
+  if(thead)thead.innerHTML='<tr><th>Supplier &middot; mode</th><th class="r">POs</th><th class="r">My avg FOB</th><th class="r">Formal mkt</th><th class="r">Gap</th><th class="r">Trend</th><th>Read</th></tr>';
+  var weeks=mibWeeksInRange(ge('mib-from').value,ge('mib-to').value).sort();
+  var pos=mibMyPOs(weeks);
+  var fStats={Sea:mibBandStats(weeks,'Sea','Formal'),Air:mibBandStats(weeks,'Air','Formal')};
+  var iStats={Sea:mibBandStats(weeks,'Sea','Informal'),Air:mibBandStats(weeks,'Air','Informal')};
+  // Group by supplier × mode
+  var groups={};
+  pos.forEach(function(p){var k=p.sup+' \u00b7 '+p.mode;if(!groups[k])groups[k]={sup:p.sup,mode:p.mode,pos:[]};groups[k].pos.push(p);});
+  // Suppliers with no POs in range still get a gray row
+  MIB_MYSUP.forEach(function(s){
+    var has=Object.keys(groups).some(function(k){return groups[k].sup===s.name;});
+    if(!has)groups[s.name+' \u00b7 \u2014']={sup:s.name,mode:null,pos:[]};
+  });
+  var keys=Object.keys(groups).sort(function(a,b){
+    var ga=groups[a],gb=groups[b];
+    if(ga.pos.length!==gb.pos.length&&(!ga.pos.length||!gb.pos.length))return gb.pos.length-ga.pos.length;
+    return a<b?-1:1;
+  });
+  var rows=keys.map(function(k){
+    var g=groups[k];
+    if(!g.pos.length){
+      return '<tr><td style="color:var(--gray-400);font-weight:600">'+g.sup+'</td><td class="r" style="color:var(--gray-400)">0</td><td class="r" style="color:var(--gray-400)">&mdash;</td><td class="r" style="color:var(--gray-400)">&mdash;</td><td class="r" style="color:var(--gray-400)">&mdash;</td><td class="r" style="color:var(--gray-400)">&mdash;</td><td><span class="mib-chip gray">No orders in range</span></td></tr>';
+    }
+    var my=mibMyAvg(g.pos);
+    var fb=mibBenchFor(g.pos,fStats);
+    var gap=(my!=null&&fb)?((my-fb)/fb*100):null;
+    // Per-PO gaps for trend: latest vs mean of earlier ones (each vs its own week's median)
+    var poGaps=g.pos.map(function(p){
+      var st=(fStats[p.mode]||{})[p.wk];
+      return(st&&st.med)?((p.fobLb-st.med)/st.med*100):null;
+    }).filter(function(x){return x!=null;});
+    var trendHtml='<span style="color:var(--gray-400)">&mdash;</span>';
+    if(poGaps.length>=2){
+      var latest=poGaps[poGaps.length-1];
+      var earlier=poGaps.slice(0,-1).reduce(function(s,x){return s+x;},0)/(poGaps.length-1);
+      var d=latest-earlier;
+      if(d<-1)trendHtml='<span style="color:#15803d">&#8595; improving</span>';
+      else if(d>1)trendHtml='<span style="color:#b91c1c">&#8593; eroding</span>';
+      else trendHtml='<span style="color:var(--gray-500)">&#8594; flat</span>';
+    }else if(poGaps.length===1){trendHtml='<span style="color:var(--gray-500)">&#8594; flat</span>';}
+    // Verdict
+    var chip;
+    if(gap==null)chip='<span class="mib-chip gray">No market benchmark</span>';
+    else if(gap<=-15)chip='<span class="mib-chip green">Secure this deal</span>';
+    else if(gap<0){
+      var eroding=trendHtml.indexOf('eroding')>=0;
+      chip=eroding?'<span class="mib-chip amber">Watch &mdash; gap shrinking</span>':'<span class="mib-chip amber">Room to push</span>';
+    }
+    else chip='<span class="mib-chip red">Paying premium &mdash; renegotiate</span>';
+    var gapHtml=gap==null?'<span style="color:var(--gray-400)">&mdash;</span>':'<span style="font-weight:700;color:'+(gap<0?'#15803d':'#b91c1c')+'">'+(gap>=0?'+':'')+gap.toFixed(1)+'%</span>';
+    var kEsc=k.replace(/'/g,"\\'");
+    var main='<tr style="cursor:pointer" onclick="mibToggleScoreDrill(\''+kEsc+'\')">'
+      +'<td style="font-weight:600">'+(mibScoreDrillOpen===k?'&#9662; ':'&#9656; ')+g.sup+' &middot; '+g.mode+(g.pos[0].incoterm?' '+g.pos[0].incoterm:'')+'</td>'
+      +'<td class="r">'+g.pos.length+'</td>'
+      +'<td class="r">'+(my!=null?fmtPx(my):'&mdash;')+'</td>'
+      +'<td class="r" style="color:var(--gray-500)">'+(fb?fmtPx(fb):'&mdash;')+'</td>'
+      +'<td class="r">'+gapHtml+'</td>'
+      +'<td class="r">'+trendHtml+'</td>'
+      +'<td>'+chip+'</td></tr>';
+    var drill='';
+    if(mibScoreDrillOpen===k){
+      drill=g.pos.map(function(p){
+        var fst=(fStats[p.mode]||{})[p.wk],ist=(iStats[p.mode]||{})[p.wk];
+        var fg=(fst&&fst.med)?((p.fobLb-fst.med)/fst.med*100):null;
+        var ig=(ist&&ist.med)?((p.fobLb-ist.med)/ist.med*100):null;
+        return '<tr class="mib-score-drill"><td colspan="7">&#9656; <b>'+p.po+'</b> &middot; '+mibShortWk(p.wk)+' &middot; '+fmtPx(p.fobLb)
+          +(fg!=null?' vs formal mkt '+(fst.med?fmtPx(fst.med):'')+' &rarr; <b style="color:'+(fg<0?'#15803d':'#b91c1c')+'">'+(fg>=0?'+':'')+fg.toFixed(1)+'%</b>':' &middot; no formal benchmark that week')
+          +(ig!=null?' &middot; vs informal '+(ig>=0?'+':'')+ig.toFixed(1)+'%':'')
+          +' &middot; '+p.cases.toLocaleString()+' cases &middot; '+Math.round(p.lbs).toLocaleString()+' lb</td></tr>';
+      }).join('');
+    }
+    return main+drill;
+  }).join('');
+  body.innerHTML=rows||'<tr><td colspan="7" style="color:var(--gray-400)">No data</td></tr>';
+}
+
+// ── ③ Market position: dual bands per mode with my POs ──
+function mibRenderBands(){
+  var weeks=mibWeeksInRange(ge('mib-from').value,ge('mib-to').value).sort();
+  var pos=mibMyPOs(weeks);
+  ['Sea','Air'].forEach(function(mode){
+    var wrap=ge('mib-band-'+mode.toLowerCase()+'-wrap');
+    var ctx=ge('mib-band-'+mode.toLowerCase());
+    if(!wrap||!ctx)return;
+    // Respect the MODE filter: hide the panel of the excluded mode
+    if(MIB_MODE!=='Both'&&MIB_MODE!==mode){wrap.style.display='none';return;}
+    wrap.style.display='block';
+    var fS=mibBandStats(weeks,mode,'Formal');
+    var iS=mibBandStats(weeks,mode,'Informal');
+    var labels=weeks.map(mibShortWk);
+    function series(stats,field){return weeks.map(function(w){var s=stats[w];return(s&&s[field]!=null)?s[field]:null;});}
+    var datasets=[];
+    if(MIB_BANDVIEW!=='informal'){
+      datasets.push({label:'_F75',data:series(fS,'p75'),borderColor:'transparent',backgroundColor:'rgba(37,99,235,.16)',pointRadius:0,fill:'+1',tension:.3,spanGaps:true});
+      datasets.push({label:'_F25',data:series(fS,'p25'),borderColor:'transparent',backgroundColor:'transparent',pointRadius:0,tension:.3,spanGaps:true});
+      datasets.push({label:'Formal median',data:series(fS,'med'),borderColor:'#2563eb',backgroundColor:'transparent',pointRadius:0,borderWidth:2,tension:.3,spanGaps:true});
+    }
+    if(MIB_BANDVIEW!=='formal'){
+      datasets.push({label:'_I75',data:series(iS,'p75'),borderColor:'transparent',backgroundColor:'rgba(107,114,128,.16)',pointRadius:0,fill:'+1',tension:.3,spanGaps:true});
+      datasets.push({label:'_I25',data:series(iS,'p25'),borderColor:'transparent',backgroundColor:'transparent',pointRadius:0,tension:.3,spanGaps:true});
+      datasets.push({label:'Informal median',data:series(iS,'med'),borderColor:'#6b7280',backgroundColor:'transparent',pointRadius:0,borderWidth:2,borderDash:[5,4],tension:.3,spanGaps:true});
+    }
+    var myPts=pos.filter(function(p){return p.mode===mode;}).map(function(p){
+      var fst=fS[p.wk],ist=iS[p.wk];
+      return{x:mibShortWk(p.wk),y:p.fobLb,po:p.po,sup:p.sup,inc:p.incoterm,cases:p.cases,lbs:p.lbs,
+        fm:(fst&&fst.med)?fst.med:null,im:(ist&&ist.med)?ist.med:null};
+    });
+    datasets.push({label:'My PO',data:myPts,parsing:{xAxisKey:'x',yAxisKey:'y'},showLine:false,pointStyle:'circle',pointRadius:7.5,pointHoverRadius:9.5,backgroundColor:'#f59e0b',borderColor:'#78350f',pointBorderWidth:2.5});
+    if(MIB_CHARTS['band'+mode])MIB_CHARTS['band'+mode].destroy();
+    miKill(ctx);
+    MIB_CHARTS['band'+mode]=new Chart(ctx.getContext('2d'),{type:'line',data:{labels:labels,datasets:datasets},
+      options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'nearest',intersect:true},
+        plugins:{legend:{display:false},
+          tooltip:{filter:function(c){return c.dataset.label.charAt(0)!=='_';},callbacks:{label:function(c){
+            if(c.dataset.label==='My PO'){
+              var p=c.raw;var lines=[' '+p.po+' \u00b7 '+p.sup+' \u00b7 '+p.inc+' '+mode,' '+fmtPx(p.y)];
+              if(p.fm)lines.push(' vs formal median '+fmtPx(p.fm)+' \u2192 '+((p.y-p.fm)/p.fm*100>=0?'+':'')+((p.y-p.fm)/p.fm*100).toFixed(1)+'% (negotiation)');
+              if(p.im)lines.push(' vs informal median '+fmtPx(p.im)+' \u2192 '+((p.y-p.im)/p.im*100>=0?'+':'')+((p.y-p.im)/p.im*100).toFixed(1)+'% (formality premium)');
+              lines.push(' '+p.cases.toLocaleString()+' cases \u00b7 '+Math.round(p.lbs).toLocaleString()+' lb');
+              return lines;
+            }
+            return ' '+c.dataset.label+': '+(c.raw!=null?fmtPx(c.raw):'no data');
+          }}}},
+        scales:{x:{ticks:{font:{size:9.5}},grid:{display:false}},
+          y:{ticks:{callback:function(v){return fmtPxAxis(v);},font:{size:10}},grid:{color:'rgba(0,0,0,.04)'}}}}});
+  });
+}
+
+// ── ④ Air bridge monitor ──
+// Did the market fly too? campWk has full campaign history by mode but no
+// per-exporter split, so the benchmark here is the TOTAL market.
+function mibCampWeekOf(dateStr,cy){
+  var d=mibParseDate(dateStr);if(!d)return null;
+  var start=new Date(cy,5,1);
+  return Math.floor((d-start)/604800000)+1;
+}
+function mibRenderAirBridge(){
+  var kEl=ge('mib-ab-kpis'),ctx=ge('mib-ab-chart'),lEl=ge('mib-ab-legend');
+  if(!kEl||!ctx)return;
+  var curCy=(typeof mihCurrentCamp==='function')?mihCurrentCamp():null;
+  if(curCy==null){kEl.innerHTML='<div class="mib-kpi"><div class="mib-kpi-s">No campaign data loaded (Load Veritrade first).</div></div>';return;}
+  var allCamps=(typeof mihAllCamps==='function')?mihAllCamps():[];
+  var priors=allCamps.filter(function(y){return y<curCy;}).slice(-2);
+  var curWkN=(typeof campCurrentWeekNum==='function')?campCurrentWeekNum():0;
+  var maxCw=Math.min(53,Math.max(curWkN+2,12));
+  var cwLabels=[];for(var i=1;i<=maxCw;i++)cwLabels.push('CW'+i);
+  function airShareSeries(cy,upTo){
+    var out=[];
+    for(var cw=1;cw<=maxCw;cw++){
+      if(upTo&&cw>upTo){out.push(null);continue;}
+      var rows=(D.campWk||[]).filter(function(r){return r.cy===cy&&r.cat===MIB_CAT&&r.cw===cw;});
+      var air=0,tot=0;
+      rows.forEach(function(r){tot+=r.lbs;if(r.mode==='Air')air+=r.lbs;});
+      out.push(tot>0?air/tot*100:null);
+    }
+    return out;
   }
-  var setLabel=selectedEntities.length?(selectedEntities.length+' selected exporter(s)'):'all Informal exporters (default -- pick some below to narrow it)';
-  el.innerHTML='<div class="mib-gap-main"><div class="mib-gap-num '+cls+'">'+(cur.gap>=0?'+':'')+cur.gap.toFixed(1)+'%</div>'
-    +'<div class="mib-gap-sub">Real orders average <b>'+fmtPx(cur.myAvg)+'</b> (FOB-adjusted) vs. <b>'+fmtPx(cur.marketPrice)+'</b> for the comparison set</div>'
-    +'<span class="mib-gap-trend '+trendCls+'">'+trendTxt+'</span></div>'
-    +'<div class="mib-legend" style="margin-top:8px">Comparison set: '+setLabel+' &middot; '+(MIB_DEST==='_ALL'?'worldwide':'US buyers only')+' &middot; '+weeks.length+' week(s)</div>';
+  var curSeries=airShareSeries(curCy,curWkN);
+  var priorSeries=priors.map(function(y){return airShareSeries(y,null);});
+  // My air share per campaign week (current campaign, from real orders)
+  var orders=(typeof bpAllOrders==='function')?bpAllOrders():[];
+  var myByCw={};
+  orders.forEach(function(o){
+    var l=parseFloat(o.netWeightLb)||0;if(l<=0)return;
+    var ds=o.etdActual||o.etdEstimated;if(!ds)return;
+    var cw=mibCampWeekOf(String(ds).slice(0,10),curCy);
+    if(cw==null||cw<1||cw>maxCw)return;
+    if(!myByCw[cw])myByCw[cw]={air:0,tot:0};
+    myByCw[cw].tot+=l;if(o.mode==='air')myByCw[cw].air+=l;
+  });
+  var myPts=Object.keys(myByCw).map(function(cw){
+    return{x:'CW'+cw,y:myByCw[cw].tot?myByCw[cw].air/myByCw[cw].tot*100:0,cw:+cw};
+  }).sort(function(a,b){return a.cw-b.cw;});
+  // KPIs over the last 4 campaign weeks
+  var w0=Math.max(1,curWkN-3);
+  function avgWin(series){var s=0,n=0;for(var cw=w0;cw<=curWkN;cw++){var v=series[cw-1];if(v!=null){s+=v;n++;}}return n?s/n:null;}
+  var mktNow=avgWin(curSeries);
+  var typVals=priorSeries.map(avgWin).filter(function(v){return v!=null;});
+  var typ=typVals.length?typVals.reduce(function(a,b){return a+b;},0)/typVals.length:null;
+  var myAir=0,myTot=0;
+  for(var cw=w0;cw<=curWkN;cw++){var v=myByCw[cw];if(v){myAir+=v.air;myTot+=v.tot;}}
+  var myShare=myTot?myAir/myTot*100:null;
+  var marketFlew=(mktNow!=null&&typ!=null&&mktNow>typ*1.5&&mktNow-typ>1.5);
+  var read,readChip;
+  if(mktNow==null){read='Not enough campaign data in the window.';readChip='gray';}
+  else if(myShare==null||myShare===0){
+    read=marketFlew?'Market is air-bridging ('+mktNow.toFixed(1)+'% vs '+(typ!=null?typ.toFixed(1):'?')+'% typical) and you are not flying \u2014 watch supply risk.':'Market is on the water and so are you \u2014 nothing to flag.';
+    readChip=marketFlew?'amber':'green';
+  }
+  else if(marketFlew){
+    var ratio=mktNow>0?myShare/mktNow:null;
+    read='Market flew too \u2014 timing validated.'+(ratio&&ratio>2?' But you flew '+ratio.toFixed(1)+'\u00d7 harder \u2014 review volume sizing.':'');
+    readChip=(ratio&&ratio>2)?'amber':'green';
+  }
+  else{read='You are flying but the market largely is not ('+mktNow.toFixed(1)+'% air) \u2014 revisit the air decision.';readChip='red';}
+  kEl.innerHTML=''
+    +'<div class="mib-kpi"><div class="mib-kpi-l">Market air share \u00b7 last 4 CW</div><div class="mib-kpi-v '+(marketFlew?'warn':'neut')+'">'+(mktNow!=null?mktNow.toFixed(1)+'%':'\u2014')+'</div><div class="mib-kpi-s">vs '+(typ!=null?typ.toFixed(1)+'%':'\u2014')+' typical same weeks ('+priors.map(campLabel).join(', ')+')</div></div>'
+    +'<div class="mib-kpi"><div class="mib-kpi-l">My air share \u00b7 last 4 CW</div><div class="mib-kpi-v neut">'+(myShare!=null?myShare.toFixed(0)+'%':'\u2014')+'</div><div class="mib-kpi-s">'+(myShare!=null&&mktNow?((myShare/mktNow).toFixed(1)+'\u00d7 the market intensity'):'of my shipped lbs')+'</div></div>'
+    +'<div class="mib-kpi"><div class="mib-kpi-l">Read</div><div style="margin:5px 0 3px"><span class="mib-chip '+readChip+'">'+(readChip==='green'?'OK':(readChip==='amber'?'Check':(readChip==='red'?'Review':'\u2014')))+'</span></div><div class="mib-kpi-s">'+read+'</div></div>';
+  if(lEl)lEl.innerHTML='<span style="display:inline-block;width:16px;border-top:2.5px solid #2563eb;vertical-align:middle"></span> '+campLabel(curCy)+' (current) &nbsp;'
+    +priorSeries.map(function(_,i){return '<span style="display:inline-block;width:16px;border-top:2px '+(i===0?'dashed':'dotted')+' #6b7280;vertical-align:middle"></span> '+campLabel(priors[i])+' &nbsp;';}).join('')
+    +'<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f59e0b;border:2px solid #78350f;vertical-align:middle"></span> My air share';
+  var datasets=[
+    {label:campLabel(curCy)+' (current)',data:curSeries,borderColor:'#2563eb',backgroundColor:'transparent',pointRadius:3,pointBackgroundColor:'#2563eb',borderWidth:2.5,tension:.25,spanGaps:true}
+  ];
+  priorSeries.forEach(function(s,i){
+    datasets.push({label:campLabel(priors[i]),data:s,borderColor:'#6b7280',backgroundColor:'transparent',pointRadius:0,borderWidth:2,borderDash:i===0?[6,4]:[2,3],tension:.25,spanGaps:true});
+  });
+  datasets.push({label:'My air share',data:myPts,parsing:{xAxisKey:'x',yAxisKey:'y'},showLine:false,pointStyle:'circle',pointRadius:7.5,pointHoverRadius:9.5,backgroundColor:'#f59e0b',borderColor:'#78350f',pointBorderWidth:2.5});
+  if(MIB_CHARTS['airbridge'])MIB_CHARTS['airbridge'].destroy();
+  miKill(ctx);
+  MIB_CHARTS['airbridge']=new Chart(ctx.getContext('2d'),{type:'line',data:{labels:cwLabels,datasets:datasets},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'nearest',intersect:true},
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){
+        if(c.dataset.label==='My air share')return ' My air share: '+c.raw.y.toFixed(0)+'% of my lbs';
+        return ' '+c.dataset.label+': '+(c.raw!=null?c.raw.toFixed(1)+'% air':'no data');
+      }}}},
+      scales:{x:{ticks:{font:{size:9.5}},grid:{display:false}},
+        y:{min:0,ticks:{callback:function(v){return v+'%';},font:{size:10}},grid:{color:'rgba(0,0,0,.04)'}}}}});
 }
 
 // -- entity picker (roster + chips) --
@@ -6539,42 +6914,61 @@ function mibRenderFobSettings(){
     +'</div>'+rows;
 }
 
-// -- main overlay chart: one line per selected exporter, point shape = dominant mode, plus my real shipments --
-function mibDominantModeShape(name,week){
-  var vAir=mibAggMatch(function(e){return e===name;},[week],'Air',MIB_CAT,MIB_DEST)[week];
-  var vSea=mibAggMatch(function(e){return e===name;},[week],'Sea',MIB_CAT,MIB_DEST)[week];
-  var air=vAir?vAir.lbs:0,sea=vSea?vSea.lbs:0,tot=air+sea;
-  if(!tot)return 'circle';
-  if(air/tot>0.9)return 'triangle';
-  if(sea/tot>0.9)return 'circle';
-  return 'rectRot';
-}
+// -- main overlay chart: per selected exporter, a SOLID line for Sea and a
+// DASHED line (hollow points) for Air, same color. Air/sea prices are
+// structurally different, so averaging them into one "mixed" point produced a
+// price nobody actually paid. A mode's line is only added if it has data in
+// range. My real POs are individual points (never averaged), amber, circle=sea
+// triangle=air, with a rich tooltip.
 function mibRenderChart(){
   var ctx=ge('mib-chart-main');if(!ctx)return;
   var weeks=mibWeeksInRange(ge('mib-from').value,ge('mib-to').value).sort();
   var incW=mibIncW();
   var labels=weeks.map(function(w){return w===incW?mibShortWk(w)+'*':mibShortWk(w);});
   var PAL=['#0d5026','#d97706','#2563eb','#9333ea','#dc2626','#0891b2'];
-  var datasets=selectedEntities.map(function(name,i){
-    var by=mibAggMatch(function(e){return e===name;},weeks,MIB_MODE,MIB_CAT,MIB_DEST);
-    var data=weeks.map(function(w){return mibPrice(by[w]);});
-    var shapes=weeks.map(function(w){return mibDominantModeShape(name,w);});
+  var datasets=[];
+  selectedEntities.forEach(function(name,i){
     var color=PAL[i%PAL.length];
     var ros=mibRosterOf(name);
-    return{label:mibDisplayName2(ros||{name:name}),data:data,borderColor:color,backgroundColor:'transparent',pointStyle:shapes,pointRadius:6,pointBackgroundColor:color,pointBorderColor:color,spanGaps:true,tension:.2,borderWidth:2};
+    var disp=mibDisplayName2(ros||{name:name});
+    ['Sea','Air'].forEach(function(mode){
+      if(MIB_MODE!=='Both'&&MIB_MODE!==mode)return;
+      var by=mibAggMatch(function(e){return e===name;},weeks,mode,MIB_CAT,MIB_DEST);
+      var data=weeks.map(function(w){return mibPrice(by[w]);});
+      if(!data.some(function(v){return v!=null;}))return; // no shipments of this mode in range
+      var isAir=mode==='Air';
+      datasets.push({label:disp+' \u00b7 '+mode,data:data,borderColor:color,
+        backgroundColor:isAir?'transparent':color,
+        pointStyle:'circle',pointRadius:4.5,
+        pointBackgroundColor:isAir?'transparent':color,pointBorderColor:color,pointBorderWidth:isAir?2:1,
+        spanGaps:true,tension:.2,borderWidth:2,borderDash:isAir?[6,4]:[]});
+    });
   });
-  var mq=mibMyQuotes(weeks);
-  var myData=weeks.map(function(w){
-    var l=0,u=0;
-    MIB_MYSUP.forEach(function(s){var v=(mq[s.name]||{})[w];if(v&&v.l){l+=v.l;u+=v.u;}});
-    return l?u/l:null;
+  // My POs: one point per order, split into Sea/Air datasets
+  var pos=mibMyPOs(weeks);
+  ['Sea','Air'].forEach(function(mode){
+    if(MIB_MODE!=='Both'&&MIB_MODE!==mode)return;
+    var pts=pos.filter(function(p){return p.mode===mode;}).map(function(p){
+      var lbl=mibShortWk(p.wk);
+      return{x:(p.wk===incW?lbl+'*':lbl),y:p.fobLb,po:p.po,sup:p.sup,inc:p.incoterm,cases:p.cases,lbs:p.lbs};
+    });
+    if(!pts.length)return;
+    datasets.push({label:'My POs \u00b7 '+mode,data:pts,parsing:{xAxisKey:'x',yAxisKey:'y'},showLine:false,
+      pointStyle:mode==='Air'?'triangle':'circle',pointRadius:mode==='Air'?9:8,pointHoverRadius:mode==='Air'?11:10,
+      backgroundColor:'#f59e0b',borderColor:'#78350f',pointBorderWidth:2.5});
   });
-  datasets.push({label:'My shipments (real orders)',data:myData,borderColor:'#000',backgroundColor:'#000',showLine:false,pointStyle:'star',pointRadius:9,pointBorderColor:'#000'});
   if(MIB_CHARTS['main'])MIB_CHARTS['main'].destroy();
   miKill(ctx);
   MIB_CHARTS['main']=new Chart(ctx.getContext('2d'),{type:'line',data:{labels:labels,datasets:datasets},
     options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'nearest',intersect:true},
-      plugins:{legend:{position:'top',labels:{font:{size:10.5},boxWidth:10,usePointStyle:true}},tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': '+(c.raw!=null?fmtPx(c.raw):'no data');}}}},
+      plugins:{legend:{position:'top',labels:{font:{size:10.5},boxWidth:10,usePointStyle:true}},
+        tooltip:{callbacks:{label:function(c){
+          if(c.dataset.label.indexOf('My POs')===0){
+            var p=c.raw;
+            return[' '+p.po+' \u00b7 '+p.sup+' \u00b7 '+p.inc,' '+fmtPx(p.y),' '+p.cases.toLocaleString()+' cases \u00b7 '+Math.round(p.lbs).toLocaleString()+' lb'];
+          }
+          return ' '+c.dataset.label+': '+(c.raw!=null?fmtPx(c.raw):'no data');
+        }}}},
       scales:{x:{ticks:{font:{size:9.5}},grid:{display:false}},y:{ticks:{callback:function(v){return fmtPxAxis(v);},font:{size:10}},grid:{color:'rgba(0,0,0,.04)'}}}}});
 }
 
@@ -6674,9 +7068,13 @@ function mibRenderAll(){
   mibRenderFobSettings();
   mibRenderEntityRoster(ge('mib-roster-search')?ge('mib-roster-search').value:'');
   mibRenderSelChips();
-  mibRenderGapCard();
-  mibRenderChart();
-  mibRenderTable();
+  mibRenderKpis();
+  mibRenderScorecard();
+  mibRenderBands();
+  mibRenderAirBridge();
+  // Demoted exporter section: charts can't size inside display:none, so only
+  // render when the section is expanded (mibToggleExpSection re-renders on open).
+  if(MIB_EXP_OPEN){mibRenderChart();mibRenderTable();}
 }
 function mibEnsureDefaultRange(){
   if(!selectedEntities.length){
