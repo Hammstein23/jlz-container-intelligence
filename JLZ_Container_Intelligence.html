@@ -865,6 +865,28 @@ html,body{background:var(--gray-50);color:var(--gray-800);font-family:var(--fb);
 .dz .dz-name{font-size:11px;font-weight:600;color:var(--gray-700)}
 .dz .dz-sub{font-size:10px;color:var(--gray-400);line-height:1.4;font-family:var(--fm)}
 .dz.done .dz-name{color:var(--green-700)}.dz.done .dz-sub{color:var(--green-600)}
+/* ── Document Inbox ── */
+.dz-row{flex-direction:row;align-items:center;gap:10px;padding:8px 12px;text-align:left;background:var(--white);border-style:solid;border-color:var(--gray-100)}
+.dz-row .dz-body{flex:1;min-width:0}
+.dz-row .dz-sub{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dz-row.has-data{border-color:var(--green-200);background:var(--green-50)}
+.dz-row.has-data .dz-name{color:var(--green-700)}
+.dz-rows{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.dz-status{font-size:10px;font-weight:700;font-family:var(--fm);white-space:nowrap;display:flex;align-items:center;gap:8px}
+.ds-ok{color:var(--green-600)}
+.ds-miss{color:var(--gray-300)}
+.ds-na{color:var(--purple-500)}
+.ds-up{padding:2px 10px;border:1px solid var(--gray-200);border-radius:var(--r);background:var(--white);color:var(--gray-500);font-weight:600}
+.dz-row:hover .ds-up{border-color:var(--jlz);color:var(--jlz)}
+.inbox-dz{display:flex;flex-direction:column;align-items:center;gap:5px;border:1.5px dashed var(--gray-300);border-radius:var(--r);padding:18px 12px;text-align:center;cursor:pointer;background:var(--gray-50);transition:all .15s}
+.inbox-dz:hover,.inbox-dz.drag{border-color:var(--jlz);background:var(--jlz-50)}
+.inbox-dz input{display:none}
+#inbox-receipt{margin-top:10px;border:1px solid var(--gray-100);border-radius:var(--r);background:var(--white);padding:8px 12px;max-height:190px;overflow-y:auto}
+.rcpt{font-size:11px;font-family:var(--fm);padding:3px 0;color:var(--gray-500);line-height:1.5}
+.rcpt.ok{color:var(--green-700)}
+.rcpt.err{color:var(--red-600)}
+.rcpt.warn{background:var(--amber-50);border:1px solid var(--amber-200);border-radius:var(--r);padding:6px 10px;margin:4px 0;color:var(--amber-800);font-family:var(--fb)}
+.rcpt button{padding:2px 10px;font-size:10px;font-weight:600;border:1px solid var(--amber-300);border-radius:var(--r);background:var(--white);color:var(--amber-800);cursor:pointer;margin-left:6px}
 .parse-bar{margin-top:8px;padding:8px 12px;border-radius:var(--r);font-size:11px;font-family:var(--fm);display:none;line-height:1.6}
 .parse-bar.show{display:block}
 .parse-bar.ok{background:var(--green-50);color:var(--green-700);border:1px solid var(--green-200)}
@@ -1193,6 +1215,7 @@ function switchTab(t) {
   const ctxBar = document.querySelector('.ctx-bar');
   if (ctxBar) ctxBar.style.display = lifecycleTab ? '' : 'none';
   if (typeof updateProgressStrip === 'function') updateProgressStrip(t);
+  if (typeof mountDocInbox === 'function') mountDocInbox(t);
   // Auto-close the mobile drawer when navigating to a tab
   closeMobileDrawer();
   // Update ctx-bar "empty" state for mobile (hides it when no container loaded)
@@ -2660,19 +2683,40 @@ function authInjectLogo() {
   </div>
 
   <!-- UPLOAD -->
-  <div class="card">
+  <!-- ── DOCUMENT INBOX ── single intake point for the five WholesaleWare
+       documents. One shared component: it lives here and is relocated into
+       the Operations tab by mountDocInbox() on tab switch. Files dropped on
+       the big zone are auto-classified by content (inboxClassify) and routed
+       to the existing per-document parsers; each checklist row still accepts
+       an individual upload (same dz-XX / fi-XX ids the parsers rely on).
+       The checklist state is derived from DATA (docDataStatus), not from the
+       dropzones, so it survives reloads and matches the load-panel chips. -->
+  <div id="doc-inbox-mount-arrival">
+  <div id="doc-inbox-card" class="card">
     <div class="card-hd">
       <div style="width:22px;height:22px;border-radius:4px;background:var(--jlz-light);color:var(--jlz);display:flex;align-items:center;justify-content:center;font-size:12px">↓</div>
-      <span class="card-title">Upload arrival documents</span>
+      <span class="card-title">Container documents</span>
       <span class="card-hint">Parsed locally · nothing leaves your browser</span>
+      <span id="doc-count" style="margin-left:auto;font-size:11px;font-weight:700;font-family:var(--fm);color:var(--gray-400)">Documents 0/5</span>
     </div>
     <div class="card-body">
-      <div class="upload-grid" style="grid-template-columns:1fr 1fr">
-        <label class="dz" id="dz-rs" for="fi-rs"><input type="file" id="fi-rs" accept="application/pdf"/><div class="dz-spin"></div><div class="dz-icon">📦</div><div class="dz-name">Receiving Sheet</div><div class="dz-sub">WholesaleWare · arrival · boxes · price</div></label>
-        <label class="dz" id="dz-qr" for="fi-qr"><input type="file" id="fi-qr" accept="application/pdf"/><div class="dz-spin"></div><div class="dz-icon">🔬</div><div class="dz-name">Quality Report</div><div class="dz-sub">SG Inspection · defects · weights</div></label>
+      <label class="inbox-dz" id="inbox-dz" for="fi-inbox">
+        <input type="file" id="fi-inbox" multiple accept="application/pdf,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"/>
+        <div style="font-size:20px;line-height:1">⇩</div>
+        <div style="font-size:12px;font-weight:600;color:var(--gray-700)">Drop all WholesaleWare files here — or click to pick</div>
+        <div style="font-size:10px;color:var(--gray-400);font-family:var(--fm)">Receiving Sheet · Quality Report · Work Order · Cost Allocations · Profitability — sorted automatically by content</div>
+      </label>
+      <div id="inbox-receipt" style="display:none"></div>
+      <div class="dz-rows">
+        <label class="dz dz-row" id="dz-rs" for="fi-rs"><input type="file" id="fi-rs" accept="application/pdf"/><div class="dz-spin"></div><div class="dz-icon">📦</div><div class="dz-body"><div class="dz-name">Receiving Sheet</div><div class="dz-sub">WholesaleWare · arrival · boxes · price</div></div><span class="dz-status" id="ds-rs"></span></label>
+        <label class="dz dz-row" id="dz-qr" for="fi-qr"><input type="file" id="fi-qr" accept="application/pdf"/><div class="dz-spin"></div><div class="dz-icon">🔬</div><div class="dz-body"><div class="dz-name">Quality Report</div><div class="dz-sub">SG Inspection · defects · weights</div></div><span class="dz-status" id="ds-qr"></span></label>
+        <label class="dz dz-row" id="dz-wo" for="fi-wo"><input type="file" id="fi-wo" accept="application/pdf"/><div class="dz-spin"></div><div class="dz-icon">📋</div><div class="dz-body"><div class="dz-name">Work Order</div><div class="dz-sub">WholesaleWare · Yield Detail Report</div></div><span class="dz-status" id="ds-wo"></span></label>
+        <label class="dz dz-row" id="dz-alloc" for="fi-alloc"><input type="file" id="fi-alloc" accept="application/pdf"/><div class="dz-spin"></div><div class="dz-icon">🧾</div><div class="dz-body"><div class="dz-name">Cost Allocations</div><div class="dz-sub">WholesaleWare · bills · Veg-Land · freight</div></div><span class="dz-status" id="ds-alloc"></span></label>
+        <label class="dz dz-row" id="dz-ca" for="fi-ca"><input type="file" id="fi-ca" accept="application/pdf,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"/><div class="dz-spin"></div><div class="dz-icon">📊</div><div class="dz-body"><div class="dz-name">Profitability Report</div><div class="dz-sub">WholesaleWare · PDF or XLSX · costs · margin · profit</div></div><span class="dz-status" id="ds-prof"></span></label>
       </div>
       <div class="parse-bar" id="parse-bar"></div>
     </div>
+  </div>
   </div>
 
   <!-- ── CONTAINER DETAILS section ── -->
@@ -2785,7 +2829,7 @@ function authInjectLogo() {
 
   <div style="background:var(--amber-50);border:1px solid var(--amber-200);border-radius:var(--r);padding:10px 14px;font-size:11px;font-family:var(--fm);color:var(--amber-800);display:flex;align-items:flex-start;gap:8px">
     <span>ℹ</span>
-    <span>Weight claim can be communicated to supplier now. <strong>Process deductions &amp; supplier credit</strong> require Work Orders — upload in <strong>Operations</strong> once processing is complete.</span>
+    <span>Weight claim can be communicated to supplier now. <strong>Process deductions &amp; supplier credit</strong> require the Work Order — drop it into <strong>Container documents</strong> once processing is complete.</span>
   </div>
 
 </div><!-- end tab-arrival -->
@@ -2793,35 +2837,9 @@ function authInjectLogo() {
 <div id="tab-operations" class="page" style="display:none">
 
   <!-- ── UPLOAD ── -->
-  <div class="card" id="ops-upload-card">
-    <div class="card-hd">
-      <div style="width:28px;height:28px;border-radius:6px;background:var(--jlz-light);color:var(--jlz);display:flex;align-items:center;justify-content:center;font-size:14px">↓</div>
-      <span class="card-title">Upload processing documents</span>
-      <span class="card-hint">Parsed locally · nothing leaves your browser</span>
-    </div>
-    <div class="card-body">
-      <div class="upload-grid" style="grid-template-columns:1fr 1fr 1fr" id="ops-upload-grid">
-        <label class="dz" id="dz-wo" for="fi-wo">
-          <input type="file" id="fi-wo" accept="application/pdf"/>
-          <div class="dz-spin"></div><div class="dz-icon">📋</div>
-          <div class="dz-name">Work Order</div>
-          <div class="dz-sub">WholesaleWare<br>Yield Detail Report</div>
-        </label>
-        <label class="dz" id="dz-ca" for="fi-ca">
-          <input type="file" id="fi-ca" accept="application/pdf,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"/>
-          <div class="dz-spin"></div><div class="dz-icon">📊</div>
-          <div class="dz-name">Profitability Report</div>
-          <div class="dz-sub">WholesaleWare<br>PDF or XLSX · costs · margin · profit</div>
-        </label>
-        <label class="dz" id="dz-alloc" for="fi-alloc">
-          <input type="file" id="fi-alloc" accept="application/pdf"/>
-          <div class="dz-spin"></div><div class="dz-icon">🧾</div>
-          <div class="dz-name">Cost Allocations</div>
-          <div class="dz-sub">WholesaleWare<br>bills · Veg-Land · freight</div>
-        </label>
-      </div>
-    </div>
-  </div>
+  <!-- Document Inbox mount — the shared #doc-inbox-card relocates here when
+       the Operations tab is active (see mountDocInbox). -->
+  <div id="doc-inbox-mount-operations"></div>
 
   <!-- ── SOLD AS-IS TOGGLE ── -->
   <!-- Exception case: container sold without processing (e.g., to limit
@@ -14683,6 +14701,325 @@ document.addEventListener('DOMContentLoaded', function(){
     ['dragleave','drop'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove('drag')}));
     dz.addEventListener('drop',e=>{e.preventDefault();handleFile(e.dataTransfer.files[0]);});
   }
+});
+
+// ── DOCUMENT INBOX — unified multi-file intake ──
+// Drop N files at once; each is classified by CONTENT using the same markers
+// the individual parsers key on, then routed to that parser in a fixed order
+// (RS → QR → WO → Allocations → Profitability). A PO detected in a file that
+// does not match the active container is deferred with a "load into PO X"
+// action instead of contaminating the open workspace. After a batch, the PO
+// is matched against the Procurement pipeline: empty identity fields are
+// filled from the order and discrepancies (cases, vendor, price) are flagged.
+const INBOX_DOCS = [
+  {k:'rs',    dz:'dz-rs',    label:'Receiving Sheet'},
+  {k:'qr',    dz:'dz-qr',    label:'Quality Report'},
+  {k:'wo',    dz:'dz-wo',    label:'Work Order'},
+  {k:'alloc', dz:'dz-alloc', label:'Cost Allocations'},
+  {k:'prof',  dz:'dz-ca',    label:'Profitability Report'}
+];
+const INBOX_ORDER = {rs:0, qr:1, wo:2, alloc:3, prof:4};
+
+// Pure classifier — mirrors the markers inside parseRS/parseQR/parseWO/
+// parseAlloc/parseCA. Returns a doc key or null (unrecognized).
+function inboxClassify(fileName, lines, allText) {
+  if(/\.xlsx$/i.test(fileName)) return 'prof';
+  const has = re => lines.some(l => re.test(l));
+  if(has(/^Inputs$/i) && (has(/^Yield Analysis$/i) || has(/^Outputs$/i))) return 'wo';
+  if(has(/^Inspected\s+by/i)) return 'qr';
+  if(/Purchase\s+order\s*#/i.test(allText) &&
+     (/Units?\s+Received/i.test(allText) || /Scheduled\s+Delivery\s+Date/i.test(allText) || /Vendor\s+Ref/i.test(allText)))
+    return 'rs';
+  if(has(/^Allocations:.*Case\s+\$/i) ||
+     (/Net\s+Sales/i.test(allText) && /Net\s+Profit/i.test(allText)))
+    return 'prof';
+  const dollarLines = lines.filter(l => /\$[\d,]+\.\d{2}/.test(l)).length;
+  if((/Allocated\s+Cost/i.test(allText) || /Cost\s+Allocations/i.test(allText)) && dollarLines >= 2) return 'alloc';
+  if(dollarLines >= 4 && /Vendor/i.test(allText)) return 'alloc';
+  return null;
+}
+
+// Explicit PO from a Receiving Sheet (same lookup parseRS performs).
+function inboxRsPo(lines) {
+  for(let i=0;i<lines.length;i++){
+    const idx = lines[i].toLowerCase().indexOf('purchase order #');
+    if(idx < 0) continue;
+    let rest = lines[i].slice(idx+16).replace(/^[:\s#.]+/,'').trim();
+    if(!rest) rest = (lines[i+1]||'').trim();
+    const m = rest.match(/^(\d{5,8})/);
+    if(m) return m[1];
+  }
+  return null;
+}
+
+// Generic detection: 6–8 digit tokens that match a KNOWN PO (orders raw +
+// history). Matching only against known POs avoids false positives from
+// invoice numbers, weights, and dates.
+function inboxKnownPos() {
+  const s = new Set();
+  try { (typeof getOrders==='function'?getOrders():[]).forEach(o=>{ const p=String(o.jlzPo||'').trim(); if(p) s.add(p); }); } catch(e){}
+  try { getHistory().forEach(h=>{ const p=String(h.po||'').trim(); if(p) s.add(p); }); } catch(e){}
+  return s;
+}
+function inboxDetectPo(item, known) {
+  if(item.type === 'rs') { const p = inboxRsPo(item.lines); if(p) return p; }
+  const toks = (item.allText.match(/\b\d{6,8}\b/g) || []);
+  const hits = Array.from(new Set(toks.filter(t => known.has(t))));
+  return hits.length === 1 ? hits[0] : null;
+}
+
+// ── Receipt log ──
+let _inboxLogSeq = 0;
+function inboxEsc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function inboxLog(html, cls) {
+  const rc = el('inbox-receipt'); if(!rc) return null;
+  rc.style.display = 'block';
+  const id = 'rcpt-' + (++_inboxLogSeq);
+  const div = document.createElement('div');
+  div.id = id; div.className = 'rcpt' + (cls ? ' ' + cls : '');
+  div.innerHTML = html;
+  rc.appendChild(div);
+  rc.scrollTop = rc.scrollHeight;
+  return id;
+}
+
+// ── Run one classified file through its parser ──
+const INBOX_PARSERS = {
+  rs:    f => parseRS(f),
+  qr:    f => parseQR(f),
+  wo:    f => parseWO(f),
+  alloc: f => parseAlloc(f),
+  prof:  f => (/\.xlsx$/i.test(f.name) ? parseCAXlsx(f) : parseCA(f))
+};
+function inboxDocSummary(type) {
+  const v = id => ((el(id)||{}).value || '').trim();
+  const n = id => num(v(id)) || 0;
+  const parts = [];
+  if(type === 'rs') {
+    if(v('poId')) parts.push('PO ' + inboxEsc(v('poId')));
+    if(n('totalBoxes')) parts.push(n('totalBoxes').toLocaleString() + ' cases');
+    if(n('pricePerLb')) parts.push('$' + n('pricePerLb').toFixed(4) + '/lb');
+  } else if(type === 'qr') {
+    if(v('lotId')) parts.push('lot ' + inboxEsc(v('lotId')));
+    if(n('avgWeightKg')) parts.push('avg ' + n('avgWeightKg').toFixed(2) + ' lbs/box');
+    if(n('moldPct')) parts.push('mold ' + n('moldPct') + '%');
+  } else if(type === 'wo') {
+    if(n('lbsIn')) parts.push('in ' + Math.round(n('lbsIn')).toLocaleString() + ' lbs');
+    if(n('lbsOut')) parts.push('out ' + Math.round(n('lbsOut')).toLocaleString() + ' lbs');
+    if(n('yieldPct')) parts.push('yield ' + n('yieldPct') + '%');
+  } else if(type === 'alloc') {
+    const b = window._allocBills || [];
+    const tot = b.reduce((s,x)=>s+(num(x.amt)||0),0);
+    parts.push(b.length + ' bill' + (b.length===1?'':'s'));
+    if(tot) parts.push('$' + tot.toLocaleString(undefined,{maximumFractionDigits:0}) + ' total');
+  } else if(type === 'prof') {
+    const p = window._profitability || {};
+    if(p.netSales)  parts.push('net sales $' + Math.round(p.netSales).toLocaleString());
+    if(p.netProfit) parts.push('profit $' + Math.round(p.netProfit).toLocaleString());
+    if(p.netMargin) parts.push(p.netMargin + '% margin');
+  }
+  return parts.length ? parts.join(' · ') : 'fields updated';
+}
+async function inboxRunParser(item) {
+  const doc = INBOX_DOCS.find(d => d.k === item.type);
+  const lid = inboxLog('“' + inboxEsc(item.f.name) + '” → ' + doc.label + ' — parsing…', '');
+  try { await INBOX_PARSERS[item.type](item.f); } catch(e) { console.warn('inbox parser:', e); }
+  const dzEl = el(doc.dz);
+  const failed = dzEl && dzEl.className.indexOf('error') >= 0;
+  const line = lid ? el(lid) : null;
+  if(line) {
+    if(failed) {
+      line.className = 'rcpt err';
+      line.innerHTML = '✗ “' + inboxEsc(item.f.name) + '” — ' + doc.label + ' parse failed · check the file and retry on the row below';
+    } else {
+      line.className = 'rcpt ok';
+      line.innerHTML = '✓ ' + doc.label + ' · ' + inboxDocSummary(item.type) + ' <span style="color:var(--gray-400)">(' + inboxEsc(item.f.name) + ')</span>';
+    }
+  }
+  return !failed;
+}
+
+// ── Deferred files (PO mismatch) ──
+window._inboxDeferred = [];
+function inboxDeferMismatch(item, detectedPo, activePo) {
+  window._inboxDeferred.push(item);
+  const i = window._inboxDeferred.length - 1;
+  const doc = INBOX_DOCS.find(d => d.k === item.type);
+  inboxLog('⚠ “' + inboxEsc(item.f.name) + '” is a ' + doc.label + ' for <b>PO ' + inboxEsc(detectedPo) + '</b> — the active container is <b>' + inboxEsc(activePo) + '</b>.'
+    + '<button onclick="inboxLoadDeferred(' + i + ',\'' + inboxEsc(detectedPo) + '\')">Switch &amp; load into ' + inboxEsc(detectedPo) + '</button>'
+    + '<button onclick="this.parentNode.innerHTML=\'Skipped — file not loaded.\'">Skip</button>', 'warn');
+}
+async function inboxLoadDeferred(i, po) {
+  const item = window._inboxDeferred[i];
+  if(!item) return;
+  window._inboxDeferred[i] = null;
+  jlzOpenContainer(po);
+  inboxLog('Opened container ' + inboxEsc(po) + ' — loading deferred file…', '');
+  await inboxRunParser(item);
+  inboxOrderCheck();
+  renderDocChecklist();
+  if (typeof updateProgressStrip === 'function') updateProgressStrip();
+}
+
+// ── Order matching ──
+// Pure: compare the pipeline order with what the documents said. Testable.
+function inboxComputeOrderFlags(o, parsed) {
+  const flags = [];
+  if(!o) return flags;
+  const oc = parseFloat(o.cases) || 0, pc = parsed.cases || 0;
+  if(oc > 0 && pc > 0 && oc !== pc)
+    flags.push({lv:'warn', msg:'Cases received ' + pc.toLocaleString() + ' ≠ ordered ' + oc.toLocaleString() + ' — short ' + Math.abs(oc-pc).toLocaleString() + ' case' + (Math.abs(oc-pc)===1?'':'s')});
+  const norm = s => String(s||'').toLowerCase().replace(/[^a-z]/g,'');
+  const ov = norm(o.supplier), pv = norm(parsed.vendor);
+  if(ov && pv && ov.indexOf(pv) < 0 && pv.indexOf(ov) < 0)
+    flags.push({lv:'warn', msg:'Vendor on documents (“' + inboxEsc(parsed.vendor) + '”) differs from the order (“' + inboxEsc(o.supplier) + '”)'});
+  const op = (parseFloat(o.cifPriceCase) || 0) / 30, pp = parsed.priceLb || 0;
+  if(op > 0 && pp > 0 && Math.abs(op - pp) / op > 0.005)
+    flags.push({lv:'info', msg:'Invoice $' + pp.toFixed(4) + '/lb vs contract $' + op.toFixed(4) + '/lb'});
+  return flags;
+}
+function inboxOrderCheck() {
+  const po = ((el('poId')||{}).value || '').trim();
+  if(!po) return;
+  const o = (typeof findOrderForPo === 'function') ? findOrderForPo(po) : null;
+  if(!o) { inboxLog('No purchase order found in the pipeline for PO ' + inboxEsc(po) + ' — identity comes from the documents only.', 'warn'); return; }
+  const setIfEmpty = (id, val) => {
+    const e = el(id);
+    if(e && !String(e.value||'').trim() && val !== null && val !== undefined && val !== '') { e.value = val; return true; }
+    return false;
+  };
+  let filled = 0;
+  if(setIfEmpty('vendor', o.supplier)) filled++;
+  if(setIfEmpty('incoterm', o.incoterm)) filled++;
+  if(setIfEmpty('lotId', o.jbjLotNo)) filled++;
+  if(setIfEmpty('totalBoxes', o.cases)) filled++;
+  const cif = parseFloat(o.cifPriceCase) || 0;
+  if(cif > 0 && setIfEmpty('pricePerLb', (cif/30).toFixed(4))) filled++;
+  const arr = o.arrivalActual || o.etaActual || o.etaEstimated || '';
+  if(arr && setIfEmpty('arrivalDate', (typeof normalizeDate === 'function') ? (normalizeDate(arr) || '') : arr)) filled++;
+  if(filled > 0) recalc();
+  inboxLog('✓ Matched purchase order <b>' + inboxEsc(o.jlzPo) + '</b> (' + inboxEsc(o.supplier||'') + ')' + (filled ? ' — ' + filled + ' field' + (filled===1?'':'s') + ' filled from Procurement' : ''), 'ok');
+  const parsed = {
+    cases: num((el('totalBoxes')||{}).value) || 0,
+    vendor: ((el('vendor')||{}).value || '').trim(),
+    priceLb: num((el('pricePerLb')||{}).value) || 0
+  };
+  inboxComputeOrderFlags(o, parsed).forEach(f => inboxLog((f.lv==='warn'?'⚠ ':'') + f.msg, f.lv === 'warn' ? 'warn' : ''));
+}
+
+// ── Batch orchestrator ──
+async function inboxHandleFiles(fileList) {
+  const files = Array.prototype.slice.call(fileList || []);
+  if(!files.length) return;
+  const rc = el('inbox-receipt'); if(rc) rc.style.display = 'block';
+  inboxLog(files.length + ' file' + (files.length===1?'':'s') + ' received — classifying by content…', '');
+  const known = inboxKnownPos();
+  const items = [];
+  for(const f of files) {
+    if(/\.xlsx$/i.test(f.name)) { items.push({f, type:'prof', lines:[], allText:''}); continue; }
+    if(!/\.pdf$/i.test(f.name)) { inboxLog('✗ “' + inboxEsc(f.name) + '” — unsupported type (PDF or XLSX only)', 'err'); continue; }
+    try {
+      const r = await extractPdfText(f);
+      const type = inboxClassify(f.name, r.lines, r.allText);
+      if(!type) { inboxLog('✗ “' + inboxEsc(f.name) + '” — could not identify the document type. Use the matching row below to load it manually.', 'err'); continue; }
+      items.push({f, type, lines:r.lines, allText:r.allText});
+    } catch(e) {
+      inboxLog('✗ “' + inboxEsc(f.name) + '” — could not read the PDF (' + inboxEsc(e.message||'error') + ')', 'err');
+    }
+  }
+  if(!items.length) return;
+  items.sort((a,b) => INBOX_ORDER[a.type] - INBOX_ORDER[b.type]);
+
+  let activePo = ((el('poId')||{}).value || '').trim();
+  if(!activePo) {
+    let openPo = null;
+    const rsItem = items.find(i => i.type === 'rs');
+    if(rsItem) openPo = inboxRsPo(rsItem.lines);
+    if(!openPo) { for(const it of items) { const p = inboxDetectPo(it, known); if(p) { openPo = p; break; } } }
+    if(openPo) {
+      jlzOpenContainer(openPo);
+      activePo = openPo;
+      const o = (typeof findOrderForPo === 'function') ? findOrderForPo(openPo) : null;
+      inboxLog('Opened container <b>' + inboxEsc(openPo) + '</b>' + (o ? ' — pre-filled from the purchase order' : ''), 'ok');
+    }
+  }
+
+  for(const it of items) {
+    const det = inboxDetectPo(it, known);
+    if(det && activePo && det !== activePo) { inboxDeferMismatch(it, det, activePo); continue; }
+    if(!det && activePo && it.type !== 'rs')
+      inboxLog('“' + inboxEsc(it.f.name) + '” — container match not verified (no PO found in the file); loading into ' + inboxEsc(activePo), '');
+    await inboxRunParser(it);
+    if(!activePo) activePo = ((el('poId')||{}).value || '').trim();
+  }
+  inboxOrderCheck();
+  renderDocChecklist();
+  if (typeof updateProgressStrip === 'function') updateProgressStrip();
+}
+
+// ── Data-derived checklist ──
+function docDataStatus() {
+  const n = id => num(((el(id)||{}).value)) || 0;
+  const soldAsIs = !!((el('soldAsIs')||{}).checked);
+  return {
+    rs:    n('totalBoxes') > 0 && n('pricePerLb') > 0,
+    qr:    n('avgWeightKg') > 0,
+    wo:    soldAsIs ? 'na' : (n('lbsOut') > 0),
+    alloc: ((window._allocBills || []).length > 0),
+    prof:  !!(((window._profitability || {}).netSales) > 0)
+  };
+}
+function renderDocChecklist() {
+  const st = docDataStatus();
+  let done = 0, total = 0;
+  INBOX_DOCS.forEach(d => {
+    const s = st[d.k];
+    const chip = el('ds-' + d.k);
+    const row = el(d.dz);
+    if(s === 'na') {
+      if(chip) chip.innerHTML = '<span class="ds-na">n/a — sold as-is</span>';
+      if(row) row.classList.remove('has-data');
+      return;
+    }
+    total++;
+    if(s) {
+      done++;
+      if(chip) chip.innerHTML = '<span class="ds-ok">✓ Loaded</span>';
+      if(row) row.classList.add('has-data');
+    } else {
+      if(chip) chip.innerHTML = '<span class="ds-miss">Missing</span><span class="ds-up">Upload</span>';
+      if(row) row.classList.remove('has-data');
+    }
+  });
+  const c = el('doc-count');
+  if(c) { c.textContent = 'Documents ' + done + '/' + total; c.style.color = (done === total && total > 0) ? 'var(--green-600)' : 'var(--gray-400)'; }
+}
+
+// ── Mount the shared card into whichever lifecycle tab is active ──
+function mountDocInbox(t) {
+  const card = el('doc-inbox-card'); if(!card) return;
+  const target = t === 'operations' ? el('doc-inbox-mount-operations')
+               : t === 'arrival'    ? el('doc-inbox-mount-arrival') : null;
+  if(target && card.parentNode !== target) target.appendChild(card);
+}
+
+// ── Wiring ──
+document.addEventListener('DOMContentLoaded', function() {
+  const fi = el('fi-inbox'), iz = el('inbox-dz');
+  if(fi) fi.addEventListener('change', e => { inboxHandleFiles(e.target.files); e.target.value = ''; });
+  if(iz) {
+    ['dragenter','dragover'].forEach(ev => iz.addEventListener(ev, e => { e.preventDefault(); iz.classList.add('drag'); }));
+    ['dragleave','drop'].forEach(ev => iz.addEventListener(ev, e => { e.preventDefault(); iz.classList.remove('drag'); }));
+    iz.addEventListener('drop', e => { e.preventDefault(); if(e.dataTransfer.files.length) inboxHandleFiles(e.dataTransfer.files); });
+  }
+  // Keep the checklist in sync with every data change (debounced on recalc)
+  const _r = window.recalc;
+  window.recalc = function() {
+    if(typeof _r === 'function') _r.apply(this, arguments);
+    clearTimeout(window._docChecklistT);
+    window._docChecklistT = setTimeout(renderDocChecklist, 250);
+  };
+  renderDocChecklist();
 });
 
 // ── SUPPLIER DEDUCTION REPORT ──
