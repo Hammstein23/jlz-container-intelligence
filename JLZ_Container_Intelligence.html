@@ -5392,7 +5392,8 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
         <span style="display:inline-block;width:16px;border-top:2px solid #2563eb;vertical-align:middle"></span> Formal median &nbsp;&middot;&nbsp;
         <span style="display:inline-block;width:14px;height:9px;background:rgba(107,114,128,.16);border-radius:2px;vertical-align:middle"></span> Informal band &nbsp;
         <span style="display:inline-block;width:16px;border-top:2px dashed #6b7280;vertical-align:middle"></span> Informal median &nbsp;&middot;&nbsp;
-        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f59e0b;border:2px solid #78350f;vertical-align:middle"></span> My PO (hover: PO#, gaps)
+        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f59e0b;border:2px solid #78350f;vertical-align:middle"></span> My PO (hover: PO#, gaps) &nbsp;&middot;&nbsp;
+        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:transparent;border:2px solid #b45309;vertical-align:middle"></span> Cancelled PO (reference only &mdash; not counted in KPIs)
       </div>
       <div id="mib-band-sea-wrap">
         <div class="mib-band-t">Sea &mdash; FOB<span id="mib-band-note-sea" style="text-transform:none;letter-spacing:0;font-weight:400;color:var(--gray-400)"></span></div>
@@ -6567,18 +6568,26 @@ function mibBandStats(weeks,mode,formality){
 
 // My real POs in range as individual records (one per PO — never averaged).
 // fobLb comes from mibOrderFobUsd (per-order costs entered in Orders).
-function mibMyPOs(weeks){
+// Cancelled orders are EXCLUDED by default (they never shipped). Pass
+// {includeCancelled:true} to also get them flagged (p.cancelled===true) —
+// used by the market-position bands to plot them as reference-only ghosts:
+// the negotiated price is real market information even if the container
+// was called off.
+function mibMyPOs(weeks,opts){
+  var includeCancelled=!!(opts&&opts.includeCancelled);
   var wset={};weeks.forEach(function(w){wset[w]=1;});
-  var orders=(typeof bpAllOrders==='function')?bpAllOrders():[];
+  var orders=(typeof getOrders==='function')?getOrders():[];
   var out=[];
   orders.forEach(function(o){
+    var isCancelled=(o.status==='Cancelled');
+    if(isCancelled&&!includeCancelled)return;
     var l=parseFloat(o.netWeightLb)||0;if(l<=0)return;
     var fob=mibOrderFobUsd(o);if(fob<=0)return;
     var sup=null;MIB_MYSUP.forEach(function(s){if(!sup&&s.pat.test(o.supplier||''))sup=s;});
     if(!sup)return;
     var ds=o.etdActual||o.etdEstimated||o.arrivalActual||o.arrivalEstimated;if(!ds)return;
     var wk=isoWk(mibParseDate(String(ds).slice(0,10)));if(!wset[wk])return;
-    out.push({po:o.jlzPo||'?',sup:sup.name,incoterm:o.incoterm||'',mode:(o.mode==='air')?'Air':'Sea',wk:wk,fobLb:fob/l,lbs:l,cases:parseFloat(o.cases)||0,dateStr:String(ds).slice(0,10)});
+    out.push({po:o.jlzPo||'?',sup:sup.name,incoterm:o.incoterm||'',mode:(o.mode==='air')?'Air':'Sea',wk:wk,fobLb:fob/l,lbs:l,cases:parseFloat(o.cases)||0,dateStr:String(ds).slice(0,10),cancelled:isCancelled});
   });
   out.sort(function(a,b){return a.dateStr<b.dateStr?-1:1;});
   return out;
@@ -6712,7 +6721,9 @@ function mibRenderScorecard(){
 // ── ③ Market position: dual bands per mode with my POs ──
 function mibRenderBands(){
   var weeks=mibWeeksInRange(ge('mib-from').value,ge('mib-to').value).sort();
-  var pos=mibMyPOs(weeks);
+  var posAll=mibMyPOs(weeks,{includeCancelled:true});
+  var pos=posAll.filter(function(p){return !p.cancelled;});
+  var ghosts=posAll.filter(function(p){return p.cancelled;});
   ['Sea','Air'].forEach(function(mode){
     var wrap=ge('mib-band-'+mode.toLowerCase()+'-wrap');
     var ctx=ge('mib-band-'+mode.toLowerCase());
@@ -6752,17 +6763,29 @@ function mibRenderBands(){
         fm:(fst&&fst.med)?fst.med:null,im:(ist&&ist.med)?ist.med:null};
     });
     datasets.push({label:'My PO',data:myPts,parsing:{xAxisKey:'x',yAxisKey:'y'},showLine:false,pointStyle:'circle',pointRadius:7.5,pointHoverRadius:9.5,backgroundColor:'#f59e0b',borderColor:'#78350f',pointBorderWidth:2.5});
+    // Cancelled POs: reference-only ghosts. Hollow marker, excluded from every
+    // KPI/scorecard/air-bridge number — shown here because the negotiated price
+    // is still real market information for future evaluation.
+    var ghostPts=ghosts.filter(function(p){return p.mode===mode;}).map(function(p){
+      var fst=fS[p.wk],ist=iS[p.wk];
+      return{x:mibShortWk(p.wk),y:p.fobLb,po:p.po,sup:p.sup,inc:p.incoterm,cases:p.cases,lbs:p.lbs,
+        fm:(fst&&fst.med)?fst.med:null,im:(ist&&ist.med)?ist.med:null};
+    });
+    if(ghostPts.length){
+      datasets.push({label:'Cancelled PO',data:ghostPts,parsing:{xAxisKey:'x',yAxisKey:'y'},showLine:false,pointStyle:'circle',pointRadius:7,pointHoverRadius:9,backgroundColor:'transparent',borderColor:'#b45309',pointBorderWidth:2});
+    }
     if(MIB_CHARTS['band'+mode])MIB_CHARTS['band'+mode].destroy();
     miKill(ctx);
     MIB_CHARTS['band'+mode]=new Chart(ctx.getContext('2d'),{type:'line',data:{labels:labels,datasets:datasets},
       options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'nearest',intersect:true},
         plugins:{legend:{display:false},
           tooltip:{filter:function(c){return c.dataset.label.charAt(0)!=='_';},callbacks:{label:function(c){
-            if(c.dataset.label==='My PO'){
-              var p=c.raw;var lines=[' '+p.po+' \u00b7 '+p.sup+' \u00b7 '+p.inc+' '+mode,' '+fmtPx(p.y)];
+            if(c.dataset.label==='My PO'||c.dataset.label==='Cancelled PO'){
+              var p=c.raw;var isGhost=(c.dataset.label==='Cancelled PO');
+              var lines=[(isGhost?' [CANCELLED \u2014 reference only] ':' ')+p.po+' \u00b7 '+p.sup+' \u00b7 '+p.inc+' '+mode,' '+fmtPx(p.y)+(isGhost?' (negotiated, never shipped)':'')];
               if(p.fm)lines.push(' vs formal median '+fmtPx(p.fm)+' \u2192 '+((p.y-p.fm)/p.fm*100>=0?'+':'')+((p.y-p.fm)/p.fm*100).toFixed(1)+'% (negotiation)');
               if(p.im)lines.push(' vs informal median '+fmtPx(p.im)+' \u2192 '+((p.y-p.im)/p.im*100>=0?'+':'')+((p.y-p.im)/p.im*100).toFixed(1)+'% (formality premium)');
-              lines.push(' '+p.cases.toLocaleString()+' cases \u00b7 '+Math.round(p.lbs).toLocaleString()+' lb');
+              if(!isGhost)lines.push(' '+p.cases.toLocaleString()+' cases \u00b7 '+Math.round(p.lbs).toLocaleString()+' lb');
               return lines;
             }
             return ' '+c.dataset.label+': '+(c.raw!=null?fmtPx(c.raw):'no data');
@@ -12358,9 +12381,18 @@ function bpInvSave(st){ try{localStorage.setItem(BP_INV_LS,JSON.stringify(st));}
 function esc_(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
 function bpF0(n){ return Math.round(n||0).toLocaleString('en-US'); }
 function bpTodayISO(){ var d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
-function bpAllOrders(){ return (typeof getOrders==='function')?getOrders():[]; }
+// Analytics-facing accessor: excludes Cancelled orders so every consumer
+// (Buy Planner pipeline, Inventory lots, Market Intel, projections) ignores
+// called-off containers automatically. The Orders UI and Sheet sync read
+// getOrders() raw — cancelled orders stay stored, visible and synced with
+// their negotiated price (historical record); they just don't count anywhere.
+// TODO(cancel-metadata): cancelledDate + cancelReason fields are pending —
+// they need Code.gs ORDER_COLUMNS additions for cross-device sync.
+function bpAllOrders(){ return ((typeof getOrders==='function')?getOrders():[]).filter(function(o){ return o.status!=='Cancelled'; }); }
 function bpCcId(o){ return String(o.id||o.jlzPo||o.contractNo||o.containerNo||((o.supplier||'?')+'|'+(o.arrivalEstimated||o.arrivalActual||''))); }
-function bpOrderById(id){ var a=bpAllOrders(); for(var i=0;i<a.length;i++){ if(String(bpCcId(a[i]))===String(id)) return a[i]; } return null; }
+// Lookup by id searches RAW orders: historical references (e.g. a cost card
+// created before the order was later cancelled) must still resolve.
+function bpOrderById(id){ var a=(typeof getOrders==='function')?getOrders():[]; for(var i=0;i<a.length;i++){ if(String(bpCcId(a[i]))===String(id)) return a[i]; } return null; }
 function bpEtaOf(o){ return o?(o.arrivalActual||o.arrivalEstimated||o.etaActual||o.etaEstimated||''):''; }
 function bpOrderCifLb(o){ var c=parseFloat(o.cifTotal)||0, l=parseFloat(o.netWeightLb)||0; return (c>0&&l>0)?c/l:0; }
 function bpOrderPerCaseLb(o){ var l=parseFloat(o.netWeightLb)||0, c=parseFloat(o.cases)||0; return (l>0&&c>0)?l/c:(typeof DM_CASE_LB!=='undefined'?DM_CASE_LB:30); }
