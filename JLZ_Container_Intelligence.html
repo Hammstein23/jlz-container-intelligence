@@ -4388,10 +4388,16 @@ function authInjectLogo() {
       </span>
     </div>
     <div class="card-body" style="padding:0">
-      <!-- Savings analysis appears here when there are 2+ quotes -->
-      <div id="sim-savings-summary"></div>
-      <!-- Week filter buttons -->
+      <!-- View tabs (Active week / History) render here -->
       <div id="sim-quotes-filters"></div>
+      <!-- Savings analysis (active view, 2+ formal quotes) -->
+      <div id="sim-savings-summary"></div>
+      <!-- History view: vendor multi-select chips + trend chart (hidden in active view) -->
+      <div id="sim-hist-chips" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:0"></div>
+      <div id="sim-hist-meta" style="display:flex;align-items:center;padding:0"></div>
+      <div id="sim-hist-chart-wrap" style="position:relative;height:0"></div>
+      <!-- History filters strip (year/month/week/vendor) -->
+      <div id="sim-hist-filters"></div>
       <div style="overflow-x:auto">
         <table id="sim-quotes-table" class="table" style="min-width:700px"></table>
       </div>
@@ -4513,6 +4519,13 @@ function authInjectLogo() {
               <option value="informal">Informal · market intel</option>
             </select>
           </div>
+        </div>
+
+        <!-- ─ Shipping week (ETD) — the week the container ships, not capture week ─ -->
+        <div>
+          <label class="field-label">Shipping week (ETD) <span class="text-muted" style="font-weight:400;font-size:var(--text-10)">— when the container ships</span></label>
+          <select id="sim-q-shipweek" class="select"></select>
+          <div class="text-muted" style="font-size:var(--text-10);margin-top:3px">This is what the active table filters and archives by. Capture week (today) is saved separately for history.</div>
         </div>
 
         <!-- ─ Price negotiated with vendor ─ -->
@@ -16263,6 +16276,66 @@ function simRecalcPostPortTotal() {
   if (el) el.textContent = '$' + total.toFixed(2) + '/case';
 }
 
+// ── SHIPPING WEEK HELPERS ──
+// The "shipping week" (ETD) is the week the container leaves origin — distinct
+// from the capture week (when the quote was entered). Quotes are shown/filtered/
+// archived by shipping week because the user buys with a target ship date in
+// mind, and a quote entered today may be for a container shipping weeks out.
+// weekKey format: 'YYYY-Www' (e.g. '2026-W29'), consistent with weekCaptured.
+function simCurrentWeekKey() {
+  const today = new Date().toISOString().slice(0, 10);
+  const wk = (typeof isoWeek === 'function') ? isoWeek(today) : 0;
+  const yr = new Date().getFullYear();
+  return yr + '-W' + String(wk).padStart(2, '0');
+}
+// The Monday date of a given ISO week, for a human-readable label range.
+function simWeekKeyToMonday(weekKey) {
+  const m = /^(\d{4})-W(\d{1,2})$/.exec(weekKey || '');
+  if (!m) return null;
+  const year = +m[1], week = +m[2];
+  // ISO: week 1 contains Jan 4; find the Monday of week 1, add (week-1)*7 days.
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const jan4Day = (jan4.getUTCDay() + 6) % 7;  // Mon=0
+  const week1Mon = new Date(jan4);
+  week1Mon.setUTCDate(jan4.getUTCDate() - jan4Day);
+  const mon = new Date(week1Mon);
+  mon.setUTCDate(week1Mon.getUTCDate() + (week - 1) * 7);
+  return mon;
+}
+function simWeekKeyLabel(weekKey) {
+  const mon = simWeekKeyToMonday(weekKey);
+  if (!mon) return weekKey;
+  const sun = new Date(mon); sun.setUTCDate(mon.getUTCDate() + 6);
+  const mo = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const wkNum = weekKey.replace(/^\d{4}-W/, 'W');
+  const sameMonth = mon.getUTCMonth() === sun.getUTCMonth();
+  const range = sameMonth
+    ? mo[mon.getUTCMonth()] + ' ' + mon.getUTCDate() + '\u2013' + sun.getUTCDate()
+    : mo[mon.getUTCMonth()] + ' ' + mon.getUTCDate() + '\u2013' + mo[sun.getUTCMonth()] + ' ' + sun.getUTCDate();
+  return wkNum + ' \u00b7 ' + range + ' ' + mon.getUTCFullYear();
+}
+// Populate the shipping-week <select>: current week + next 7 weeks, plus the
+// quote's own week if editing an older one (so it stays selectable).
+function simPopulateShipWeekSelect(selectedKey) {
+  const sel = document.getElementById('sim-q-shipweek');
+  if (!sel) return;
+  const cur = simCurrentWeekKey();
+  const curMon = simWeekKeyToMonday(cur);
+  const keys = [];
+  for (let i = 0; i < 8; i++) {
+    const d = new Date(curMon); d.setUTCDate(curMon.getUTCDate() + i * 7);
+    const wk = (typeof isoWeek === 'function') ? isoWeek(d.toISOString().slice(0,10)) : 0;
+    keys.push(d.getUTCFullYear() + '-W' + String(wk).padStart(2, '0'));
+  }
+  // If editing a quote whose ship week is outside this window, include it.
+  if (selectedKey && keys.indexOf(selectedKey) < 0) keys.unshift(selectedKey);
+  sel.innerHTML = keys.map(k => {
+    const isCur = k === cur;
+    return '<option value="' + k + '"' + (k === selectedKey ? ' selected' : '') + '>' + simWeekKeyLabel(k) + (isCur ? ' (this week)' : '') + '</option>';
+  }).join('');
+  if (!selectedKey) sel.value = cur;
+}
+
 function simOpenAddQuoteModal(id) {
   _simEditingQuoteId = id || null;
   const modal = document.getElementById('sim-quote-modal');
@@ -16284,9 +16357,12 @@ function simOpenAddQuoteModal(id) {
       document.getElementById('sim-q-consolidation').value = q.landed?.consolidation ?? '';
       document.getElementById('sim-q-othership').value     = q.landed?.othership ?? '';
       document.getElementById('sim-q-notes').value         = q.notes || '';
+      // Ship week: fall back to capture week for legacy quotes that predate this field.
+      simPopulateShipWeekSelect(q.shipWeek || q.weekCaptured || simCurrentWeekKey());
     }
   } else {
     title.textContent = 'Add quote';
+    simPopulateShipWeekSelect(null);
     document.getElementById('sim-q-vendor').value        = '';
     document.getElementById('sim-q-incoterm').value      = '';
     document.getElementById('sim-q-type').value          = 'formal';
@@ -16330,8 +16406,12 @@ function simSaveQuote() {
   if (!vendor) { alert('Pick a vendor.'); return; }
   if (!price || price <= 0) { alert('Price must be > 0.'); return; }
 
-  // Capture the ISO week when this quote was created — enables market trend
-  // analysis across weeks.
+  // shipWeek = the week the container ships (user-selected). Drives the active
+  // table filter and archiving. weekCaptured = when the quote was entered (kept
+  // for history/trend analysis). They're different dates with different meaning.
+  const shipWeek = document.getElementById('sim-q-shipweek').value || simCurrentWeekKey();
+
+  // Capture the ISO week when this quote was created.
   const today = new Date().toISOString().slice(0, 10);
   const weekCaptured = (typeof isoWeek === 'function') ? isoWeek(today) : null;
   const yearCaptured = new Date().getFullYear();
@@ -16341,13 +16421,15 @@ function simSaveQuote() {
   if (_simEditingQuoteId) {
     const idx = state.quotes.findIndex(x => x.id === _simEditingQuoteId);
     if (idx >= 0) {
-      // Preserve original weekCaptured on edit (it's the capture timestamp)
-      state.quotes[idx] = { ...state.quotes[idx], vendor, incoterm, type, pricePerCase: price, cases, mode, landed, notes };
+      // Preserve original weekCaptured on edit (it's the capture timestamp);
+      // shipWeek IS editable (user may correct the target ship week).
+      state.quotes[idx] = { ...state.quotes[idx], vendor, incoterm, type, pricePerCase: price, cases, mode, landed, notes, shipWeek };
     }
   } else {
     state.quotes.push({
       id: simNewId('quote'),
       vendor, incoterm, type, pricePerCase: price, cases, mode, landed, notes,
+      shipWeek,
       weekCaptured: weekKey,
       capturedDate: today,
       createdAt: new Date().toISOString(),
@@ -16542,15 +16624,32 @@ function simRenderHypoTable(hypoOrders) {
 }
 
 // ── QUOTES COMPARISON TABLE ──
-// Shows landed cost per case (vendor price + 5 post-port extras, cleaning excluded).
-// Each row has an expandable breakdown showing the per-category extras.
-// The cheapest landed $/lb gets a BEST badge — that's the true apples-to-apples winner.
-// Global filter state for the quotes view — persists across renders in this session
-window._simQuoteFilter = window._simQuoteFilter || { weekFilter: 'current' };  // 'current' | 'all' | week key like '2026-W22'
+// Active view: shows ONLY quotes whose shipping week is the current week or
+// later. Past shipping weeks auto-archive out of this table into History.
+// Sortable columns (default cheapest Landed $/case first). Per-container
+// savings (your cheapest formal vs each other formal). No annualized figure,
+// no effective $/lb — removed per user request.
+window._simActiveView = window._simActiveView || 'active';  // 'active' | 'history'
+window._simActiveSort = window._simActiveSort || { col: 'landedPerCase', dir: 1 };
 
-function simSetQuoteFilter(filter) {
-  window._simQuoteFilter.weekFilter = filter;
+function simSetActiveView(view) {
+  window._simActiveView = view;
   renderSimulator();
+}
+function simSortActive(col) {
+  const s = window._simActiveSort;
+  if (s.col === col) s.dir *= -1; else { s.col = col; s.dir = 1; }
+  renderSimulator();
+}
+
+// Landed-cost enrichment shared by active + history.
+function simEnrichQuote(q) {
+  const l = q.landed;
+  const extrasPerCase = l ? ((l.customs||0)+(l.inland||0)+(l.handling||0)+(l.consolidation||0)+(l.othership||0)) : 0;
+  const landedPerCase = (q.pricePerCase || 0) + extrasPerCase;
+  return { ...q, extrasPerCase, landedPerCase, landedPerLb: landedPerCase / 30,
+           _isFormal: (q.type || 'formal') === 'formal',
+           _shipWeek: q.shipWeek || q.weekCaptured || null };
 }
 
 function simRenderQuotesTable(quotes) {
@@ -16559,197 +16658,149 @@ function simRenderQuotesTable(quotes) {
   const filtersEl = document.getElementById('sim-quotes-filters');
   if (!el) return;
 
-  // ── BUILD WEEK FILTER UI ──
-  // Get list of all weeks present across quotes; current week always first
-  const weekKeys = [...new Set(quotes.map(q => q.weekCaptured).filter(Boolean))].sort().reverse();
-  const today = new Date().toISOString().slice(0, 10);
-  const todayWk = (typeof isoWeek === 'function') ? isoWeek(today) : 0;
-  const todayYr = new Date().getFullYear();
-  const currentWeekKey = todayYr + '-W' + String(todayWk).padStart(2, '0');
-
+  // View toggle (Active week / History) lives in the filters strip.
+  const curWk = simCurrentWeekKey();
   if (filtersEl) {
-    if (weekKeys.length === 0) {
-      filtersEl.innerHTML = '';
-    } else {
-      const activeFilter = window._simQuoteFilter.weekFilter;
-      const filterBtn = (val, label, count) => {
-        const isActive = activeFilter === val;
-        return '<button onclick="simSetQuoteFilter(\'' + val + '\')" style="padding:4px 10px;font-size:var(--text-11);font-weight:' + (isActive ? '600' : '500') + ';font-family:var(--fb);background:' + (isActive ? 'var(--gray-800)' : 'var(--white)') + ';color:' + (isActive ? 'var(--white)' : 'var(--gray-700)') + ';border:1px solid ' + (isActive ? 'var(--gray-800)' : 'var(--gray-300)') + ';border-radius:4px;cursor:pointer">' + label + (count != null ? ' <span style="opacity:.7">(' + count + ')</span>' : '') + '</button>';
-      };
-      const currentCount = quotes.filter(q => q.weekCaptured === currentWeekKey).length;
-      let buttons = filterBtn('current', 'Current week', currentCount);
-      buttons += filterBtn('all', 'All weeks', quotes.length);
-      // Add buttons for past weeks (last 4)
-      const pastWeeks = weekKeys.filter(w => w !== currentWeekKey).slice(0, 4);
-      pastWeeks.forEach(wk => {
-        const count = quotes.filter(q => q.weekCaptured === wk).length;
-        const shortLabel = wk.replace(/^\d{4}-/, '');  // "2026-W22" → "W22"
-        buttons += filterBtn(wk, shortLabel, count);
-      });
-      filtersEl.innerHTML = '<div style="display:flex;gap:6px;align-items:center;padding:10px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-200);flex-wrap:wrap"><span class="text-muted" style="font-size:var(--text-10);text-transform:uppercase;letter-spacing:.04em;font-weight:600;margin-right:4px">View:</span>' + buttons + '</div>';
-    }
+    const tabBtn = (val, label) => {
+      const on = window._simActiveView === val;
+      return '<button onclick="simSetActiveView(\'' + val + '\')" style="padding:5px 14px;font-size:var(--text-12);font-weight:' + (on?'700':'500') + ';font-family:var(--fb);background:none;color:' + (on?'var(--jlz)':'var(--gray-500)') + ';border:none;border-bottom:2px solid ' + (on?'var(--jlz)':'transparent') + ';cursor:pointer;margin-bottom:-1px">' + label + '</button>';
+    };
+    filtersEl.innerHTML = '<div style="display:flex;gap:4px;align-items:center;padding:0 14px;background:var(--white);border-bottom:2px solid var(--gray-200)">'
+      + tabBtn('active', 'Active week') + tabBtn('history', 'History') + '</div>';
   }
 
-  // ── APPLY FILTER ──
-  let filteredQuotes = quotes;
-  const activeFilter = window._simQuoteFilter.weekFilter;
-  if (activeFilter === 'current') {
-    filteredQuotes = quotes.filter(q => !q.weekCaptured || q.weekCaptured === currentWeekKey);
-    // Fallback: if current week has nothing, show all (avoids empty view confusion)
-    if (filteredQuotes.length === 0 && quotes.length > 0) {
-      filteredQuotes = quotes;
-    }
-  } else if (activeFilter !== 'all') {
-    filteredQuotes = quotes.filter(q => q.weekCaptured === activeFilter);
-  }
+  // Show/hide the history-only containers.
+  const histChips = document.getElementById('sim-hist-chips');
+  const histMeta  = document.getElementById('sim-hist-meta');
+  const histChart = document.getElementById('sim-hist-chart-wrap');
+  const histFilt  = document.getElementById('sim-hist-filters');
+  const isHist = window._simActiveView === 'history';
+  if (histChips) histChips.style.padding = isHist ? '12px 16px' : '0';
+  if (histMeta)  histMeta.style.padding  = isHist ? '10px 16px 0' : '0';
+  if (histChart) histChart.style.height  = isHist ? '300px' : '0';
+  if (histChart) histChart.style.padding = isHist ? '10px 16px' : '0';
+  if (histFilt && !isHist) histFilt.innerHTML = '';
 
-  if (filteredQuotes.length === 0) {
-    el.innerHTML = '<thead><tr><th style="padding:24px;text-align:center;color:var(--gray-400);font-size:12px;font-weight:400">No quotes yet — click <strong>+ Add quote</strong> to start comparing.</th></tr></thead>';
+  if (isHist) {
+    if (savingsEl) savingsEl.innerHTML = '';
+    simRenderQuoteHistory(quotes, el);
+    return;
+  }
+  // Active view: ensure history chart is torn down so it can't bleed through.
+  if (window._simHistChart) { try { window._simHistChart.destroy(); } catch(e){} window._simHistChart = null; }
+  if (histChips) histChips.innerHTML = '';
+  if (histMeta) histMeta.innerHTML = '';
+  if (histChart) histChart.innerHTML = '';
+
+  // ── ACTIVE VIEW: only current-or-future shipping weeks ──
+  const active = quotes.filter(q => {
+    const sw = q.shipWeek || q.weekCaptured;
+    return !sw || sw >= curWk;  // string compare works for 'YYYY-Www'
+  });
+
+  if (active.length === 0) {
+    const archivedCount = quotes.length;
+    el.innerHTML = '<thead><tr><th style="padding:24px;text-align:center;color:var(--gray-400);font-size:12px;font-weight:400">No quotes for this shipping week or later.'
+      + (archivedCount ? ' <a href="#" onclick="simSetActiveView(\'history\');return false" style="color:var(--jlz)">' + archivedCount + ' in history →</a>' : ' Click <strong>+ Add quote</strong> to start.')
+      + '</th></tr></thead>';
     if (savingsEl) savingsEl.innerHTML = '';
     return;
   }
 
-  // ── COMPUTE LANDED COSTS ──
-  const sumExtras = (l) => l ? ((l.customs||0) + (l.inland||0) + (l.handling||0) + (l.consolidation||0) + (l.othership||0)) : 0;
-  const withLanded = filteredQuotes.map(q => {
-    const extrasPerCase = sumExtras(q.landed);
-    const landedPerCase = (q.pricePerCase || 0) + extrasPerCase;
-    const landedPerLb   = landedPerCase / 30;
-    return { ...q, extrasPerCase, landedPerCase, landedPerLb, _isFormal: (q.type || 'formal') === 'formal' };
-  });
+  const withLanded = active.map(simEnrichQuote);
 
-  // ── SAVINGS ANALYSIS ──
-  // ONLY formal quotes count for the cheapest/most-expensive comparison.
-  // Informal quotes are shown in the table for market intel but excluded
-  // from the savings calculation — they're not options JLZ can actually buy.
-  // Logic simplified per user request: "cheapest vs most expensive" + assume
-  // 1 container/week cadence → annualize to $/year savings.
+  // ── SAVINGS: your cheapest formal vs each other formal (per container) ──
   if (savingsEl) {
-    const formalQuotes = withLanded.filter(q => q._isFormal && q.landedPerLb > 0);
+    const formalQuotes = withLanded.filter(q => q._isFormal && q.landedPerCase > 0);
     if (formalQuotes.length < 2) {
       const hasInformal = withLanded.some(q => !q._isFormal);
-      savingsEl.innerHTML = formalQuotes.length === 1 && hasInformal
-        ? '<div style="padding:12px 16px;background:#FFFBEB;border-bottom:1px solid var(--amber-200);font-size:var(--text-12);color:var(--amber-800)">Only 1 formal quote — add another to see savings analysis. Informal quotes are tracked for market intel but not included in savings.</div>'
+      savingsEl.innerHTML = (formalQuotes.length === 1 && hasInformal)
+        ? '<div style="padding:12px 16px;background:#FFFBEB;border-bottom:1px solid var(--amber-200);font-size:var(--text-12);color:var(--amber-800)">Only 1 formal quote this week — add another to compare. Informal quotes are tracked for market intel but not counted.</div>'
         : '';
     } else {
-      const sorted = formalQuotes.slice().sort((a, b) => a.landedPerLb - b.landedPerLb);
+      const sorted = formalQuotes.slice().sort((a, b) => a.landedPerCase - b.landedPerCase);
       const best = sorted[0];
-      const worst = sorted[sorted.length - 1];
-      const deltaPerLb = worst.landedPerLb - best.landedPerLb;
-      const pctCheaper = (deltaPerLb / worst.landedPerLb) * 100;
-      // Per-container savings using the worst vendor's cases as the basis
-      // (this is what you'd spend if you bought from them instead of the best)
-      const savingPerContainer = deltaPerLb * (worst.cases || 1320) * 30;
-      // Annualized: assume 1 container/week cadence (52/year)
-      const annualSaving = savingPerContainer * 52;
-      const casesDiffer = Math.abs((best.cases || 0) - (worst.cases || 0)) / Math.max(best.cases || 1, worst.cases || 1) > 0.05;
-
-      savingsEl.innerHTML = ''
-        + '<div style="padding:16px 18px;background:linear-gradient(180deg, #F0FDF4 0%, #FFFFFF 100%);border-bottom:1px solid var(--gray-200)">'
-          // Hero stat
-          + '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:12px">'
-            + '<div>'
-              + '<div style="font-size:var(--text-11);color:var(--green-700);text-transform:uppercase;letter-spacing:.04em;font-weight:600;margin-bottom:2px">💰 Savings analysis — formal quotes only</div>'
-              + '<div style="font-size:var(--text-15);color:var(--gray-800);font-family:var(--fb)">'
-                + '<strong>' + (best.vendor || '—') + '</strong> at <strong style="color:var(--green-700)">$' + best.landedPerLb.toFixed(4) + '/lb</strong> vs <strong>' + (worst.vendor || '—') + '</strong> at $' + worst.landedPerLb.toFixed(4) + '/lb'
-              + '</div>'
-            + '</div>'
-            + '<div style="text-align:right">'
-              + '<div style="font-size:var(--text-10);color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em">Savings · cheapest</div>'
-              + '<div style="font-size:var(--text-15);font-family:var(--fb);color:var(--green-700);font-weight:700">' + pctCheaper.toFixed(1) + '% cheaper</div>'
-              + '<div style="font-size:var(--text-10);color:var(--gray-500);font-family:var(--fm)">$' + deltaPerLb.toFixed(4) + '/lb</div>'
-            + '</div>'
-          + '</div>'
-          // Savings amounts (per container + annualized)
-          + '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px">'
-            + '<div style="padding:10px 12px;background:var(--white);border-radius:4px;border:1px solid var(--gray-200)">'
-              + '<div style="font-size:var(--text-10);color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px">Per container</div>'
-              + '<div style="font-size:var(--text-15);font-family:var(--fb);color:var(--green-700);font-weight:700">$' + savingPerContainer.toLocaleString('en-US', { maximumFractionDigits: 0 }) + '</div>'
-              + '<div style="font-size:var(--text-10);color:var(--gray-500);font-family:var(--fm);margin-top:2px">picking ' + (best.vendor || 'cheapest') + ' over ' + (worst.vendor || 'most expensive') + '</div>'
-            + '</div>'
-            + '<div style="padding:10px 12px;background:var(--white);border-radius:4px;border:1px solid var(--gray-200)">'
-              + '<div style="font-size:var(--text-10);color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px">Annualized · 1 ctn/wk × 52</div>'
-              + '<div style="font-size:var(--text-15);font-family:var(--fb);color:var(--green-700);font-weight:700">$' + annualSaving.toLocaleString('en-US', { maximumFractionDigits: 0 }) + '/yr</div>'
-              + '<div style="font-size:var(--text-10);color:var(--gray-500);font-family:var(--fm);margin-top:2px">at typical cadence</div>'
-            + '</div>'
-          + '</div>'
-          + (casesDiffer ? '<div style="margin-top:10px;padding:8px 10px;background:#FFFBEB;border-radius:4px;font-size:var(--text-11);color:var(--amber-800);line-height:1.5">'
-              + '<strong>Note:</strong> different case quantities — comparison normalized to $/lb, savings/container uses ' + (worst.vendor || 'most expensive') + '\'s offer (' + (worst.cases || 0).toLocaleString() + ' cs).'
-            + '</div>' : '')
+      let cells = '<div style="padding:10px 12px;background:var(--white);border-radius:4px;border:1px solid var(--gray-200)">'
+        + '<div style="font-size:var(--text-10);color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px">Your cheapest</div>'
+        + '<div style="font-size:var(--text-15);font-family:var(--fb);color:var(--jlz);font-weight:700">' + (best.vendor || '—') + '</div>'
+        + '<div style="font-size:var(--text-10);color:var(--gray-500);font-family:var(--fm);margin-top:2px">$' + best.landedPerCase.toFixed(2) + '/case landed</div>'
+      + '</div>';
+      sorted.slice(1).forEach(q => {
+        const perCase = q.landedPerCase - best.landedPerCase;
+        // Per container: use THIS vendor's own cases (what you'd actually spend
+        // buying this container from them instead of the cheapest).
+        const perContainer = perCase * (q.cases || 1320);
+        cells += '<div style="padding:10px 12px;background:var(--white);border-radius:4px;border:1px solid var(--gray-200)">'
+          + '<div style="font-size:var(--text-10);color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px">vs ' + (q.vendor || '—') + '</div>'
+          + '<div style="font-size:var(--text-15);font-family:var(--fb);color:var(--green-700);font-weight:700">$' + perContainer.toLocaleString('en-US', { maximumFractionDigits: 0 }) + '</div>'
+          + '<div style="font-size:var(--text-10);color:var(--gray-500);font-family:var(--fm);margin-top:2px">$' + perCase.toFixed(2) + '/case × ' + (q.cases || 1320).toLocaleString() + ' cs</div>'
         + '</div>';
+      });
+      savingsEl.innerHTML = '<div style="padding:14px 16px;background:linear-gradient(135deg,#f0fdf4,#ecfdf5);border-bottom:1px solid #bbf7d0">'
+        + '<div style="font-size:var(--text-11);text-transform:uppercase;letter-spacing:.04em;font-weight:700;color:var(--green-700);margin-bottom:10px">Savings per container · your cheapest vs the rest</div>'
+        + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">' + cells + '</div>'
+      + '</div>';
     }
   }
 
-  // ── TABLE ──
+  // ── SORTABLE TABLE ──
+  const s = window._simActiveSort;
+  const arrow = (col) => s.col === col
+    ? '<span style="color:var(--jlz)">' + (s.dir > 0 ? '\u25B2' : '\u25BC') + '</span>'
+    : '<span style="opacity:.35">\u21C5</span>';
+  const thBase = 'padding:9px 12px;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;cursor:pointer;user-select:none;white-space:nowrap';
+  const thL = (col, label) => '<th style="' + thBase + ';text-align:left" onclick="simSortActive(\'' + col + '\')">' + label + ' ' + arrow(col) + '</th>';
+  const thR = (col, label) => '<th style="' + thBase + ';text-align:right" onclick="simSortActive(\'' + col + '\')">' + label + ' ' + arrow(col) + '</th>';
+
   let html = '<thead><tr style="background:var(--gray-50);border-bottom:2px solid var(--gray-200)">'
     + '<th style="padding:9px 8px;width:24px"></th>'
-    + '<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em">Vendor</th>'
-    + '<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em">Type</th>'
-    + '<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em">Incoterm</th>'
-    + '<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em">Week</th>'
-    + '<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em">Price $/case</th>'
-    + '<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em">Landed extras</th>'
-    + '<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em">Landed $/case</th>'
-    + '<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em">Landed $/lb</th>'
-    + '<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em" title="Landed $/lb adjusted for payment terms time value">Effective $/lb 💳</th>'
-    + '<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em"></th>'
+    + thL('vendor', 'Vendor') + thL('type', 'Type') + thL('incoterm', 'Incoterm') + thL('_shipWeek', 'Ship week')
+    + thR('pricePerCase', 'Price $/case') + thR('extrasPerCase', 'Landed extras')
+    + thR('landedPerCase', 'Landed $/case') + thR('landedPerLb', 'Landed $/lb')
+    + '<th style="padding:9px 12px"></th>'
     + '</tr></thead><tbody>';
 
-  // Find BEST and WORST among formal quotes only
-  const formalLanded = withLanded.filter(q => q._isFormal && q.landedPerLb > 0);
-  const cheapestPerLb = formalLanded.length ? Math.min(...formalLanded.map(q => q.landedPerLb)) : Infinity;
+  const formalLanded = withLanded.filter(q => q._isFormal && q.landedPerCase > 0);
+  const cheapestCase = formalLanded.length ? Math.min(...formalLanded.map(q => q.landedPerCase)) : Infinity;
 
-  // Sort: formal first, then by landed/lb ascending
+  // Sort: formal always above informal, then by the chosen column/direction.
   const sortedRows = withLanded.slice().sort((a, b) => {
     if (a._isFormal !== b._isFormal) return a._isFormal ? -1 : 1;
-    return a.landedPerLb - b.landedPerLb;
+    let av = a[s.col], bv = b[s.col];
+    if (typeof av === 'string' || typeof bv === 'string') return String(av||'').localeCompare(String(bv||'')) * s.dir;
+    return ((av||0) - (bv||0)) * s.dir;
   });
 
   sortedRows.forEach(q => {
-    const isBest = q._isFormal && Math.abs(q.landedPerLb - cheapestPerLb) < 0.0001 && q.landedPerLb > 0;
+    const isBest = q._isFormal && Math.abs(q.landedPerCase - cheapestCase) < 0.001 && q.landedPerCase > 0;
     const rowBg = isBest ? 'background:#ECFDF5' : (!q._isFormal ? 'background:var(--gray-50)' : '');
     const bestBadge = isBest ? '<span style="display:inline-block;padding:1px 6px;border-radius:8px;background:var(--green-600);color:white;font-size:9px;font-weight:700;margin-left:6px;font-family:var(--fb)">BEST</span>' : '';
     const typeBadge = q._isFormal
       ? '<span style="display:inline-block;padding:1px 6px;border-radius:8px;background:var(--gray-200);color:var(--gray-700);font-size:9px;font-weight:600;font-family:var(--fb)">FORMAL</span>'
       : '<span style="display:inline-block;padding:1px 6px;border-radius:8px;background:#EDE9FE;color:#6D28D9;font-size:9px;font-weight:600;font-family:var(--fb)">INFORMAL</span>';
-    const modeIcon = q.mode === 'air' ? '✈' : '🚢';
+    const modeIcon = q.mode === 'air' ? '\u2708' : '\uD83D\uDEA2';
     const l = q.landed || {};
-    const weekLbl = q.weekCaptured ? q.weekCaptured.replace(/^\d{4}-/, '') : '—';
+    const weekLbl = q._shipWeek ? q._shipWeek.replace(/^\d{4}-/, '') : '\u2014';
 
-    // Main row
     html += '<tr style="border-bottom:1px solid var(--gray-100);' + rowBg + ';cursor:pointer" onclick="simToggleQuoteBreakdown(\'' + q.id + '\')">'
-      + '<td style="padding:9px 8px;text-align:center;color:var(--gray-400);font-family:var(--fm)" id="sim-q-caret-' + q.id + '">▸</td>'
-      + '<td style="padding:9px 12px;color:' + (q._isFormal ? 'var(--gray-700)' : 'var(--gray-500)') + ';font-weight:500">' + modeIcon + ' ' + (q.vendor || '—') + bestBadge + '</td>'
+      + '<td style="padding:9px 8px;text-align:center;color:var(--gray-400);font-family:var(--fm)" id="sim-q-caret-' + q.id + '">\u25B8</td>'
+      + '<td style="padding:9px 12px;color:' + (q._isFormal ? 'var(--gray-700)' : 'var(--gray-500)') + ';font-weight:500">' + modeIcon + ' ' + (q.vendor || '\u2014') + bestBadge + '</td>'
       + '<td style="padding:9px 12px">' + typeBadge + '</td>'
-      + '<td style="padding:9px 12px;color:var(--gray-600)">' + (q.incoterm || '—') + '</td>'
+      + '<td style="padding:9px 12px;color:var(--gray-600)">' + (q.incoterm || '\u2014') + '</td>'
       + '<td style="padding:9px 12px;color:var(--gray-500);font-family:var(--fm);font-size:11px">' + weekLbl + '</td>'
-      + '<td style="padding:9px 12px;text-align:right;color:' + (q._isFormal ? 'var(--gray-700)' : 'var(--gray-500)') + ';font-family:var(--fm)">' + (q.pricePerCase ? '$' + q.pricePerCase.toFixed(2) : '—') + '</td>'
+      + '<td style="padding:9px 12px;text-align:right;color:' + (q._isFormal ? 'var(--gray-700)' : 'var(--gray-500)') + ';font-family:var(--fm)">' + (q.pricePerCase ? '$' + q.pricePerCase.toFixed(2) : '\u2014') + '</td>'
       + '<td style="padding:9px 12px;text-align:right;color:var(--gray-500);font-family:var(--fm)">+$' + q.extrasPerCase.toFixed(2) + '</td>'
-      + '<td style="padding:9px 12px;text-align:right;color:' + (q._isFormal ? 'var(--gray-800)' : 'var(--gray-500)') + ';font-weight:600;font-family:var(--fm)">$' + q.landedPerCase.toFixed(2) + '</td>'
-      + '<td style="padding:9px 12px;text-align:right;color:' + (isBest ? 'var(--green-700)' : (q._isFormal ? 'var(--gray-700)' : 'var(--gray-500)')) + ';font-weight:' + (isBest ? '700' : '600') + ';font-family:var(--fm)">$' + q.landedPerLb.toFixed(4) + '</td>'
-      + (function(){
-          const coc = parseFloat(document.getElementById('bp-cost-of-capital')?.value) || 6;
-          const dr = (coc / 100) / 365;
-          const mult = vendorEffectiveMult(q.vendor || '', dr, 37);
-          const effLb = (q.landedPerLb * mult).toFixed(4);
-          const diff = q.landedPerLb * (mult - 1);
-          const sign = diff >= 0 ? '+' : '−';
-          const absDiff = (Math.abs(diff) * 100).toFixed(2);
-          return '<td style="padding:9px 12px;text-align:right;color:var(--jlz);font-weight:600;font-family:var(--fm);font-size:11px" title="' + vendorTermsStr(q.vendor||'') + '">'
-            + '$' + effLb
-            + '<div style="font-size:9px;color:var(--gray-400);font-weight:400">' + sign + absDiff + '¢</div>'
-            + '</td>';
-        })()
+      + '<td style="padding:9px 12px;text-align:right;color:' + (isBest ? 'var(--green-700)' : (q._isFormal ? 'var(--gray-800)' : 'var(--gray-500)')) + ';font-weight:' + (isBest ? '700' : '600') + ';font-family:var(--fm)">$' + q.landedPerCase.toFixed(2) + '</td>'
+      + '<td style="padding:9px 12px;text-align:right;color:' + (q._isFormal ? 'var(--gray-700)' : 'var(--gray-500)') + ';font-family:var(--fm)">$' + q.landedPerLb.toFixed(4) + '</td>'
       + '<td style="padding:6px 12px;text-align:right;white-space:nowrap" onclick="event.stopPropagation()">'
         + '<button class="btn btn-sm" onclick="simOpenAddQuoteModal(\'' + q.id + '\')" style="margin-right:4px">Edit</button>'
         + '<button class="btn btn-sm btn-danger" onclick="simDeleteQuote(\'' + q.id + '\')">Delete</button>'
       + '</td>'
       + '</tr>';
 
-    // Breakdown row
     html += '<tr id="sim-q-breakdown-' + q.id + '" style="display:none;background:var(--gray-50)">'
       + '<td></td>'
-      + '<td colspan="10" style="padding:14px 18px">'
+      + '<td colspan="9" style="padding:14px 18px">'
         + '<div style="font-size:var(--text-11);color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;font-weight:600;margin-bottom:8px">Landed extras breakdown</div>'
         + '<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;font-size:var(--text-12)">'
           + '<div><div class="text-muted" style="font-size:var(--text-10)">Customs</div><div style="font-family:var(--fm);color:var(--gray-700)">$' + (l.customs||0).toFixed(3) + '</div></div>'
@@ -16760,12 +16811,177 @@ function simRenderQuotesTable(quotes) {
           + '<div style="border-left:1px solid var(--gray-300);padding-left:10px"><div class="text-muted" style="font-size:var(--text-10)">Total extras</div><div style="font-family:var(--fb);font-weight:600;color:var(--gray-800)">$' + q.extrasPerCase.toFixed(2) + '/case</div></div>'
         + '</div>'
         + (q.notes ? '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--gray-300);font-size:var(--text-11);color:var(--gray-600)"><strong>Notes:</strong> ' + q.notes + '</div>' : '')
-        + '<div style="margin-top:8px;font-size:var(--text-10);color:var(--gray-400);font-style:italic">Cleaning is excluded — it\'s post-arrival warehouse work, not landed cost.</div>'
+        + '<div style="margin-top:8px;font-size:var(--text-10);color:var(--gray-400);font-style:italic">Cleaning is excluded \u2014 it\'s post-arrival warehouse work, not landed cost.</div>'
       + '</td>'
       + '</tr>';
   });
   html += '</tbody>';
   el.innerHTML = html;
+}
+
+// ── QUOTE HISTORY VIEW ──
+// A multi-select trend chart (pick vendors to compare who's quoted best over
+// time) + a filterable table of every quote. X axis = shipping week.
+window._simHistVendors = window._simHistVendors || null;   // Set of selected vendor names (null = auto-init)
+window._simHistMetric  = window._simHistMetric  || 'case'; // 'case' | 'lb'
+window._simHistFilters = window._simHistFilters || { year:'', month:'', week:'', vendor:'' };
+window._simHistSort    = window._simHistSort    || { col:'_shipWeek', dir:1 };
+
+// Vendor colors — stable per vendor (categorical, fixed order, never recycled).
+const SIM_VPAL = ['#2a78d6','#1baf7a','#eda100','#4a3aa7','#e34948','#eb6834','#e87ba4','#008300'];
+function simVendorColor(vendor, allVendors) {
+  const i = allVendors.indexOf(vendor);
+  return SIM_VPAL[(i < 0 ? 0 : i) % SIM_VPAL.length];
+}
+
+window.simToggleHistVendor = function(v) {
+  if (!window._simHistVendors) window._simHistVendors = new Set();
+  window._simHistVendors.has(v) ? window._simHistVendors.delete(v) : window._simHistVendors.add(v);
+  renderSimulator();
+};
+window.simSetHistMetric = function(m) { window._simHistMetric = m; renderSimulator(); };
+window.simSetHistFilter = function(key, val) { window._simHistFilters[key] = val; renderSimulator(); };
+window.simSortHist = function(col) {
+  const s = window._simHistSort;
+  if (s.col === col) s.dir *= -1; else { s.col = col; s.dir = 1; }
+  renderSimulator();
+};
+
+function simRenderQuoteHistory(quotes, tableEl) {
+  const chartWrap = document.getElementById('sim-hist-chart-wrap');
+  const chipWrap  = document.getElementById('sim-hist-chips');
+  const enriched = quotes.map(simEnrichQuote).filter(q => q._shipWeek);
+  const allVendors = [...new Set(enriched.map(q => q.vendor).filter(Boolean))];
+
+  // First render: default-select up to 3 formal vendors so the chart isn't empty.
+  if (window._simHistVendors === null) {
+    window._simHistVendors = new Set(
+      [...new Set(enriched.filter(q => q._isFormal).map(q => q.vendor))].slice(0, 3)
+    );
+  }
+  const sel = window._simHistVendors;
+
+  // ── vendor chips (multi-select) ──
+  if (chipWrap) {
+    if (allVendors.length === 0) {
+      chipWrap.innerHTML = '<span style="font-size:var(--text-11);color:var(--gray-400)">No quotes yet.</span>';
+    } else {
+      chipWrap.innerHTML = '<span style="font-size:var(--text-11);color:var(--gray-500);font-weight:600;margin-right:4px">Compare:</span>'
+        + allVendors.map(v => {
+          const on = sel.has(v); const c = simVendorColor(v, allVendors);
+          return '<button onclick="simToggleHistVendor(\'' + v.replace(/'/g, "\\'") + '\')" style="padding:4px 11px;border-radius:14px;font-size:var(--text-11);font-weight:600;cursor:pointer;border:1.5px solid ' + (on ? 'transparent' : 'var(--gray-300)') + ';background:' + (on ? c : 'var(--white)') + ';color:' + (on ? '#fff' : 'var(--gray-600)') + ';display:inline-flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:' + (on ? '#fff' : c) + '"></span>' + v + '</button>';
+        }).join('');
+    }
+  }
+
+  // ── trend chart ──
+  if (chartWrap) {
+    chartWrap.innerHTML = '<canvas id="sim-hist-chart" role="img" aria-label="Quote history by shipping week for selected vendors"></canvas>';
+    const metric = window._simHistMetric;
+    const field = metric === 'lb' ? 'landedPerLb' : 'landedPerCase';
+    const weeks = [...new Set(enriched.map(q => q._shipWeek))].sort();
+    const datasets = [...sel].map(v => {
+      const c = simVendorColor(v, allVendors);
+      const data = weeks.map(w => {
+        // If multiple quotes from same vendor+week, take the cheapest (best offer).
+        const matches = enriched.filter(q => q.vendor === v && q._shipWeek === w);
+        if (!matches.length) return null;
+        return Math.min(...matches.map(q => q[field]));
+      });
+      return { label: v, data, borderColor: c, backgroundColor: c, pointRadius: 5, pointHoverRadius: 7, borderWidth: 2, spanGaps: true, tension: 0.2 };
+    });
+    if (window._simHistChart) { try { window._simHistChart.destroy(); } catch(e){} }
+    if (typeof Chart !== 'undefined' && weeks.length) {
+      window._simHistChart = new Chart(document.getElementById('sim-hist-chart'), {
+        type: 'line',
+        data: { labels: weeks.map(w => w.replace(/^\d{4}-/, '')), datasets },
+        options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'nearest', intersect: true },
+          plugins: { legend: { display: false },
+            tooltip: { callbacks: { label: c => ' ' + c.dataset.label + ': ' + (c.raw != null ? (metric === 'lb' ? '$' + c.raw.toFixed(4) + '/lb' : '$' + c.raw.toFixed(2) + '/case') : 'no quote') } } },
+          scales: { x: { grid: { display: false }, ticks: { font: { size: 11 } } },
+            y: { ticks: { callback: v => metric === 'lb' ? '$' + v.toFixed(2) : '$' + v, font: { size: 11 } }, grid: { color: 'rgba(0,0,0,.05)' } } } }
+      });
+    }
+    // metric toggle + empty hint
+    const metaEl = document.getElementById('sim-hist-meta');
+    if (metaEl) {
+      const mbtn = (val, label) => '<label style="cursor:pointer;font-size:var(--text-11);color:var(--gray-600);margin-right:12px"><input type="radio" name="sim-hmetric" ' + (metric===val?'checked':'') + ' onchange="simSetHistMetric(\'' + val + '\')"> ' + label + '</label>';
+      metaEl.innerHTML = '<span style="font-size:var(--text-11);color:var(--gray-500);margin-right:8px">Metric:</span>'
+        + mbtn('case', 'Landed $/case') + mbtn('lb', 'Landed $/lb')
+        + '<span style="margin-left:auto;font-size:var(--text-10);color:var(--gray-400)">X = shipping week \u00b7 one point per vendor/week (cheapest if several)</span>';
+    }
+    if (!weeks.length) chartWrap.innerHTML = '<div style="padding:30px;text-align:center;color:var(--gray-400);font-size:12px">No historical quotes yet.</div>';
+  }
+
+  // ── filterable table ──
+  const f = window._simHistFilters;
+  const years  = [...new Set(enriched.map(q => (q._shipWeek||'').slice(0,4)).filter(Boolean))].sort();
+  const weeksAll = [...new Set(enriched.map(q => q._shipWeek))].sort().reverse();
+  const monthOf = (q) => {
+    const mon = (typeof simWeekKeyToMonday === 'function') ? simWeekKeyToMonday(q._shipWeek) : null;
+    return mon ? (mon.getUTCMonth() + 1) : null;
+  };
+  let rows = enriched.filter(q => {
+    if (f.year   && (q._shipWeek||'').slice(0,4) !== f.year) return false;
+    if (f.month  && String(monthOf(q)) !== f.month) return false;
+    if (f.week   && q._shipWeek !== f.week) return false;
+    if (f.vendor && q.vendor !== f.vendor) return false;
+    return true;
+  });
+  const hs = window._simHistSort;
+  rows.sort((a, b) => {
+    let av = a[hs.col], bv = b[hs.col];
+    if (typeof av === 'string' || typeof bv === 'string') return String(av||'').localeCompare(String(bv||'')) * hs.dir;
+    return ((av||0) - (bv||0)) * hs.dir;
+  });
+
+  const moNames = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const filtersHtml = '<div style="display:flex;gap:8px;align-items:center;padding:10px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-200);flex-wrap:wrap">'
+    + '<span style="font-size:var(--text-10);text-transform:uppercase;letter-spacing:.04em;font-weight:600;color:var(--gray-500)">Filter:</span>'
+    + '<select onchange="simSetHistFilter(\'year\',this.value)" style="padding:4px 8px;font-size:12px;border:1px solid var(--gray-300);border-radius:4px"><option value="">Year: all</option>' + years.map(y => '<option value="' + y + '"' + (f.year===y?' selected':'') + '>' + y + '</option>').join('') + '</select>'
+    + '<select onchange="simSetHistFilter(\'month\',this.value)" style="padding:4px 8px;font-size:12px;border:1px solid var(--gray-300);border-radius:4px"><option value="">Month: all</option>' + [1,2,3,4,5,6,7,8,9,10,11,12].map(m => '<option value="' + m + '"' + (f.month==String(m)?' selected':'') + '>' + moNames[m] + '</option>').join('') + '</select>'
+    + '<select onchange="simSetHistFilter(\'week\',this.value)" style="padding:4px 8px;font-size:12px;border:1px solid var(--gray-300);border-radius:4px"><option value="">Week: all</option>' + weeksAll.map(w => '<option value="' + w + '"' + (f.week===w?' selected':'') + '>' + w.replace(/^\d{4}-/, '') + '</option>').join('') + '</select>'
+    + '<select onchange="simSetHistFilter(\'vendor\',this.value)" style="padding:4px 8px;font-size:12px;border:1px solid var(--gray-300);border-radius:4px"><option value="">Vendor: all</option>' + allVendors.map(v => '<option value="' + v + '"' + (f.vendor===v?' selected':'') + '>' + v + '</option>').join('') + '</select>'
+    + ((f.year||f.month||f.week||f.vendor) ? '<button onclick="simSetHistFilter(\'year\',\'\');simSetHistFilter(\'month\',\'\');simSetHistFilter(\'week\',\'\');simSetHistFilter(\'vendor\',\'\')" style="padding:4px 10px;font-size:11px;border:1px solid var(--gray-300);border-radius:4px;background:var(--white);cursor:pointer;color:var(--gray-600)">Clear</button>' : '')
+    + '</div>';
+
+  const hArrow = (col) => hs.col === col ? '<span style="color:var(--jlz)">' + (hs.dir>0?'\u25B2':'\u25BC') + '</span>' : '<span style="opacity:.35">\u21C5</span>';
+  const hThBase = 'padding:9px 12px;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;cursor:pointer;user-select:none;white-space:nowrap';
+  let html = '<thead><tr style="background:var(--gray-50);border-bottom:2px solid var(--gray-200)">'
+    + '<th style="' + hThBase + ';text-align:left" onclick="simSortHist(\'vendor\')">Vendor ' + hArrow('vendor') + '</th>'
+    + '<th style="' + hThBase + ';text-align:left" onclick="simSortHist(\'_shipWeek\')">Ship week ' + hArrow('_shipWeek') + '</th>'
+    + '<th style="' + hThBase + ';text-align:left" onclick="simSortHist(\'incoterm\')">Incoterm ' + hArrow('incoterm') + '</th>'
+    + '<th style="' + hThBase + ';text-align:left" onclick="simSortHist(\'type\')">Type ' + hArrow('type') + '</th>'
+    + '<th style="' + hThBase + ';text-align:right" onclick="simSortHist(\'landedPerCase\')">Landed $/case ' + hArrow('landedPerCase') + '</th>'
+    + '<th style="' + hThBase + ';text-align:right" onclick="simSortHist(\'landedPerLb\')">Landed $/lb ' + hArrow('landedPerLb') + '</th>'
+    + '<th style="' + hThBase + ';text-align:left" onclick="simSortHist(\'weekCaptured\')">Captured ' + hArrow('weekCaptured') + '</th>'
+    + '</tr></thead><tbody>';
+  if (!rows.length) {
+    html += '<tr><td colspan="7" style="padding:20px;text-align:center;color:var(--gray-400);font-size:12px">No quotes match these filters.</td></tr>';
+  } else {
+    rows.forEach(q => {
+      const typeBadge = q._isFormal
+        ? '<span style="display:inline-block;padding:1px 6px;border-radius:8px;background:var(--gray-200);color:var(--gray-700);font-size:9px;font-weight:600">FORMAL</span>'
+        : '<span style="display:inline-block;padding:1px 6px;border-radius:8px;background:#EDE9FE;color:#6D28D9;font-size:9px;font-weight:600">INFORMAL</span>';
+      const modeIcon = q.mode === 'air' ? '\u2708' : '\uD83D\uDEA2';
+      html += '<tr style="border-bottom:1px solid var(--gray-100);' + (!q._isFormal ? 'background:var(--gray-50)' : '') + '">'
+        + '<td style="padding:9px 12px;color:var(--gray-700);font-weight:500">' + modeIcon + ' ' + (q.vendor || '\u2014') + '</td>'
+        + '<td style="padding:9px 12px;font-family:var(--fm);font-size:11px;color:var(--gray-600)">' + (q._shipWeek ? q._shipWeek.replace(/^\d{4}-/, '') : '\u2014') + '</td>'
+        + '<td style="padding:9px 12px;color:var(--gray-600)">' + (q.incoterm || '\u2014') + '</td>'
+        + '<td style="padding:9px 12px">' + typeBadge + '</td>'
+        + '<td style="padding:9px 12px;text-align:right;font-weight:600;font-family:var(--fm);color:var(--gray-800)">$' + q.landedPerCase.toFixed(2) + '</td>'
+        + '<td style="padding:9px 12px;text-align:right;font-family:var(--fm);color:var(--gray-600)">$' + q.landedPerLb.toFixed(4) + '</td>'
+        + '<td style="padding:9px 12px;font-family:var(--fm);font-size:11px;color:var(--gray-400)">' + (q.weekCaptured ? q.weekCaptured.replace(/^\d{4}-/, '') : '\u2014') + '</td>'
+        + '</tr>';
+    });
+  }
+  html += '</tbody>';
+
+  // Inject filters above the table. The table element is inside a card; we set
+  // the filters into a sibling holder if present, else prepend into the table.
+  const filterHolder = document.getElementById('sim-hist-filters');
+  if (filterHolder) filterHolder.innerHTML = filtersHtml;
+  tableEl.innerHTML = html;
 }
 
 // ── STOCK PROJECTION (real + hypothetical arrivals) ──
