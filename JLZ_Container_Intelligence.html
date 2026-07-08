@@ -723,7 +723,7 @@ html,body{background:var(--gray-50);color:var(--gray-800);font-family:var(--fb);
   background:rgba(0,0,0,.012);
 }
 /* The cascade bar rows in Weight & Yield should NOT trigger hover or zebra */
-#tab-history #hist-body-s2 tr td[colspan="13"]{
+#tab-history #hist-body-s2 tr td[colspan="15"]{
   background:transparent !important;
   border-bottom:1px solid var(--gray-100);
 }
@@ -3457,6 +3457,9 @@ function authInjectLogo() {
     </div>
   </div>
 
+  <!-- Supplier rollup: one-glance scorecard, shown only when a single supplier is filtered -->
+  <div id="hist-sup-rollup" style="display:none;margin-bottom:16px"></div>
+
   <!-- Empty state -->
   <div id="hist-empty" style="text-align:center;padding:60px;color:var(--gray-300);font-family:var(--fm);font-size:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);margin-bottom:16px">
     No saved containers yet &mdash; load a container and click &ldquo;Save container&rdquo;
@@ -3486,7 +3489,8 @@ function authInjectLogo() {
           <th data-sortk="margin"  onclick="histSort('s1','margin')"  style="padding:7px 10px;text-align:right;font-weight:600;color:var(--gray-500);cursor:pointer;user-select:none">Margin % <span class="sort-ind" data-sind="s1-margin"></span></th>
           <th id="hd-sale-case"  style="padding:7px 10px;text-align:right;font-weight:600;color:var(--gray-500)">Sale $/case</th>
           <th id="hd-cost-case"  style="padding:7px 10px;text-align:right;font-weight:600;color:var(--gray-500)">Cost $/case</th>
-          <th style="width:30px;padding:7px 4px;text-align:center;font-weight:600;color:var(--gray-500)"></th>
+          <th style="padding:7px 10px;text-align:right;font-weight:600;color:var(--gray-500)" title="This order&#39;s FOB $/lb minus the formal-market median for its purchase week and mode (Market Intel). Negative = bought below market.">FOB vs mkt</th>
+          <th style="width:46px;padding:7px 4px;text-align:center;font-weight:600;color:var(--gray-500)"></th>
         </tr></thead>
         <tbody id="hist-body-s1"></tbody>
         <tfoot id="hist-foot-s1"></tfoot>
@@ -3506,7 +3510,7 @@ function authInjectLogo() {
             <th colspan="1" style="padding:5px 8px;text-align:center;font-size:9px;font-weight:700;color:var(--purple-500);text-transform:uppercase;letter-spacing:.08em;font-family:var(--fb);border-right:1px solid var(--gray-200)">Quality</th>
             <th colspan="3" style="padding:5px 8px;text-align:center;font-size:9px;font-weight:700;color:var(--amber-700);text-transform:uppercase;letter-spacing:.08em;font-family:var(--fb);border-right:1px solid var(--gray-200)">Transit (origin)</th>
             <th colspan="4" style="padding:5px 8px;text-align:center;font-size:9px;font-weight:700;color:var(--blue-700);text-transform:uppercase;letter-spacing:.08em;font-family:var(--fb);border-right:1px solid var(--gray-200)">Warehouse</th>
-            <th colspan="2" style="padding:5px 8px;text-align:center;font-size:9px;font-weight:700;color:var(--green-700);text-transform:uppercase;letter-spacing:.08em;font-family:var(--fb)">Outcome</th>
+            <th colspan="4" style="padding:5px 8px;text-align:center;font-size:9px;font-weight:700;color:var(--green-700);text-transform:uppercase;letter-spacing:.08em;font-family:var(--fb)">Outcome</th>
           </tr>
           <!-- Column header: data labels -->
           <tr style="background:var(--gray-50);border-bottom:2px solid var(--gray-200)">
@@ -3523,6 +3527,8 @@ function authInjectLogo() {
             <th style="padding:7px 8px;text-align:right;font-weight:600;color:var(--gray-500);border-right:1px solid var(--gray-200)" title="Warehouse shrink % ÷ Days — daily rate of loss in warehouse">Daily shrink %</th>
             <th style="padding:7px 8px;text-align:right;font-weight:600;color:var(--gray-500)" title="Lbs out / Declared">Yield %</th>
             <th style="padding:7px 8px;text-align:right;font-weight:600;color:var(--gray-500)">Days</th>
+            <th style="padding:7px 8px;text-align:right;font-weight:600;color:var(--gray-500)" title="Actual arrival vs first promised ETA on the linked order. + = arrived late.">ETA drift</th>
+            <th style="padding:7px 8px;text-align:right;font-weight:600;color:var(--gray-500)" title="Estimated cost of one extra warehouse day: daily shrink value + capital cost of inventory.">Hold $/day</th>
           </tr>
         </thead>
         <tbody id="hist-body-s2"></tbody>
@@ -9836,6 +9842,8 @@ function renderComparison() {
   if(data.length === 0) {
     if(empty) empty.style.display = 'block';
     sections.forEach(id=>{ const e=document.getElementById(id); if(e) e.style.display='none'; });
+    const ru0 = document.getElementById('hist-sup-rollup');
+    if(ru0){ ru0.style.display='none'; ru0.innerHTML=''; }
     return;
   }
   if(empty) empty.style.display = 'none';
@@ -9853,6 +9861,13 @@ function renderComparison() {
   function avgRow(vals, fmt) {
     const clean = vals.filter(v=>v&&!isNaN(v));
     return clean.length > 0 ? fmt(clean.reduce((s,v)=>s+parseFloat(v),0)/clean.length) : '—';
+  }
+  // Like avgRow, but 0 counts as real data (physical metrics: shrink %, drift...).
+  // Only null / undefined / non-numeric are excluded. Fixes the zero-drop bias
+  // that overstated averages (e.g. legit 0% transit rows were silently dropped).
+  function avgRow0(vals, fmt) {
+    const clean = vals.map(v => parseFloat(v)).filter(v => !isNaN(v));
+    return clean.length > 0 ? fmt(clean.reduce((s,v)=>s+v,0)/clean.length) : '&mdash;';
   }
 
   // ── HISTORY SORT + PAGINATION HELPERS ──
@@ -9931,6 +9946,113 @@ function renderComparison() {
   }
   updateSortIndicators();
 
+  // -- MODE ANNOTATION (per render) --------------------------------------
+  // Snapshots don't store freight mode; resolve it from the linked order
+  // (same pattern as insAnnotate). No order found -> 'sea', matching Insights.
+  const modeOf = {};
+  data.forEach(function(x){
+    let m = 'sea';
+    try {
+      const o = (typeof findOrderForPo === 'function') ? findOrderForPo(x.po) : null;
+      if (o && o.mode === 'air') m = 'air';
+    } catch(e) {}
+    modeOf[x.po] = m;
+  });
+  const modeChip = function(po){
+    const m = modeOf[po] || 'sea';
+    return ' <span class="invm-mc ' + m + '" style="font-size:8px;padding:0 4px;vertical-align:1px">' + m.toUpperCase() + '</span>';
+  };
+
+  // -- FOB vs FORMAL MARKET (Market Intel reuse, memoized per render) -----
+  // Each saved container with a linked order is compared against the
+  // lbs-weighted formal-market median of ITS OWN purchase week and mode
+  // (mibBandStats). Sea and air are never compared to each other.
+  const fobCtx = (function(){
+    try {
+      if (typeof mibMyPOs !== 'function' || typeof mibBandStats !== 'function'
+          || typeof isoWk !== 'function' || typeof mibParseDate !== 'function'
+          || typeof findOrderForPo !== 'function') return {};
+      const wkSet = {};
+      data.forEach(function(x){
+        const o = findOrderForPo(x.po); if(!o) return;
+        const ds = o.etdActual || o.etdEstimated || o.arrivalActual || o.arrivalEstimated;
+        if(!ds) return;
+        wkSet[isoWk(mibParseDate(String(ds).slice(0,10)))] = 1;
+      });
+      const weeks = Object.keys(wkSet);
+      if(!weeks.length) return {};
+      const stats = { Sea: mibBandStats(weeks,'Sea','Formal'), Air: mibBandStats(weeks,'Air','Formal') };
+      const map = {};
+      mibMyPOs(weeks, {includeCancelled:true}).forEach(function(p){
+        const st = (stats[p.mode] || {})[p.wk] || null;
+        map[p.po] = { fobLb: p.fobLb, mode: p.mode, wk: p.wk, band: st,
+                      delta: (st && st.med != null) ? (p.fobLb - st.med) : null };
+      });
+      return map;
+    } catch(e) { return {}; }
+  })();
+  const fmtFobDelta = function(v){
+    return (v > 0 ? '+' : v < 0 ? '&minus;' : '') + '$' + Math.abs(v).toFixed(3);
+  };
+  const fobCell = function(po){
+    const f = fobCtx[po];
+    if (!f) return cell('&mdash;');
+    if (f.delta == null) {
+      return '<td title="Wk ' + f.wk + ' &middot; my FOB $' + f.fobLb.toFixed(3) + '/lb &middot; no formal ' + f.mode.toLowerCase() + ' band this week" style="padding:6px 10px;text-align:right;border-bottom:1px solid var(--gray-100);color:var(--gray-300)">&mdash;</td>';
+    }
+    const d = f.delta;
+    const color = d <= -0.005 ? 'var(--green-600)' : d >= 0.005 ? 'var(--red-600)' : 'var(--gray-500)';
+    const b = f.band;
+    const ttl = 'Wk ' + f.wk + ' &middot; formal ' + f.mode.toLowerCase() + ' band $' + b.p25.toFixed(2) + '&ndash;$' + b.p75.toFixed(2) + ' (med $' + b.med.toFixed(2) + ') &middot; my FOB $' + f.fobLb.toFixed(3) + '/lb';
+    return '<td title="' + ttl + '" style="padding:6px 10px;text-align:right;border-bottom:1px solid var(--gray-100);color:' + color + ';font-weight:600">' + fmtFobDelta(d) + '</td>';
+  };
+
+  // -- SUPPLIER ROLLUP (only when a single supplier is filtered) ----------
+  (function(){
+    const el = document.getElementById('hist-sup-rollup');
+    if(!el) return;
+    if(!supSel || data.length === 0) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    const proc = data.filter(function(x){ return !x.rejected && !x.soldAsIs; });
+    const wAvgOf = function(rows, vk, wk){
+      let n = 0, d = 0;
+      rows.forEach(function(x){
+        const v = parseFloat(x[vk]), w = parseFloat(x[wk]);
+        if(!isNaN(v) && !isNaN(w) && w > 0){ n += v * w; d += w; }
+      });
+      return d > 0 ? n / d : null;
+    };
+    const sAvgOf = function(rows, vk){
+      const c = rows.map(function(x){ return parseFloat(x[vk]); }).filter(function(v){ return !isNaN(v); });
+      return c.length ? c.reduce(function(s,v){ return s + v; }, 0) / c.length : null;
+    };
+    const margW = wAvgOf(proc, 'netMargin', 'lbsIn');
+    const shrW  = wAvgOf(proc, 'whShrinkPct', 'realArrLbs');
+    const mold  = sAvgOf(data, 'moldPct');
+    const drows = data.filter(function(x){ return x.etaDriftDays != null; });
+    const drift = sAvgOf(drows, 'etaDriftDays');
+    const rej   = data.filter(function(x){ return x.rejected; }).length;
+    const fin   = data.filter(function(x){ return x.pnlFinal; }).length;
+    const dels  = data.map(function(x){ return fobCtx[x.po]; })
+                      .filter(function(f){ return f && f.delta != null; })
+                      .map(function(f){ return f.delta; });
+    const fobD  = dels.length ? dels.reduce(function(s,v){ return s + v; }, 0) / dels.length : null;
+    const kpi = function(label, val, color, title){
+      return '<div title="' + (title || '') + '" style="flex:1;min-width:112px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:8px 12px;box-shadow:var(--shadow-xs);cursor:help">'
+        + '<div style="font-size:9px;font-weight:700;color:var(--gray-400);font-family:var(--fm);text-transform:uppercase;letter-spacing:.06em">' + label + '</div>'
+        + '<div style="font-size:16px;font-weight:700;font-family:var(--fm);color:' + (color || 'var(--gray-800)') + ';margin-top:2px">' + val + '</div></div>';
+    };
+    el.innerHTML = '<div style="display:flex;gap:10px;flex-wrap:wrap">'
+      + kpi('Containers', String(data.length) + (rej ? ' <span style="font-size:10px;color:var(--red-600)">(' + rej + ' rej)</span>' : ''), null, 'Saved containers for this supplier under the current filters')
+      + kpi('Margin &middot; lbs-wtd', margW == null ? '&mdash;' : margW.toFixed(1) + '%', margW == null ? null : (margW > 18 ? 'var(--green-600)' : margW > 10 ? 'var(--amber-600)' : 'var(--red-600)'), 'Net margin weighted by received lbs. Rejected and flow-through excluded.')
+      + kpi('WH shrink &middot; lbs-wtd', shrW == null ? '&mdash;' : shrW.toFixed(1) + '%', shrW == null ? null : (shrW < 10 ? 'var(--green-600)' : shrW < 15 ? 'var(--amber-600)' : 'var(--red-600)'), 'Warehouse shrink weighted by real-arrival lbs. Rejected and flow-through excluded. Zeros count as data.')
+      + kpi('Crit defects', mold == null ? '&mdash;' : mold.toFixed(1) + '%', null, 'Average critical-defect % at arrival, all rows incl. rejected')
+      + kpi('ETA drift', drift == null ? '&mdash;' : (drift > 0 ? '+' : '') + drift.toFixed(1) + 'd', drift == null ? null : (drift > 7 ? 'var(--red-600)' : drift > 3 ? 'var(--amber-600)' : 'var(--green-600)'), 'Average arrival delay vs first promised ETA (' + drows.length + ' of ' + data.length + ' rows with a linked order)')
+      + kpi('FOB vs mkt', fobD == null ? '&mdash;' : fmtFobDelta(fobD), fobD == null ? null : (fobD <= -0.005 ? 'var(--green-600)' : fobD >= 0.005 ? 'var(--red-600)' : 'var(--gray-600)'), 'Average FOB $/lb gap vs the formal-market median of each PO&#39;s own week and mode (' + dels.length + ' of ' + data.length + ' with band data)')
+      + kpi('P&amp;L final', fin + ' / ' + data.length, null, 'Containers whose P&amp;L is marked final (credit chapter settled)')
+      + '</div>';
+    el.style.display = 'block';
+  })();
+
   // Completeness badge
   function statusBadge(x) {
     const hasOps = x.lbsOut > 0 || x.netSales > 0;
@@ -9943,13 +10065,21 @@ function renderComparison() {
       const reasonAttr = x.soldAsIsReason ? ' title="'+String(x.soldAsIsReason).replace(/"/g,'&quot;')+'"' : '';
       return '<span'+reasonAttr+' style="font-size:9px;font-weight:700;font-family:var(--fm);padding:1px 6px;border-radius:3px;background:var(--purple-500);color:#fff;border:1px solid var(--purple-500);cursor:help">Flow-through</span>';
     }
-    if(hasOps) return '<span style="font-size:9px;font-weight:700;font-family:var(--fm);padding:1px 6px;border-radius:3px;background:var(--green-50);color:var(--green-700);border:1px solid var(--green-200)">Complete</span>';
+    if(hasOps) {
+      if(x.pnlFinal) return '<span title="Final P&amp;L &mdash; credit chapter settled, figures locked" style="font-size:9px;font-weight:700;font-family:var(--fm);padding:1px 6px;border-radius:3px;background:var(--green-600);color:#fff;border:1px solid var(--green-600);cursor:help">Final</span>';
+      return '<span title="Sales recorded but P&amp;L not yet final &mdash; figures may still change" style="font-size:9px;font-weight:700;font-family:var(--fm);padding:1px 6px;border-radius:3px;background:var(--blue-50);color:var(--blue-700);border:1px solid var(--blue-200);cursor:help">Provisional</span>';
+    }
     return '<span style="font-size:9px;font-weight:700;font-family:var(--fm);padding:1px 6px;border-radius:3px;background:var(--amber-50);color:var(--amber-700);border:1px solid var(--amber-200)">Arrival only</span>';
   }
 
-  // Delete button only in history rows
-  function delBtn(po) {
-    return '<td style="padding:4px 6px;border-bottom:1px solid var(--gray-100);text-align:center">'
+  // Row actions: optional Drive-folder link (source PDFs) + delete
+  function delBtn(po, drive) {
+    const safe = (drive && /^https?:\/\//i.test(String(drive))) ? String(drive).replace(/"/g,'&quot;') : '';
+    const link = safe
+      ? '<a href="'+safe+'" target="_blank" rel="noopener" title="Open source documents (Drive folder)" style="text-decoration:none;color:var(--gray-300);font-size:12px;margin-right:3px">&#128193;</a>'
+      : '';
+    return '<td style="padding:4px 6px;border-bottom:1px solid var(--gray-100);text-align:center;white-space:nowrap">'
+      + link
       +'<button onclick="deleteFromHistory(\''+po+'\')" title="Delete" style="background:none;border:none;color:var(--gray-300);cursor:pointer;font-size:14px;padding:0 3px">&times;</button>'
       +'</td>';
   }
@@ -9982,8 +10112,8 @@ function renderComparison() {
       return hasOps ? 'border-left:3px solid var(--green-500)' : 'border-left:3px solid var(--amber-400)';
     };
     b1.innerHTML = pag1.visible.map(x => '<tr style="'+rowBar(x)+'">'
-      +cell(x.po||'—','left')
-      +cell(x.vendor||'—','left')
+      +cell((x.po||'&mdash;')+modeChip(x.po),'left')
+      +cell((x.vendor||'&mdash;')+(x.incoterm?' <span style="font-size:9px;color:var(--gray-400);font-family:var(--fm)">'+x.incoterm+'</span>':''),'left')
       +cell(x.arrival||'—','left')
       +'<td style="padding:6px 10px;text-align:center;border-bottom:1px solid var(--gray-100)">'+statusBadge(x)+'</td>'
       +cell(fmtC(x.netSales))
@@ -9992,19 +10122,30 @@ function renderComparison() {
       +cell(fmtP(x.netMargin),'right',x.netMargin>18?'var(--green-600)':x.netMargin>10?'var(--amber-600)':'var(--red-600)')
       +cell(salePriceCaseOf(x)?'$'+(salePriceCaseOf(x)).toFixed(2):'—')
       +cell(trueCostCaseOf(x)? '$'+(trueCostCaseOf(x) ).toFixed(2):'—')
-      +delBtn(x.po)
+      +fobCell(x.po)
+      +delBtn(x.po, x.driveFolder)
       +'</tr>'
-    ).join('') + expanderRow('s1', pag1.hiddenCount, 11);
+    ).join('') + expanderRow('s1', pag1.hiddenCount, 12);
     // Footer AVG uses ALL filtered rows (not just the visible page)
-    if(f1) f1.innerHTML = '<tr style="background:#eaf2fb;border-top:2px solid var(--gray-200);font-weight:700;color:var(--gray-800)">'
-      +'<td colspan="4" style="padding:8px 10px;text-transform:uppercase;letter-spacing:.05em;font-size:10px">Avg ('+allRows1.length+' containers)</td>'
-      +cell(avgRow(allRows1.map(x=>x.netSales),fmtC))
-      +cell(avgRow(allRows1.map(x=>x.totalCosts),fmtC))
-      +cell(avgRow(allRows1.map(x=>x.netProfit),fmtC))
-      +cell(avgRow(allRows1.map(x=>x.netMargin),fmtP))
-      +cell(avgRow(allRows1.map(salePriceCaseOf),v=>'$'+parseFloat(v).toFixed(2)))
-      +cell(avgRow(allRows1.map(trueCostCaseOf ),v=>'$'+parseFloat(v).toFixed(2)))
-      +'<td></td></tr>';
+    if(f1) {
+      const foot1 = function(rows, label){
+        const rj = rows.filter(function(x){ return x.rejected; }).length;
+        return '<tr style="background:#eaf2fb;border-top:2px solid var(--gray-200);font-weight:700;color:var(--gray-800)">'
+          +'<td colspan="4" style="padding:8px 10px;text-transform:uppercase;letter-spacing:.05em;font-size:10px">'+label+' ('+rows.length+' containers'+(rj?' &middot; incl. '+rj+' rejected':'')+')</td>'
+          +cell(avgRow(rows.map(x=>x.netSales),fmtC))
+          +cell(avgRow(rows.map(x=>x.totalCosts),fmtC))
+          +cell(avgRow(rows.map(x=>x.netProfit),fmtC))
+          +cell(avgRow(rows.map(x=>x.netMargin),fmtP))
+          +cell(avgRow(rows.map(salePriceCaseOf),v=>'$'+parseFloat(v).toFixed(2)))
+          +cell(avgRow(rows.map(trueCostCaseOf ),v=>'$'+parseFloat(v).toFixed(2)))
+          +cell(avgRow0(rows.map(function(x){ const f=fobCtx[x.po]; return (f && f.delta!=null)?f.delta:null; }), fmtFobDelta))
+          +'<td></td></tr>';
+      };
+      const sea1 = allRows1.filter(function(x){ return modeOf[x.po] !== 'air'; });
+      const air1 = allRows1.filter(function(x){ return modeOf[x.po] === 'air'; });
+      f1.innerHTML = (sea1.length ? foot1(sea1, 'Avg &middot; sea') : '')
+                   + (air1.length ? foot1(air1, 'Avg &middot; air') : '');
+    }
   }
 
   // ── SECTION 2: Weight & Yield ──
@@ -10039,7 +10180,7 @@ function renderComparison() {
       const wPct  = declared > 0 ? Math.min(25, (x.whShrink||0)     / declared * 100) : 0;
       const oPct  = Math.max(0, 100 - tPct - wPct);
       const bar = declared > 0 ?
-        '<tr style="'+rowBar(x)+'"><td colspan="13" style="padding:0 8px 10px 8px;background:transparent">'
+        '<tr style="'+rowBar(x)+'"><td colspan="15" style="padding:0 8px 10px 8px;background:transparent">'
           +'<div style="display:flex;width:100%;height:6px;border-radius:3px;overflow:hidden;background:var(--gray-100)" title="Declared → Transit loss → Warehouse shrink → Packed out">'
             +(tPct>0?'<div style="width:'+tPct+'%;background:var(--amber-400)" title="Transit shrink '+fmtP(x.transitPct)+'"></div>':'')
             +(wPct>0?'<div style="width:'+wPct+'%;background:var(--red-400)"   title="Warehouse shrink '+fmtP(x.whShrinkPct)+'"></div>':'')
@@ -10049,7 +10190,7 @@ function renderComparison() {
       // Critical defects % color: green ≤3%, amber 3–5%, red >5%
       const moldColor = x.moldPct > 5 ? 'var(--red-600)' : x.moldPct > 3 ? 'var(--amber-600)' : x.moldPct > 0 ? 'var(--green-600)' : '';
       return '<tr style="'+rowBar(x)+'">'
-        +cell(x.po||'—','left')
+        +cell((x.po||'&mdash;')+modeChip(x.po),'left')
         +cell(x.vendor||'—','left')
         +cellR(x.arrival||'—','left')
         +cellR(x.moldPct > 0 ? fmtP(x.moldPct) : '—','right', moldColor)
@@ -10062,23 +10203,40 @@ function renderComparison() {
         +cellR(x.dailyShrinkPct?fmtN2(x.dailyShrinkPct)+'%':'—','right',x.dailyShrinkPct<0.4?'var(--green-600)':x.dailyShrinkPct<0.7?'var(--amber-600)':'var(--red-600)')
         +cell(fmtP(x.yieldPct),'right',x.yieldPct>91?'var(--green-600)':x.yieldPct>88?'var(--amber-600)':'var(--red-600)')
         +cell(x.days||'—')
+        +cell(x.etaDriftDays==null?'&mdash;':((x.etaDriftDays>0?'+':'')+x.etaDriftDays+'d'),'right',x.etaDriftDays==null?'':(x.etaDriftDays>7?'var(--red-600)':x.etaDriftDays>3?'var(--amber-600)':'var(--green-600)'))
+        +cell((!x.rejected && !x.soldAsIs && x.holdingCostDay)?('$'+parseFloat(x.holdingCostDay).toFixed(0)):'&mdash;','right')
         +'</tr>'
         +bar;
-    }).join('') + expanderRow('s2', pag2.hiddenCount, 13);
+    }).join('') + expanderRow('s2', pag2.hiddenCount, 15);
     // Footer AVG uses ALL filtered rows
-    if(f2) f2.innerHTML = '<tr style="background:#eaf2fb;border-top:2px solid var(--gray-200);font-weight:700;color:var(--gray-800)">'
-      +'<td colspan="3" style="padding:8px 10px;font-size:11px;border-right:1px solid var(--gray-200);text-transform:uppercase;letter-spacing:.05em;font-size:10px">Avg</td>'
-      +cellR(avgRow(allRows2.map(x=>x.moldPct),fmtP))
-      +cell(avgRow(allRows2.map(x=>x.declaredLbs),fmtK))
-      +cell(avgRow(allRows2.map(x=>x.transitShrink),fmtK))
-      +cellR(avgRow(allRows2.map(x=>x.transitPct),fmtP))
-      +cell(avgRow(allRows2.map(x=>x.realArrLbs),fmtK))
-      +cell(avgRow(allRows2.map(x=>x.whShrink),fmtK))
-      +cell(avgRow(allRows2.map(x=>x.whShrinkPct),fmtP))
-      +cellR(avgRow(allRows2.map(x=>x.dailyShrinkPct),v=>parseFloat(v).toFixed(2)+'%'))
-      +cell(avgRow(allRows2.map(x=>x.yieldPct),fmtP))
-      +cell(avgRow(allRows2.map(x=>x.days),fmtN2))
-      +'</tr>';
+    if(f2) {
+      const fp0 = function(v){ return parseFloat(v).toFixed(1) + '%'; };
+      const fk0 = function(v){ return Math.round(v).toLocaleString('en-US'); };
+      const foot2 = function(rows, label){
+        // Quality & transit stats: all rows. Warehouse & outcome stats:
+        // processed rows only (rejected / flow-through are N/A, not zeros).
+        const proc = rows.filter(function(x){ return !x.rejected && !x.soldAsIs; });
+        return '<tr style="background:#eaf2fb;border-top:2px solid var(--gray-200);font-weight:700;color:var(--gray-800)">'
+          +'<td colspan="3" title="Quality &amp; transit averages use all rows (zeros count as data). Warehouse &amp; outcome averages use processed rows only &mdash; rejected and flow-through excluded." style="padding:8px 10px;border-right:1px solid var(--gray-200);text-transform:uppercase;letter-spacing:.05em;font-size:10px;cursor:help">'+label+' ('+rows.length+')</td>'
+          +cellR(avgRow0(rows.map(x=>x.moldPct),fp0))
+          +cell(avgRow0(rows.map(x=>x.declaredLbs),fk0))
+          +cell(avgRow0(rows.map(x=>x.transitShrink),fk0))
+          +cellR(avgRow0(rows.map(x=>x.transitPct),fp0))
+          +cell(avgRow0(rows.map(x=>x.realArrLbs),fk0))
+          +cell(avgRow0(proc.map(x=>x.whShrink),fk0))
+          +cell(avgRow0(proc.map(x=>x.whShrinkPct),fp0))
+          +cellR(avgRow0(proc.map(x=>x.dailyShrinkPct),function(v){ return parseFloat(v).toFixed(2) + '%'; }))
+          +cell(avgRow0(proc.map(x=>x.yieldPct),fp0))
+          +cell(avgRow0(proc.map(x=>x.days),function(v){ return parseFloat(v).toFixed(1); }))
+          +cell(avgRow0(rows.filter(function(x){ return x.etaDriftDays!=null; }).map(x=>x.etaDriftDays),function(v){ return (v>0?'+':'')+parseFloat(v).toFixed(1)+'d'; }))
+          +cell(avgRow0(proc.map(x=>x.holdingCostDay),function(v){ return '$'+parseFloat(v).toFixed(0); }))
+          +'</tr>';
+      };
+      const sea2 = allRows2.filter(function(x){ return modeOf[x.po] !== 'air'; });
+      const air2 = allRows2.filter(function(x){ return modeOf[x.po] === 'air'; });
+      f2.innerHTML = (sea2.length ? foot2(sea2, 'Avg &middot; sea') : '')
+                   + (air2.length ? foot2(air2, 'Avg &middot; air') : '');
+    }
   }
 
   // ── SECTION 3: Landed costs ──
@@ -10096,8 +10254,8 @@ function renderComparison() {
       const c = x.costs || {};
       const total = Object.values(c).reduce((s,v)=>s+v,0);
       return '<tr style="'+rowBar3(x)+'">'
-        +cell(x.po||'—','left')
-        +cell(x.vendor||'—','left')
+        +cell((x.po||'&mdash;')+modeChip(x.po),'left')
+        +cell((x.vendor||'&mdash;')+(x.incoterm?' <span style="font-size:9px;color:var(--gray-400);font-family:var(--fm)">'+x.incoterm+'</span>':''),'left')
         +cell(x.arrival||'—','left')
         +cell(fmtC(total))
         +COST_CATS.map(cat=>cell(fmtC(c[cat]))).join('')
@@ -10105,14 +10263,20 @@ function renderComparison() {
     }).join('') + expanderRow('s3', pag3.hiddenCount, 12);
     // Footer AVG uses ALL filtered rows
     if(f3) {
-      const totals = {};
-      data.forEach(x=>{ const c=x.costs||{}; COST_CATS.forEach(cat=>{ totals[cat]=(totals[cat]||0)+(c[cat]||0); }); });
-      const gt = Object.values(totals).reduce((s,v)=>s+v,0);
-      f3.innerHTML = '<tr style="background:#eaf2fb;border-top:2px solid var(--gray-200);font-weight:700;color:var(--gray-800)">'
-        +'<td colspan="3" style="padding:8px 10px;text-transform:uppercase;letter-spacing:.05em;font-size:10px">Avg</td>'
-        +cell(fmtC(gt/data.length))
-        +COST_CATS.map(cat=>cell(fmtC(totals[cat]/data.length))).join('')
-        +'</tr>';
+      const foot3 = function(rows, label){
+        const totals = {};
+        rows.forEach(function(x){ const c = x.costs || {}; COST_CATS.forEach(function(cat){ totals[cat] = (totals[cat] || 0) + (c[cat] || 0); }); });
+        const gt = Object.values(totals).reduce(function(s,v){ return s + v; }, 0);
+        return '<tr style="background:#eaf2fb;border-top:2px solid var(--gray-200);font-weight:700;color:var(--gray-800)">'
+          +'<td colspan="3" style="padding:8px 10px;text-transform:uppercase;letter-spacing:.05em;font-size:10px">'+label+' ('+rows.length+')</td>'
+          +cell(fmtC(gt/rows.length))
+          +COST_CATS.map(function(cat){ return cell(fmtC(totals[cat]/rows.length)); }).join('')
+          +'</tr>';
+      };
+      const sea3 = data.filter(function(x){ return modeOf[x.po] !== 'air'; });
+      const air3 = data.filter(function(x){ return modeOf[x.po] === 'air'; });
+      f3.innerHTML = (sea3.length ? foot3(sea3, 'Avg &middot; sea') : '')
+                   + (air3.length ? foot3(air3, 'Avg &middot; air') : '');
     }
   }
 
@@ -10155,7 +10319,7 @@ function renderComparison() {
       // Crit defects (mold %) — color matches Weight & Yield convention
       const moldColor = x.moldPct > 5 ? 'var(--red-600)' : x.moldPct > 3 ? 'var(--amber-600)' : x.moldPct > 0 ? 'var(--green-600)' : '';
       return '<tr style="'+rowBar4(x)+'">'
-        +cell(x.po||'—','left')
+        +cell((x.po||'&mdash;')+modeChip(x.po),'left')
         +cell(x.vendor||'—','left')
         +cell(x.arrival||'—','left')
         +cell(x.moldPct > 0 ? fmtP(x.moldPct) : '—', 'right', moldColor)
@@ -10166,13 +10330,22 @@ function renderComparison() {
         +'</tr>';
     }).join('') + expanderRow('s4', pag4.hiddenCount, 8);
     // Footer AVG uses ALL filtered rows
-    if(f4) f4.innerHTML = '<tr style="background:#eaf2fb;border-top:2px solid var(--gray-200);font-weight:700;color:var(--gray-800)">'
-      +'<td colspan="3" style="padding:8px 10px;text-transform:uppercase;letter-spacing:.05em;font-size:10px">Avg</td>'
-      +cell(avgRow(allRows4.map(x=>x.moldPct),fmtP))
-      +'<td></td>'
-      +cell(avgRow(allRows4.map(x=>x.creditCalc),fmtC))
-      +cell(avgRow(allRows4.map(x=>x.creditAgreed),fmtC))
-      +'<td></td></tr>';
+    if(f4) {
+      const fc0 = function(v){ return '$' + Math.round(v).toLocaleString('en-US'); };
+      const foot4 = function(rows, label){
+        return '<tr style="background:#eaf2fb;border-top:2px solid var(--gray-200);font-weight:700;color:var(--gray-800)">'
+          +'<td colspan="3" style="padding:8px 10px;text-transform:uppercase;letter-spacing:.05em;font-size:10px">'+label+' ('+rows.length+')</td>'
+          +cell(avgRow0(rows.map(x=>x.moldPct),function(v){ return parseFloat(v).toFixed(1)+'%'; }))
+          +'<td></td>'
+          +cell(avgRow0(rows.map(x=>x.creditCalc),fc0))
+          +cell(avgRow(rows.map(x=>x.creditAgreed),fmtC))
+          +'<td></td></tr>';
+      };
+      const sea4 = allRows4.filter(function(x){ return modeOf[x.po] !== 'air'; });
+      const air4 = allRows4.filter(function(x){ return modeOf[x.po] === 'air'; });
+      f4.innerHTML = (sea4.length ? foot4(sea4, 'Avg &middot; sea') : '')
+                   + (air4.length ? foot4(air4, 'Avg &middot; air') : '');
+    }
   }
   // Note: Insights tab has its own independent filter state, so we do NOT
   // re-render it when History filters change.
