@@ -3639,6 +3639,11 @@ function authInjectLogo() {
 
       <button onclick="clearInsFilters()" style="height:30px;padding:0 10px;border:1px solid var(--gray-200);border-radius:var(--r);font-size:11px;background:var(--white);color:var(--gray-500);cursor:pointer;font-family:var(--fb)">Clear all</button>
 
+      <div style="display:flex;border:1px solid var(--gray-200);border-radius:var(--r);overflow:hidden;margin-left:4px" title="Sea and air are never averaged together">
+        <button id="ins-mode-sea" onclick="setInsMode('sea')" style="height:28px;padding:0 12px;border:none;cursor:pointer;font-size:11px;font-family:var(--fb);font-weight:700;background:var(--jlz-light);color:var(--green-700)">&#128674; Sea</button>
+        <button id="ins-mode-air" onclick="setInsMode('air')" style="height:28px;padding:0 12px;border:none;border-left:1px solid var(--gray-200);cursor:pointer;font-size:11px;font-family:var(--fb);font-weight:600;background:var(--white);color:var(--gray-500)">&#9992; Air</button>
+      </div>
+
       <div style="margin-left:auto;font-size:11px;color:var(--gray-400);font-family:var(--fm)" id="ins-count"></div>
     </div>
   </div>
@@ -3650,38 +3655,126 @@ function authInjectLogo() {
 
   <div id="insights-content">
 
-    <!-- ── KPI STRIP — 4 cards ── -->
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
+    <!-- KPI STRIP - 5 cards, lbs-weighted where it matters -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px">
       <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:14px 16px;box-shadow:var(--shadow-xs)">
-        <div style="font-size:10px;font-weight:700;color:var(--gray-400);font-family:var(--fm);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Total Containers</div>
-        <div style="font-family:var(--fd);font-size:26px;font-weight:800;color:var(--gray-800)" id="kpi-count">—</div>
-        <div style="font-size:10px;color:var(--gray-500);font-family:var(--fm);margin-top:2px" id="kpi-count-sub">—</div>
+        <div style="font-size:10px;font-weight:700;color:var(--gray-400);font-family:var(--fm);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Containers</div>
+        <div style="font-family:var(--fd);font-size:26px;font-weight:800;color:var(--gray-800)" id="kpi-count">&mdash;</div>
+        <div style="font-size:10px;color:var(--gray-500);font-family:var(--fm);margin-top:2px" id="kpi-count-sub">&mdash;</div>
       </div>
       <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:14px 16px;box-shadow:var(--shadow-xs)">
-        <div style="font-size:10px;font-weight:700;color:var(--gray-400);font-family:var(--fm);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">AVG Margin</div>
-        <div style="font-family:var(--fd);font-size:26px;font-weight:800;color:var(--jlz)" id="kpi-margin">—</div>
-        <div style="font-size:10px;color:var(--gray-500);font-family:var(--fm);margin-top:2px" id="kpi-margin-sub">—</div>
+        <div style="font-size:10px;font-weight:700;color:var(--gray-400);font-family:var(--fm);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Lbs moved</div>
+        <div style="font-family:var(--fd);font-size:26px;font-weight:800;color:var(--gray-800)" id="kpi-lbs">&mdash;</div>
+        <div style="font-size:10px;color:var(--gray-500);font-family:var(--fm);margin-top:2px" id="kpi-lbs-sub">&mdash;</div>
       </div>
       <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:14px 16px;box-shadow:var(--shadow-xs)">
-        <div style="font-size:10px;font-weight:700;color:var(--gray-400);font-family:var(--fm);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Total Net Profit</div>
-        <div style="font-family:var(--fd);font-size:26px;font-weight:800;color:var(--green-700)" id="kpi-profit">—</div>
-        <div style="font-size:10px;color:var(--gray-500);font-family:var(--fm);margin-top:2px" id="kpi-profit-sub">—</div>
+        <div style="font-size:10px;font-weight:700;color:var(--gray-400);font-family:var(--fm);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Margin</div>
+        <div style="font-family:var(--fd);font-size:26px;font-weight:800;color:var(--jlz)" id="kpi-margin">&mdash;</div>
+        <div style="font-size:10px;color:var(--gray-500);font-family:var(--fm);margin-top:2px" id="kpi-margin-sub">&mdash;</div>
+      </div>
+      <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:14px 16px;box-shadow:var(--shadow-xs)">
+        <div style="font-size:10px;font-weight:700;color:var(--gray-400);font-family:var(--fm);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Total net profit</div>
+        <div style="font-family:var(--fd);font-size:26px;font-weight:800;color:var(--green-700)" id="kpi-profit">&mdash;</div>
+        <div style="font-size:10px;color:var(--gray-500);font-family:var(--fm);margin-top:2px" id="kpi-profit-sub">&mdash;</div>
       </div>
       <div style="background:var(--amber-50);border:1px solid var(--amber-200);border-radius:var(--r);padding:14px 16px;box-shadow:var(--shadow-xs)">
-        <div style="font-size:10px;font-weight:700;color:var(--amber-700);font-family:var(--fm);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Money Left on Table</div>
-        <div style="font-family:var(--fd);font-size:26px;font-weight:800;color:var(--amber-700)" id="kpi-leftover">—</div>
-        <div style="font-size:10px;color:var(--amber-700);font-family:var(--fm);margin-top:2px" id="kpi-leftover-sub">—</div>
+        <div style="font-size:10px;font-weight:700;color:var(--amber-700);font-family:var(--fm);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Credit gap</div>
+        <div style="font-family:var(--fd);font-size:26px;font-weight:800;color:var(--amber-700)" id="kpi-leftover">&mdash;</div>
+        <div style="font-size:10px;color:var(--amber-700);font-family:var(--fm);margin-top:2px" id="kpi-leftover-sub">&mdash;</div>
       </div>
     </div>
 
-    <!-- ── TRENDS OVER TIME ── -->
+    <!-- SHELF-LIFE BY SUPPLIER - the headline question -->
     <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:16px;box-shadow:var(--shadow-xs);margin-bottom:20px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-        <div style="width:24px;height:24px;border-radius:5px;background:var(--green-50);color:var(--green-700);display:flex;align-items:center;justify-content:center;font-size:13px">📈</div>
+        <div style="width:24px;height:24px;border-radius:5px;background:var(--green-50);color:var(--green-700);display:flex;align-items:center;justify-content:center;font-size:13px">&#9203;</div>
+        <span style="font-size:13px;font-weight:700;color:var(--gray-800);font-family:var(--fb)">Shelf-life by supplier</span>
+        <span style="font-size:10px;color:var(--gray-400);font-family:var(--fm);margin-left:auto">whose product holds in the warehouse</span>
+      </div>
+      <p style="margin:0 0 12px 0;font-size:11px;color:var(--gray-500);font-family:var(--fb)">Daily shrink rate, lbs-weighted &mdash; total shrink would just reward whoever sells fastest. Suppliers rank with a minimum of 3 containers; names are grouped by SUNAT raz&oacute;n social.</p>
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11px;min-width:620px">
+          <thead>
+            <tr style="background:var(--gray-50);border-bottom:2px solid var(--gray-200)">
+              <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--gray-500)">Supplier</th>
+              <th style="padding:8px 10px;text-align:right;font-weight:600;color:var(--gray-500)">n</th>
+              <th style="padding:8px 10px;text-align:right;font-weight:600;color:var(--gray-500)">Lbs</th>
+              <th style="padding:8px 10px;text-align:right;font-weight:600;color:var(--gray-500)">Shrink / day</th>
+              <th style="padding:8px 10px;text-align:right;font-weight:600;color:var(--gray-500)">Mold at arrival</th>
+              <th style="padding:8px 10px;text-align:right;font-weight:600;color:var(--gray-500)">Transit gap</th>
+              <th style="padding:8px 10px;text-align:right;font-weight:600;color:var(--gray-500)">AVG days held</th>
+              <th style="padding:8px 10px;text-align:center;font-weight:600;color:var(--gray-500)">Hold</th>
+            </tr>
+          </thead>
+          <tbody id="shelf-life-body"></tbody>
+        </table>
+      </div>
+      <div id="shelf-verdict" style="display:none;margin-top:12px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:var(--r);padding:10px 14px;font-size:11.5px;color:var(--gray-600);font-family:var(--fb);line-height:1.55"></div>
+    </div>
+
+    <!-- MARGIN DECAY - does product lose value with days held, and whose slower -->
+    <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:16px;box-shadow:var(--shadow-xs);margin-bottom:20px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <div style="width:24px;height:24px;border-radius:5px;background:var(--blue-50);color:var(--blue-600);display:flex;align-items:center;justify-content:center;font-size:13px">&#128201;</div>
+        <span style="font-size:13px;font-weight:700;color:var(--gray-800);font-family:var(--fb)">Margin decay by days in warehouse</span>
+        <span style="font-size:10px;color:var(--gray-400);font-family:var(--fm);margin-left:auto">flatter slope = product holds value</span>
+      </div>
+      <p style="margin:0 0 10px 0;font-size:11px;color:var(--gray-500);font-family:var(--fb)">Each point is one container. Trend lines need 5+ containers; the fit badge tells you how much to trust the slope.</p>
+      <div id="decay-legend" style="font-size:10.5px;font-family:var(--fm);color:var(--gray-600);margin-bottom:8px;line-height:2"></div>
+      <div id="decay-wrap" style="position:relative;width:100%;height:300px">
+        <canvas id="ins-decay-chart"></canvas>
+      </div>
+      <div id="decay-empty" style="display:none;text-align:center;padding:36px;color:var(--gray-300);font-size:11px;font-family:var(--fm)"></div>
+    </div>
+
+    <!-- STORAGE ECONOMICS - what a warehouse day costs -->
+    <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:16px;box-shadow:var(--shadow-xs);margin-bottom:20px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+        <div style="width:24px;height:24px;border-radius:5px;background:var(--amber-50);color:var(--amber-700);display:flex;align-items:center;justify-content:center;font-size:13px">&#128230;</div>
+        <span style="font-size:13px;font-weight:700;color:var(--gray-800);font-family:var(--fb)">Storage economics</span>
+        <span style="font-size:10px;color:var(--gray-400);font-family:var(--fm);margin-left:auto">what a warehouse day costs</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">
+        <div style="background:var(--gray-50);border:1px solid var(--gray-100);border-radius:var(--r);padding:12px 14px">
+          <div style="font-size:10px;font-weight:700;color:var(--gray-400);font-family:var(--fm);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Holding cost per container</div>
+          <div style="font-family:var(--fd);font-size:24px;font-weight:800;color:var(--gray-800)" id="store-holdcost">&mdash;</div>
+          <div style="font-size:10px;color:var(--gray-500);font-family:var(--fm);margin-top:2px">shrink value + cost of capital, lbs-weighted</div>
+        </div>
+        <div style="background:var(--gray-50);border:1px solid var(--gray-100);border-radius:var(--r);padding:12px 14px">
+          <div style="font-size:10px;font-weight:700;color:var(--gray-400);font-family:var(--fm);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Aging vs margin</div>
+          <div id="aging-buckets" style="display:flex;flex-direction:column;gap:5px;font-size:10.5px;font-family:var(--fm)"></div>
+        </div>
+        <div style="background:var(--gray-50);border:1px solid var(--gray-100);border-radius:var(--r);padding:12px 14px">
+          <div style="font-size:10px;font-weight:700;color:var(--gray-400);font-family:var(--fm);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Sell-by horizon</div>
+          <div style="font-size:11.5px;color:var(--gray-600);font-family:var(--fb);line-height:1.55" id="store-sellby">&mdash;</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ECONOMIC SCORECARD - all suppliers, dynamic columns -->
+    <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:16px;box-shadow:var(--shadow-xs);margin-bottom:20px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <div style="width:24px;height:24px;border-radius:5px;background:var(--blue-50);color:var(--blue-600);display:flex;align-items:center;justify-content:center;font-size:13px">&#128202;</div>
+        <span style="font-size:13px;font-weight:700;color:var(--gray-800);font-family:var(--fb)">Supplier economics</span>
+        <span style="font-size:10px;color:var(--gray-400);font-family:var(--fm);margin-left:auto">who costs you margin &mdash; incl. ETA drift from the Orders pipeline</span>
+      </div>
+      <p style="margin:0 0 12px 0;font-size:11px;color:var(--gray-500);font-family:var(--fb)">Margins lbs-weighted; credits include rejected and as-is containers (that is where claims live).</p>
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11px;min-width:620px" id="supp-scorecard">
+          <thead id="sc-head"></thead>
+          <tbody id="supp-scorecard-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- TRENDS OVER TIME -->
+    <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:16px;box-shadow:var(--shadow-xs);margin-bottom:20px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <div style="width:24px;height:24px;border-radius:5px;background:var(--green-50);color:var(--green-700);display:flex;align-items:center;justify-content:center;font-size:13px">&#128200;</div>
         <span style="font-size:13px;font-weight:700;color:var(--gray-800);font-family:var(--fb)">Trends over time</span>
         <span style="font-size:10px;color:var(--gray-400);font-family:var(--fm);margin-left:auto">month-over-month evolution</span>
       </div>
-      <p style="margin:0 0 12px 0;font-size:11px;color:var(--gray-500);font-family:var(--fb)">Trend arrow compares latest month vs first month shown. Color: green = improving, red = worsening, gray = stable.</p>
+      <p style="margin:0 0 12px 0;font-size:11px;color:var(--gray-500);font-family:var(--fb)">Lbs-weighted per month. Trend arrow compares latest month vs first month shown.</p>
       <div style="overflow-x:auto">
         <table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11px;min-width:600px" id="trends-table" class="sticky-first">
           <thead id="trends-head"></thead>
@@ -3693,53 +3786,12 @@ function authInjectLogo() {
       </div>
     </div>
 
-    <!-- ── SUPPLIER SCORECARD ── -->
-    <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:16px;box-shadow:var(--shadow-xs);margin-bottom:20px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-        <div style="width:24px;height:24px;border-radius:5px;background:var(--blue-50);color:var(--blue-600);display:flex;align-items:center;justify-content:center;font-size:13px">📊</div>
-        <span style="font-size:13px;font-weight:700;color:var(--gray-800);font-family:var(--fb)">Supplier Scorecard</span>
-        <span style="font-size:10px;color:var(--gray-400);font-family:var(--fm);margin-left:auto">side-by-side comparison</span>
-      </div>
-      <table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11px" id="supp-scorecard">
-        <thead>
-          <tr style="background:var(--gray-50);border-bottom:2px solid var(--gray-200)">
-            <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--gray-500)">Metric</th>
-            <th id="sc-col-anawi"     style="padding:8px 10px;text-align:right;font-weight:600;color:var(--gray-500)">Anawi USA. LLC</th>
-            <th id="sc-col-interloom" style="padding:8px 10px;text-align:right;font-weight:600;color:var(--gray-500)">Interloom SAC</th>
-          </tr>
-        </thead>
-        <tbody id="supp-scorecard-body"></tbody>
-      </table>
-    </div>
-
-    <!-- ── SUPPLIER RELIABILITY — ETA drift from the Orders pipeline ── -->
-    <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:16px;box-shadow:var(--shadow-xs);margin-bottom:20px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-        <div style="width:24px;height:24px;border-radius:5px;background:var(--amber-50);color:var(--amber-700);display:flex;align-items:center;justify-content:center;font-size:13px">&#9201;</div>
-        <span style="font-size:13px;font-weight:700;color:var(--gray-800);font-family:var(--fb)">Supplier reliability &mdash; ETA drift</span>
-        <span style="font-size:10px;color:var(--gray-400);font-family:var(--fm);margin-left:auto">from the Orders pipeline</span>
-      </div>
-      <p style="margin:0 0 12px 0;font-size:11px;color:var(--gray-500);font-family:var(--fb)">Avg drift = latest/actual ETA vs first promised ETA. On-time = drift &le; 2 days. Use the suggested buffer when planning order timing.</p>
-      <div style="overflow-x:auto">
-      <table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11px">
-        <thead><tr style="background:var(--gray-50);border-bottom:2px solid var(--gray-200)">
-          <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--gray-500)">Supplier</th>
-          <th style="padding:8px 10px;text-align:right;font-weight:600;color:var(--gray-500)"># Orders</th>
-          <th style="padding:8px 10px;text-align:right;font-weight:600;color:var(--gray-500)">Avg ETA drift</th>
-          <th style="padding:8px 10px;text-align:right;font-weight:600;color:var(--gray-500)">On-time %</th>
-          <th style="padding:8px 10px;text-align:right;font-weight:600;color:var(--gray-500)">Suggested buffer</th>
-        </tr></thead>
-        <tbody id="supp-reliability-body"></tbody>
-      </table>
-      </div>
-    </div>
-
-    <!-- ── TOP / BOTTOM 3 ── -->
+    <!-- TOP / BOTTOM 3 -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">
       <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:14px 16px;box-shadow:var(--shadow-xs)">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-          <div style="width:22px;height:22px;border-radius:5px;background:var(--green-50);color:var(--green-700);display:flex;align-items:center;justify-content:center;font-size:12px">★</div>
-          <span style="font-size:12px;font-weight:700;color:var(--green-700);font-family:var(--fb)">Top Performers</span>
+          <div style="width:22px;height:22px;border-radius:5px;background:var(--green-50);color:var(--green-700);display:flex;align-items:center;justify-content:center;font-size:12px">&#9650;</div>
+          <span style="font-size:12px;font-weight:700;color:var(--green-700);font-family:var(--fb)">Top performers</span>
           <span style="font-size:10px;color:var(--gray-400);font-family:var(--fm);margin-left:auto">by margin</span>
         </div>
         <table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11px">
@@ -3748,7 +3800,7 @@ function authInjectLogo() {
       </div>
       <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:14px 16px;box-shadow:var(--shadow-xs)">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-          <div style="width:22px;height:22px;border-radius:5px;background:var(--red-50);color:var(--red-700);display:flex;align-items:center;justify-content:center;font-size:12px">!</div>
+          <div style="width:22px;height:22px;border-radius:5px;background:var(--red-50);color:var(--red-700);display:flex;align-items:center;justify-content:center;font-size:12px">&#9660;</div>
           <span style="font-size:12px;font-weight:700;color:var(--red-700);font-family:var(--fb)">Underperformers</span>
           <span style="font-size:10px;color:var(--gray-400);font-family:var(--fm);margin-left:auto">by margin</span>
         </div>
@@ -3758,16 +3810,14 @@ function authInjectLogo() {
       </div>
     </div>
 
-    <!-- ── ACTION ITEMS ── -->
+    <!-- ACTION ITEMS -->
     <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:14px 16px;box-shadow:var(--shadow-xs);margin-bottom:20px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-        <div style="width:22px;height:22px;border-radius:5px;background:var(--amber-50);color:var(--amber-700);display:flex;align-items:center;justify-content:center;font-size:12px">⚠</div>
-        <span style="font-size:12px;font-weight:700;color:var(--gray-800);font-family:var(--fb)">Action Items</span>
-        <span style="font-size:10px;color:var(--gray-400);font-family:var(--fm);margin-left:auto">things that need attention</span>
+        <div style="width:22px;height:22px;border-radius:5px;background:var(--amber-50);color:var(--amber-700);display:flex;align-items:center;justify-content:center;font-size:12px">&#127919;</div>
+        <span style="font-size:12px;font-weight:700;color:var(--gray-800);font-family:var(--fb)">Action items</span>
+        <span style="font-size:10px;color:var(--gray-400);font-family:var(--fm);margin-left:auto">thresholds calibrated from your aging curve</span>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px" id="action-items">
-        <!-- Cards filled dynamically -->
-      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px" id="action-items"></div>
     </div>
 
   </div><!-- end insights-content -->
@@ -10176,417 +10226,584 @@ function clearInsFilters() {
 // ════════════════════════════════════════════════════════════════════
 // Aggregates metrics across all containers. Uses ITS OWN filter state
 // (ins-filter-* + _insSelectedMonths), independent from History.
-function renderInsights() {
-  const allData = getHistory();
+// ── PORTFOLIO INSIGHTS — redesigned around commercial questions ──
+// 1) How is the portfolio doing?           -> KPI strip (lbs-weighted)
+// 2) Whose product holds in the warehouse? -> shelf-life scorecard + verdict
+// 3) Does margin decay with days held?     -> decay scatter, per-supplier slopes
+// 4) What does a warehouse day cost?       -> storage economics + data-driven sell-by
+// 5) Who costs me margin / what do I do?   -> economic scorecard + action items
+// House rules: sea and air are NEVER averaged together; aggregates are
+// lbs-weighted; suppliers rank only with n >= INS_MIN_RANK_N; sold-as-is and
+// rejected containers are excluded from performance aggregates (credit sums
+// still include them — that is where claims live).
 
-  // ── Populate filter dropdowns from current data ──
-  // Keep current selection on re-render so the user's filter doesn't reset.
-  const supEl  = document.getElementById('ins-filter-supplier');
-  const seaEl  = document.getElementById('ins-filter-season');
+const INS_MARGIN_GOAL = 18;   // green at/above (the stated margin goal)
+const INS_MARGIN_MID  = 12;   // amber down to here, red below
+const INS_AGE_WATCH   = 30;   // aging curve: margin holds through ~30 days
+const INS_AGE_CRIT    = 40;   // ...and falls off a cliff past 40
+const INS_MIN_RANK_N  = 3;    // min containers for a supplier to rank
+const INS_MIN_SLOPE_N = 5;    // min containers to fit a decay slope
+const INS_FIT_OK_R2   = 0.30; // below this the slope is labeled "weak fit"
+const INS_HOLD_TIERS  = [[0.35,'strong'],[0.45,'good'],[0.55,'fair']]; // %/day; above = weak
+
+// Canonical supplier names = SUNAT razon social as shown in Veritrade.
+// Matching is accent-insensitive contains on the normalized invoice string, so
+// "Anawi USA. LLC", "Añawi" and "ANAWI EU BV" all group under one exporter.
+const VENDOR_CANON = [
+  { canon: 'ANAWI EXPORT S.A.C.',          match: ['anawi'] },
+  { canon: 'INTERLOOM S.A.C.',             match: ['interloom'] },
+  { canon: 'HAMILLTON FARM PERU S.A.C.',   match: ['hamil'] },
+  { canon: 'ELISUR ORGANIC S.A.C.',        match: ['elisur'] },
+  { canon: 'AGRONEGOCIOS LA GRAMA S.A.C.', match: ['grama'] },
+];
+const INS_COLORS = ['#2a78d6','#1baf7a','#eda100','#4a3aa7','#e87ba4','#eb6834'];
+const INS_POINTS = ['circle','triangle','rect','crossRot','rectRot','star'];
+
+function insCanonVendor(name) {
+  const n = String(name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  for (const v of VENDOR_CANON) if (v.match.some(m => n.includes(m))) return v.canon;
+  return String(name || '').trim() || '(no vendor)';
+}
+function insCanonIndex(canon) {
+  const i = VENDOR_CANON.findIndex(v => v.canon === canon);
+  return i >= 0 ? i : VENDOR_CANON.length;
+}
+function insWavg(pairs) {
+  let sv = 0, sw = 0;
+  for (const p of pairs) { const v = p[0], w = p[1]; if (v != null && isFinite(v) && w > 0) { sv += v * w; sw += w; } }
+  return sw > 0 ? sv / sw : null;
+}
+function insOls(xs, ys) {
+  const n = xs.length; if (n < 2) return null;
+  const mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n;
+  let sxx = 0, sxy = 0;
+  for (let i = 0; i < n; i++) { sxx += (xs[i] - mx) * (xs[i] - mx); sxy += (xs[i] - mx) * (ys[i] - my); }
+  if (sxx === 0) return null;
+  const b = sxy / sxx, a = my - b * mx;
+  let ssr = 0, sst = 0;
+  for (let i = 0; i < n; i++) { ssr += (a + b * xs[i] - ys[i]) ** 2; sst += (ys[i] - my) ** 2; }
+  return { slope: b, intercept: a, r2: sst > 0 ? 1 - ssr / sst : 0 };
+}
+function insLbsOf(x) {
+  const f = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
+  return f(x.declaredLbs) || f(x.boxes) * 30;
+}
+// Annotate history rows: canonical vendor, sea/air mode (joined from the
+// matched order — mode is not stored in history; unmatched defaults to sea),
+// exclusion flag, and lbs for weighting.
+function insAnnotate(rows) {
+  return rows.map(x => {
+    const o = (typeof findOrderForPo === 'function') ? findOrderForPo(x.po) : null;
+    return Object.assign({}, x, {
+      _canon: insCanonVendor(x.vendor),
+      _mode: (o && o.mode === 'air') ? 'air' : 'sea',
+      _excl: !!(x.soldAsIs || x.rejected),
+      _lbs: insLbsOf(x),
+    });
+  });
+}
+function insHoldTier(ds) {
+  if (ds == null || !isFinite(ds)) return null;
+  for (const t of INS_HOLD_TIERS) if (ds <= t[0]) return t[1];
+  return 'weak';
+}
+function insSupplierStats(rows) {
+  const f = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
+  const by = {};
+  rows.forEach(x => { (by[x._canon] = by[x._canon] || []).push(x); });
+  return Object.keys(by).map(name => {
+    const r = by[name];
+    const lbs = r.reduce((t, x) => t + x._lbs, 0);
+    const ds = insWavg(r.filter(x => f(x.dailyShrinkPct) > 0).map(x => [f(x.dailyShrinkPct), x._lbs]));
+    const mold = insWavg(r.filter(x => x.moldPct != null && x.moldPct !== '').map(x => [f(x.moldPct), x._lbs]));
+    const marg = insWavg(r.filter(x => x.netMargin != null && isFinite(f(x.netMargin))).map(x => [f(x.netMargin), x._lbs]));
+    const days = r.filter(x => f(x.days) > 0).map(x => f(x.days));
+    const gaps = r.map(x => {
+      const decl = f(x.declaredLbs) || f(x.boxes) * 30;
+      const real = f(x.realArrLbs) || (f(x.boxes) && f(x.avgKg) ? f(x.boxes) * f(x.avgKg) : decl);
+      return decl > 0 ? real - decl : null;
+    }).filter(g => g != null);
+    return {
+      name, n: r.length, lbs, ds, mold, marg,
+      avgDays: days.length ? days.reduce((a, b) => a + b, 0) / days.length : null,
+      avgGap: gaps.length ? gaps.reduce((a, b) => a + b, 0) / gaps.length : null,
+      rows: r,
+    };
+  });
+}
+const INS_BUCKETS = [
+  { lo: 1,  hi: 20,  label: '\u226420 d',     bound: 20 },
+  { lo: 21, hi: 30,  label: '21\u201330 d',   bound: 30 },
+  { lo: 31, hi: 40,  label: '31\u201340 d',   bound: 40 },
+  { lo: 41, hi: 999, label: '41+ d',          bound: null },
+];
+function insAgingBuckets(rows) {
+  const f = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
+  return INS_BUCKETS.map(b => {
+    const r = rows.filter(x => { const d = f(x.days); return d >= b.lo && d <= b.hi; });
+    return {
+      label: b.label, bound: b.bound, n: r.length,
+      lbs: r.reduce((t, x) => t + x._lbs, 0),
+      marg: insWavg(r.map(x => [f(x.netMargin), x._lbs])),
+    };
+  });
+}
+// Data-driven sell-by: the last aging bucket whose lbs-weighted margin still
+// clears the portfolio's lbs-weighted average — no invented margin floor.
+function insSellBy(buckets, pAvg) {
+  if (pAvg == null) return null;
+  let holdsThrough = null, fallsAfter = null, thin = false;
+  for (const b of buckets) {
+    if (b.n === 0 || b.marg == null) continue;
+    if (b.marg >= pAvg) { holdsThrough = b.bound; }
+    else if (fallsAfter === null) { fallsAfter = b; thin = b.n < 3; }
+  }
+  return { holdsThrough, fallsAfter, thin };
+}
+
+window._insMode = window._insMode || 'sea';
+function setInsMode(m) { window._insMode = (m === 'air') ? 'air' : 'sea'; renderInsights(); }
+
+function renderInsights() {
+  const f = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
+  const allData = insAnnotate(getHistory());
+
+  // ── Populate filter dropdowns (canonical supplier names), preserving selection ──
+  const supEl = document.getElementById('ins-filter-supplier');
+  const seaEl = document.getElementById('ins-filter-season');
   const yearEl = document.getElementById('ins-filter-year');
   if (supEl) {
-    const suppliers = [...new Set(allData.map(x=>x.vendor).filter(Boolean))].sort();
+    const suppliers = [...new Set(allData.map(x => x._canon).filter(Boolean))].sort();
     const cur = supEl.value;
     supEl.innerHTML = '<option value="">All suppliers</option>'
-      + suppliers.map(s => '<option value="'+s+'"'+(s===cur?' selected':'')+'>'+s+'</option>').join('');
+      + suppliers.map(v => '<option value="' + v + '"' + (v === cur ? ' selected' : '') + '>' + v + '</option>').join('');
   }
   if (seaEl) {
-    const seasons = [...new Set(allData.map(x=>x.season).filter(Boolean))].sort();
+    const seasons = [...new Set(allData.map(x => x.season).filter(Boolean))].sort();
     const cur = seaEl.value;
     seaEl.innerHTML = '<option value="">All seasons</option>'
-      + seasons.map(s => '<option value="'+s+'"'+(s===cur?' selected':'')+'>'+s+'</option>').join('');
+      + seasons.map(v => '<option value="' + v + '"' + (v === cur ? ' selected' : '') + '>' + v + '</option>').join('');
   }
   if (yearEl) {
-    const years = [...new Set(allData.map(x=>x.arrival?x.arrival.substring(0,4):'').filter(Boolean))].sort().reverse();
+    const years = [...new Set(allData.map(x => x.arrival ? x.arrival.substring(0, 4) : '').filter(Boolean))].sort().reverse();
     const cur = yearEl.value;
     yearEl.innerHTML = '<option value="">All years</option>'
-      + years.map(y => '<option value="'+y+'"'+(y===cur?' selected':'')+'>'+y+'</option>').join('');
+      + years.map(v => '<option value="' + v + '"' + (v === cur ? ' selected' : '') + '>' + v + '</option>').join('');
   }
-
-  // Read current Insights filter state
-  const supSel  = (supEl  || {}).value || '';
-  const seaSel  = (seaEl  || {}).value || '';
+  const supSel = (supEl || {}).value || '';
+  const seaSel = (seaEl || {}).value || '';
   const yearSel = (yearEl || {}).value || '';
 
-  // Apply Insights-specific filters
-  const data = allData.filter(x => {
-    if(supSel  && x.vendor !== supSel) return false;
-    if(seaSel  && x.season !== seaSel) return false;
-    if(yearSel && (x.arrival||'').slice(0,4) !== yearSel) return false;
-    if(_insSelectedMonths && _insSelectedMonths.size > 0 && x.arrival) {
-      const m = parseInt((x.arrival||'').substring(5,7));
-      if(!_insSelectedMonths.has(m)) return false;
+  const scope = allData.filter(x => {
+    if (supSel && x._canon !== supSel) return false;
+    if (seaSel && x.season !== seaSel) return false;
+    if (yearSel && (x.arrival || '').slice(0, 4) !== yearSel) return false;
+    if (_insSelectedMonths && _insSelectedMonths.size > 0 && x.arrival) {
+      const m = parseInt((x.arrival || '').substring(5, 7));
+      if (!_insSelectedMonths.has(m)) return false;
     }
     return true;
   });
+  const mode = window._insMode;
+  const modeRows = scope.filter(x => x._mode === mode);
+  const included = modeRows.filter(x => !x._excl);
+  const excludedN = modeRows.length - included.length;
 
-  // Update container count chip
+  // Mode toggle visual state
+  const bSea = document.getElementById('ins-mode-sea');
+  const bAir = document.getElementById('ins-mode-air');
+  const styleBtn = (b, on) => { if (!b) return;
+    b.style.background = on ? 'var(--jlz-light)' : 'var(--white)';
+    b.style.color = on ? 'var(--green-700)' : 'var(--gray-500)';
+    b.style.fontWeight = on ? '700' : '600'; };
+  styleBtn(bSea, mode === 'sea'); styleBtn(bAir, mode === 'air');
+
   const cntEl = document.getElementById('ins-count');
-  if (cntEl) cntEl.textContent = data.length + ' container' + (data.length === 1 ? '' : 's');
+  if (cntEl) cntEl.textContent = included.length + ' container' + (included.length === 1 ? '' : 's')
+    + ' \u00b7 ' + mode + (excludedN > 0 ? ' \u00b7 ' + excludedN + ' excluded (as-is/rejected)' : '');
+
+  // Destroy any previous chart before early returns
+  if (window._insDecayChart) { try { window._insDecayChart.destroy(); } catch (e) {} window._insDecayChart = null; }
 
   const empty = document.getElementById('insights-empty');
   const content = document.getElementById('insights-content');
-  if (data.length === 0) {
-    if (empty) empty.style.display = 'block';
+  if (included.length === 0) {
+    if (empty) {
+      empty.style.display = 'block';
+      empty.innerHTML = (mode === 'air')
+        ? 'No air containers in history yet \u2014 the first air shipment will land here. Sea and air are never averaged together.'
+        : (modeRows.length > 0
+          ? 'All ' + modeRows.length + ' containers in this view are excluded (sold as-is / rejected).'
+          : 'No containers match the current filters \u2014 try clearing them or save a container first.');
+    }
     if (content) content.style.display = 'none';
     return;
   }
-  if (empty)   empty.style.display = 'none';
+  if (empty) empty.style.display = 'none';
   if (content) content.style.display = 'block';
 
-  // ── Helpers (local to keep the function self-contained) ──
-  const fmt$ = v => v != null && !isNaN(v) ? '$' + Math.round(v).toLocaleString('en-US') : '—';
-  const fmtP = v => v != null && !isNaN(v) ? (parseFloat(v).toFixed(1) + '%') : '—';
-  const avg = (arr) => {
-    const clean = arr.filter(v => v != null && !isNaN(v) && isFinite(v));
-    return clean.length ? clean.reduce((s,v) => s + parseFloat(v), 0) / clean.length : null;
-  };
+  // ── Shared helpers ──
+  const fmt$ = v => v != null && !isNaN(v) ? '$' + Math.round(v).toLocaleString('en-US') : '\u2014';
+  const fmtLbs = v => v >= 1e6 ? (v / 1e6).toFixed(2) + 'M' : Math.round(v / 1000) + 'k';
   const setText = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
   const setHTML = (id, html) => { const e = document.getElementById(id); if (e) e.innerHTML = html; };
+  const marginColor = m => m == null ? 'var(--gray-300)'
+    : m >= INS_MARGIN_GOAL ? 'var(--green-600)' : m >= INS_MARGIN_MID ? 'var(--amber-600)' : 'var(--red-600)';
 
-  // Date range string for sub-labels
-  const arrivals = data.map(x => x.arrival).filter(Boolean).sort();
-  const dateRange = arrivals.length
-    ? arrivals[0].slice(0,7) + ' \u2192 ' + arrivals[arrivals.length-1].slice(0,7)
-    : '';
+  const totalLbs = included.reduce((t, x) => t + x._lbs, 0);
+  const pAvg = insWavg(included.map(x => [f(x.netMargin), x._lbs]));
+  const arrivals = included.map(x => x.arrival).filter(Boolean).sort();
+  const dateRange = arrivals.length ? arrivals[0].slice(0, 7) + ' \u2192 ' + arrivals[arrivals.length - 1].slice(0, 7) : '';
 
-  // ── KPI 1: Total containers ──
-  setText('kpi-count',     data.length.toString());
+  // ── KPI 1-2: containers + lbs ──
+  setText('kpi-count', included.length.toString());
   setText('kpi-count-sub', dateRange);
+  setText('kpi-lbs', fmtLbs(totalLbs));
+  setText('kpi-lbs-sub', mode + ' freight only');
 
-  // ── KPI 2: AVG margin + trend vs previous month ──
-  // We compute current = latest month present, previous = month before that.
-  const currentAvgMargin = avg(data.map(x => x.netMargin));
-  // Group by YYYY-MM for trend
-  const byMonth = {};
-  data.forEach(x => {
-    const m = (x.arrival||'').slice(0,7);
-    if (!m) return;
-    if (!byMonth[m]) byMonth[m] = [];
-    byMonth[m].push(x.netMargin);
+  // ── KPI 3: lbs-weighted margin + MoM trend (also weighted) ──
+  const byMonthW = {};
+  included.forEach(x => {
+    const m = (x.arrival || '').slice(0, 7); if (!m) return;
+    (byMonthW[m] = byMonthW[m] || []).push([f(x.netMargin), x._lbs]);
   });
-  const months = Object.keys(byMonth).sort();
+  const wMonths = Object.keys(byMonthW).sort();
   let trendTxt = '';
-  if (months.length >= 2) {
-    const latest = avg(byMonth[months[months.length-1]]);
-    const prev   = avg(byMonth[months[months.length-2]]);
+  if (wMonths.length >= 2) {
+    const latest = insWavg(byMonthW[wMonths[wMonths.length - 1]]);
+    const prev = insWavg(byMonthW[wMonths[wMonths.length - 2]]);
     if (latest != null && prev != null) {
       const diff = latest - prev;
       const arrow = diff > 0.5 ? '\u25B2' : diff < -0.5 ? '\u25BC' : '\u2248';
-      const sign  = diff > 0 ? '+' : '';
-      trendTxt = arrow + ' ' + sign + diff.toFixed(1) + ' pts vs prev month';
+      trendTxt = arrow + ' ' + (diff > 0 ? '+' : '') + diff.toFixed(1) + ' pts vs prev month';
     }
   }
-  setText('kpi-margin',     currentAvgMargin != null ? currentAvgMargin.toFixed(1) + '%' : '—');
-  setText('kpi-margin-sub', trendTxt || (data.length + ' containers, all months'));
+  setText('kpi-margin', pAvg != null ? pAvg.toFixed(1) + '%' : '\u2014');
+  setText('kpi-margin-sub', 'lbs-weighted' + (trendTxt ? ' \u00b7 ' + trendTxt : ''));
 
-  // ── KPI 3: Total net profit ──
-  const totalProfit = data.reduce((s, x) => s + (parseFloat(x.netProfit) || 0), 0);
-  setText('kpi-profit',     fmt$(totalProfit));
-  setText('kpi-profit-sub', 'across ' + data.length + ' containers');
+  // ── KPI 4: total net profit ──
+  const totalProfit = included.reduce((t, x) => t + f(x.netProfit), 0);
+  setText('kpi-profit', fmt$(totalProfit));
+  setText('kpi-profit-sub', 'across ' + included.length + ' containers');
 
-  // ── KPI 4: Money left on the table ──
-  // creditCalc - creditAgreed across all containers, only positive deltas
+  // ── KPI 5: credit gap — includes excluded containers (claims live there) ──
   let totalCalc = 0, totalAgreed = 0;
-  data.forEach(x => {
-    totalCalc   += parseFloat(x.creditCalc)   || 0;
-    totalAgreed += parseFloat(x.creditAgreed) || 0;
-  });
+  modeRows.forEach(x => { totalCalc += f(x.creditCalc); totalAgreed += f(x.creditAgreed); });
   const leftover = totalCalc - totalAgreed;
-  const collectionRate = totalCalc > 0 ? (totalAgreed / totalCalc * 100) : 0;
-  setText('kpi-leftover',     fmt$(leftover));
+  setText('kpi-leftover', fmt$(leftover));
   setText('kpi-leftover-sub', totalCalc > 0
-    ? collectionRate.toFixed(0) + '% collection rate'
+    ? (totalAgreed / totalCalc * 100).toFixed(0) + '% collection rate'
     : 'no claims documented yet');
 
-  // ── TRENDS OVER TIME ──
-  // Compute per-month averages for the key quality/operational metrics.
-  // Sorting months chronologically gives us a left-to-right time axis.
-  // Trend arrow compares last month vs first month shown (overall direction).
-  const trendsTable = document.getElementById('trends-table');
-  const trendsHead  = document.getElementById('trends-head');
-  const trendsBody  = document.getElementById('trends-body');
-  const trendsEmpty = document.getElementById('trends-empty');
+  // ── SHELF-LIFE SCORECARD ──
+  const stats = insSupplierStats(included);
+  const ranked = stats.filter(x => x.n >= INS_MIN_RANK_N)
+    .sort((a, b) => (a.ds == null ? 1e9 : a.ds) - (b.ds == null ? 1e9 : b.ds));
+  const unranked = stats.filter(x => x.n < INS_MIN_RANK_N).sort((a, b) => b.n - a.n);
+  const fmtGap = g => g == null ? '\u2014'
+    : (g >= 0 ? '<span style="color:var(--green-600)">+' + Math.round(g).toLocaleString() + ' lbs</span>'
+              : '<span style="color:var(--red-600)">' + Math.round(g).toLocaleString() + ' lbs</span>');
+  const holdChip = (tier, dim) => {
+    if (dim) return '<span style="font-size:9px;font-weight:700;padding:1px 7px;border-radius:3px;background:var(--gray-100);color:var(--gray-400);border:1px solid var(--gray-200)">n&lt;' + INS_MIN_RANK_N + '</span>';
+    const map = { strong: ['var(--green-50)', 'var(--green-700)', 'var(--green-200)'],
+                  good:   ['var(--jlz-light)', 'var(--green-700)', 'var(--green-200)'],
+                  fair:   ['var(--amber-50)', 'var(--amber-700)', 'var(--amber-200)'],
+                  weak:   ['var(--red-50)', 'var(--red-700)', 'var(--red-200)'] };
+    const c = map[tier] || ['var(--gray-50)', 'var(--gray-400)', 'var(--gray-200)'];
+    return '<span style="font-size:9px;font-weight:700;padding:1px 7px;border-radius:3px;background:' + c[0] + ';color:' + c[1] + ';border:1px solid ' + c[2] + '">' + (tier || '\u2014') + '</span>';
+  };
+  const shelfRow = (x, dim) => '<tr style="' + (dim ? 'opacity:.45;' : '') + 'border-bottom:1px solid var(--gray-100)">'
+    + '<td style="padding:8px 10px;color:var(--gray-700);font-weight:600">' + x.name + '</td>'
+    + '<td style="padding:8px 10px;text-align:right;color:var(--gray-500)">' + x.n + '</td>'
+    + '<td style="padding:8px 10px;text-align:right;color:var(--gray-500)">' + fmtLbs(x.lbs) + '</td>'
+    + '<td style="padding:8px 10px;text-align:right;font-weight:700;color:var(--gray-800)">' + (x.ds != null ? x.ds.toFixed(2) + '%' : '\u2014') + '</td>'
+    + '<td style="padding:8px 10px;text-align:right;color:var(--gray-700)">' + (x.mold != null ? x.mold.toFixed(1) + '%' : '\u2014') + '</td>'
+    + '<td style="padding:8px 10px;text-align:right">' + fmtGap(x.avgGap) + '</td>'
+    + '<td style="padding:8px 10px;text-align:right;color:var(--gray-700)">' + (x.avgDays != null ? Math.round(x.avgDays) : '\u2014') + '</td>'
+    + '<td style="padding:8px 10px;text-align:center">' + holdChip(insHoldTier(x.ds), dim) + '</td>'
+    + '</tr>';
+  setHTML('shelf-life-body',
+    ranked.map(x => shelfRow(x, false)).join('') + unranked.map(x => shelfRow(x, true)).join(''));
 
-  // Group containers by YYYY-MM
-  const byMo = {};
-  data.forEach(x => {
-    const m = (x.arrival || '').slice(0, 7);
-    if (!m) return;
-    if (!byMo[m]) byMo[m] = [];
-    byMo[m].push(x);
+  // Verdict — the headline answer in dollars
+  const verdictEl = document.getElementById('shelf-verdict');
+  if (verdictEl) {
+    const rk = ranked.filter(x => x.ds != null);
+    if (rk.length >= 2 && rk[0].ds < rk[rk.length - 1].ds) {
+      const best = rk[0], worst = rk[rk.length - 1];
+      const avgLbsC = totalLbs / included.length;
+      const daysArr = included.filter(x => f(x.days) > 0).map(x => f(x.days));
+      const avgDaysP = daysArr.length ? daysArr.reduce((a, b) => a + b, 0) / daysArr.length : 0;
+      const priceW = insWavg(included.map(x => [f(x.priceLb), x._lbs]));
+      const savedLbs = (worst.ds - best.ds) / 100 * avgLbsC * avgDaysP;
+      let txt = '<strong>' + best.name + '</strong> holds best at <strong>' + best.ds.toFixed(2) + '%/day</strong> (n=' + best.n + ', lbs-weighted). '
+        + 'Moving one ~' + Math.round(avgLbsC / 1000) + 'k-lb container from ' + worst.name + ' (' + worst.ds.toFixed(2) + '%/day) saves ~'
+        + Math.round(savedLbs).toLocaleString() + ' lbs over your average ' + Math.round(avgDaysP) + '-day hold'
+        + (priceW ? ' \u2014 about ' + fmt$(savedLbs * priceW) + ' at $' + priceW.toFixed(2) + '/lb invoice' : '') + '.';
+      const teaser = unranked.find(u => u.ds != null && u.ds < best.ds);
+      if (teaser) txt += ' ' + teaser.name + ' shows a better rate (' + teaser.ds.toFixed(2) + '%/day) but n=' + teaser.n + ' is not evidence yet.';
+      verdictEl.innerHTML = txt;
+      verdictEl.style.display = 'block';
+    } else if (rk.length === 1) {
+      verdictEl.innerHTML = 'Only <strong>' + rk[0].name + '</strong> has enough containers to rank (n=' + rk[0].n + ', ' + rk[0].ds.toFixed(2) + '%/day). Comparisons unlock as other suppliers reach ' + INS_MIN_RANK_N + ' containers.';
+      verdictEl.style.display = 'block';
+    } else { verdictEl.style.display = 'none'; }
+  }
+
+  // ── MARGIN DECAY SCATTER ──
+  const pts = included.filter(x => f(x.days) > 0 && x.netMargin != null && isFinite(f(x.netMargin)));
+  const wrap = document.getElementById('decay-wrap');
+  const dEmpty = document.getElementById('decay-empty');
+  const legend = document.getElementById('decay-legend');
+  if (!pts.length || typeof Chart === 'undefined') {
+    if (wrap) wrap.style.display = 'none';
+    if (legend) legend.innerHTML = '';
+    if (dEmpty) { dEmpty.style.display = 'block';
+      dEmpty.textContent = typeof Chart === 'undefined' ? 'Chart library unavailable.' : 'No processed containers with warehouse days in this view.'; }
+  } else {
+    if (wrap) wrap.style.display = '';
+    if (dEmpty) dEmpty.style.display = 'none';
+    const groups = {};
+    pts.forEach(x => { (groups[x._canon] = groups[x._canon] || []).push(x); });
+    const canonList = Object.keys(groups).sort((a, b) => insCanonIndex(a) - insCanonIndex(b));
+    const dsets = [], legendBits = [];
+    canonList.forEach(name => {
+      const idx = insCanonIndex(name) % INS_COLORS.length;
+      const col = INS_COLORS[idx];
+      const g = groups[name];
+      dsets.push({ type: 'scatter', label: name,
+        data: g.map(x => ({ x: f(x.days), y: +f(x.netMargin).toFixed(2), _po: x.po || '' })),
+        backgroundColor: col, borderColor: col,
+        pointStyle: INS_POINTS[idx % INS_POINTS.length], pointRadius: 5, pointHoverRadius: 7 });
+      let slopeTxt = '';
+      if (g.length >= INS_MIN_SLOPE_N) {
+        const fit = insOls(g.map(x => f(x.days)), g.map(x => f(x.netMargin)));
+        if (fit) {
+          const x0 = Math.min.apply(null, g.map(x => f(x.days)));
+          const x1 = Math.max.apply(null, g.map(x => f(x.days)));
+          dsets.push({ type: 'line', label: name + ' trend',
+            data: [{ x: x0, y: fit.intercept + fit.slope * x0 }, { x: x1, y: fit.intercept + fit.slope * x1 }],
+            borderColor: col, borderWidth: 2, borderDash: [6, 4], pointRadius: 0, fill: false });
+          slopeTxt = (fit.slope > 0 ? '+' : '') + fit.slope.toFixed(2) + ' pts/day \u00b7 ' + (fit.r2 >= INS_FIT_OK_R2 ? 'fit ok' : 'weak fit');
+        }
+      } else slopeTxt = 'n&lt;' + INS_MIN_SLOPE_N + ' \u2014 no trend';
+      legendBits.push('<span style="display:inline-flex;align-items:center;gap:5px;margin-right:16px;white-space:nowrap">'
+        + '<span style="width:10px;height:10px;border-radius:2px;background:' + col + ';display:inline-block"></span>'
+        + name + ' <span style="color:var(--gray-400)">' + slopeTxt + '</span></span>');
+    });
+    if (legend) legend.innerHTML = legendBits.join('');
+    const maxD = Math.max.apply(null, pts.map(x => f(x.days)));
+    const ys = pts.map(x => f(x.netMargin));
+    window._insDecayChart = new Chart(document.getElementById('ins-decay-chart'), {
+      data: { datasets: dsets },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: false },
+          tooltip: { filter: t => t.dataset.type === 'scatter',
+            callbacks: { label: c => 'PO ' + (c.raw._po || '\u2014') + ' \u00b7 ' + c.parsed.y.toFixed(1) + '% at ' + c.parsed.x + 'd' } } },
+        scales: {
+          x: { min: 0, max: maxD + 5, title: { display: true, text: 'Days in warehouse', font: { size: 11 } },
+               ticks: { font: { size: 10 } }, grid: { color: '#f1f5f9' } },
+          y: { min: Math.floor(Math.min.apply(null, ys)) - 3, max: Math.ceil(Math.max.apply(null, ys)) + 3,
+               title: { display: true, text: 'Net margin %', font: { size: 11 } },
+               ticks: { font: { size: 10 }, callback: v => v + '%' }, grid: { color: '#f1f5f9' } } }
+      }
+    });
+  }
+
+  // ── STORAGE ECONOMICS ──
+  const capRate = (typeof jlzCapitalRate === 'function') ? jlzCapitalRate() : 0.06;
+  const hold = insWavg(included.filter(x => f(x.days) > 0).map(x => {
+    const d = f(x.days), pl = f(x.priceLb);
+    const base = pl * x._lbs;
+    return [(f(x.whShrink) / d) * pl + base * capRate / 365, x._lbs];
+  }));
+  setText('store-holdcost', hold != null ? '$' + Math.round(hold) + '/day' : '\u2014');
+
+  const buckets = insAgingBuckets(included);
+  const maxBM = Math.max.apply(null, buckets.map(b => b.marg != null ? b.marg : 0).concat([1]));
+  setHTML('aging-buckets', buckets.map(b => {
+    if (b.n === 0 || b.marg == null)
+      return '<div style="display:flex;align-items:center;gap:6px"><span style="width:46px;color:var(--gray-400)">' + b.label + '</span><span style="color:var(--gray-300)">no containers</span></div>';
+    const w = Math.max(8, Math.round(b.marg / maxBM * 100));
+    const col = b.marg >= pAvg ? 'var(--green-600)' : (pAvg - b.marg <= 5 ? 'var(--amber-500)' : 'var(--red-500)');
+    return '<div style="display:flex;align-items:center;gap:6px" title="' + b.n + ' containers \u00b7 ' + fmtLbs(b.lbs) + ' lbs">'
+      + '<span style="width:46px;color:var(--gray-500)">' + b.label + '</span>'
+      + '<span style="height:8px;border-radius:2px;background:' + col + ';width:' + w + '%;max-width:60%"></span>'
+      + '<span style="color:var(--gray-600);font-weight:600">' + b.marg.toFixed(1) + '%</span>'
+      + '<span style="color:var(--gray-300)">n=' + b.n + '</span></div>';
+  }).join(''));
+
+  const sb = insSellBy(buckets, pAvg);
+  let sbTxt = '\u2014';
+  if (sb && pAvg != null) {
+    if (sb.holdsThrough != null && sb.fallsAfter) {
+      sbTxt = 'Margin holds above your <strong>' + pAvg.toFixed(1) + '%</strong> average through <strong>day ' + sb.holdsThrough + '</strong>, slips to '
+        + sb.fallsAfter.marg.toFixed(1) + '% at ' + sb.fallsAfter.label + (sb.thin ? ' <span style="color:var(--gray-400)">(thin: n=' + sb.fallsAfter.n + ')</span>' : '') + '. Push turnover past day ' + sb.holdsThrough + '.';
+    } else if (sb.holdsThrough != null) {
+      sbTxt = 'Margin stays above your <strong>' + pAvg.toFixed(1) + '%</strong> average across all observed aging buckets \u2014 no cliff in the data yet.';
+    } else if (sb.fallsAfter) {
+      sbTxt = 'Margin sits below the <strong>' + pAvg.toFixed(1) + '%</strong> average from the first aging bucket \u2014 turnover pressure across the board.';
+    }
+  }
+  setHTML('store-sellby', sbTxt);
+
+  // ── ECONOMIC SCORECARD — dynamic columns, all suppliers ──
+  const colOrder = ranked.concat(unranked);
+  const statsAllBy = {};
+  modeRows.forEach(x => { (statsAllBy[x._canon] = statsAllBy[x._canon] || []).push(x); });
+  const drift = (typeof supplierDriftStats === 'function') ? supplierDriftStats() : {};
+  const driftCanon = {};
+  Object.keys(drift).forEach(k => {
+    const c = insCanonVendor(k);
+    const t = driftCanon[c] = driftCanon[c] || { n: 0, totalDrift: 0, withDrift: 0, onTime: 0 };
+    t.n += drift[k].n || 0; t.totalDrift += drift[k].totalDrift || 0;
+    t.withDrift += drift[k].withDrift || 0; t.onTime += drift[k].onTime || 0;
   });
-  const sortedMonths = Object.keys(byMo).sort();  // YYYY-MM ascending
+  setHTML('sc-head', '<tr style="background:var(--gray-50);border-bottom:2px solid var(--gray-200)">'
+    + '<th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--gray-500)">Metric</th>'
+    + colOrder.map(x => '<th style="padding:8px 10px;text-align:right;font-weight:600;color:var(--gray-500);white-space:nowrap">' + x.name
+      + '<div style="font-weight:400;color:var(--gray-300);font-size:9px">n=' + x.n + '</div></th>').join('') + '</tr>');
+  const scCell = v => '<td style="padding:7px 10px;text-align:right;border-bottom:1px solid var(--gray-100);font-weight:600;color:var(--gray-800)">' + v + '</td>';
+  const scRows = [];
+  scRows.push(['# Containers', colOrder.map(x => String(x.n))]);
+  scRows.push(['AVG margin (weighted)', colOrder.map(x => x.marg != null
+    ? '<span style="color:' + marginColor(x.marg) + '">' + x.marg.toFixed(1) + '%</span>' : '\u2014')]);
+  scRows.push(['AVG days in WH', colOrder.map(x => x.avgDays != null ? String(Math.round(x.avgDays)) : '\u2014')]);
+  scRows.push(['True cost / sellable lb', colOrder.map(x => {
+    let tc = 0, lo = 0;
+    x.rows.forEach(r => { if (f(r.totalCosts) > 0 && f(r.lbsOut) > 0) { tc += f(r.totalCosts); lo += f(r.lbsOut); } });
+    return lo > 0 ? '$' + (tc / lo).toFixed(4) : '\u2014';
+  })]);
+  scRows.push(['Invoice vs contract \u0394/lb', colOrder.map(x => {
+    const ds = x.rows.map(r => {
+      if (typeof findOrderForPo !== 'function') return null;
+      const o = findOrderForPo(r.po); if (!o) return null;
+      const cif = f(o.cifPriceCase), inv = f(r.priceLb);
+      return (cif > 0 && inv > 0) ? inv - cif / 30 : null;
+    }).filter(v => v != null);
+    if (!ds.length) return '\u2014';
+    const m = ds.reduce((a, b) => a + b, 0) / ds.length;
+    return (m > 0 ? '+' : '') + '$' + m.toFixed(4);
+  })]);
+  scRows.push(['Credits collected', colOrder.map(x => {
+    const rows = statsAllBy[x.name] || [];
+    let c = 0, a = 0; rows.forEach(r => { c += f(r.creditCalc); a += f(r.creditAgreed); });
+    if (c <= 0) return '\u2014';
+    const rate = a / c * 100;
+    const col = rate >= 50 ? 'var(--green-600)' : rate >= 30 ? 'var(--amber-600)' : 'var(--red-600)';
+    return '<span style="color:' + col + '">' + fmt$(a) + ' / ' + fmt$(c) + ' (' + rate.toFixed(0) + '%)</span>';
+  })]);
+  scRows.push(['ETA drift (orders)', colOrder.map(x => {
+    const d = driftCanon[x.name];
+    if (!d || d.withDrift <= 0) return '\u2014';
+    const avg = d.totalDrift / d.withDrift;
+    const col = avg <= 2 ? 'var(--green-600)' : avg <= 7 ? 'var(--amber-600)' : 'var(--red-600)';
+    return '<span style="color:' + col + ';font-weight:700">' + (avg > 0 ? '+' : '') + avg.toFixed(1) + 'd</span>'
+      + ' <span style="color:var(--gray-400)">\u00b7 ' + (d.onTime / d.withDrift * 100).toFixed(0) + '% on-time</span>';
+  })]);
+  setHTML('supp-scorecard-body', scRows.map(r =>
+    '<tr><td style="padding:7px 10px;text-align:left;border-bottom:1px solid var(--gray-100);color:var(--gray-600)">' + r[0] + '</td>'
+    + r[1].map(scCell).join('') + '</tr>').join(''));
 
+  // ── TRENDS OVER TIME (lbs-weighted per month) ──
+  const trendsTable = document.getElementById('trends-table');
+  const trendsHead = document.getElementById('trends-head');
+  const trendsBody = document.getElementById('trends-body');
+  const trendsEmpty = document.getElementById('trends-empty');
+  const byMo = {};
+  included.forEach(x => { const m = (x.arrival || '').slice(0, 7); if (m) (byMo[m] = byMo[m] || []).push(x); });
+  const sortedMonths = Object.keys(byMo).sort();
   if (sortedMonths.length < 2) {
-    // Hide the table, show empty message
     if (trendsTable) trendsTable.style.display = 'none';
     if (trendsEmpty) trendsEmpty.style.display = 'block';
   } else {
     if (trendsTable) trendsTable.style.display = '';
     if (trendsEmpty) trendsEmpty.style.display = 'none';
-
-    // Pretty month label: "2026-01" → "Jan 26"
-    const moLabel = (yyyymm) => {
-      const yr = yyyymm.slice(2, 4);
-      const mIdx = parseInt(yyyymm.slice(5, 7), 10) - 1;
-      return (MONTHS[mIdx] || '?') + ' ' + yr;
-    };
-
-    // Build column headers: Metric | Mo1 | Mo2 | ... | Trend
-    let headHTML = '<tr style="background:var(--gray-50);border-bottom:2px solid var(--gray-200)">'
+    const moLabel = m => (MONTHS[parseInt(m.slice(5, 7), 10) - 1] || '?') + ' ' + m.slice(2, 4);
+    if (trendsHead) trendsHead.innerHTML = '<tr style="background:var(--gray-50);border-bottom:2px solid var(--gray-200)">'
       + '<th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--gray-500);white-space:nowrap">Metric</th>'
-      + sortedMonths.map(m =>
-          '<th style="padding:8px 10px;text-align:right;font-weight:600;color:var(--gray-500);white-space:nowrap">'
-          + '<div>' + moLabel(m) + '</div>'
-          + '<div style="font-weight:400;color:var(--gray-300);font-size:9px">n=' + byMo[m].length + '</div>'
-          + '</th>').join('')
-      + '<th style="padding:8px 10px;text-align:center;font-weight:600;color:var(--gray-500);white-space:nowrap;border-left:1px solid var(--gray-200)">Trend</th>'
-      + '</tr>';
-    if (trendsHead) trendsHead.innerHTML = headHTML;
-
-    // For each metric: compute per-month average + trend.
-    // higherIsBetter flag controls the color scheme of the trend arrow.
-    // colorFn returns a per-value color (green/amber/red) so cells are
-    // intuitively heat-mapped.
+      + sortedMonths.map(m => '<th style="padding:8px 10px;text-align:right;font-weight:600;color:var(--gray-500);white-space:nowrap"><div>' + moLabel(m) + '</div>'
+        + '<div style="font-weight:400;color:var(--gray-300);font-size:9px">n=' + byMo[m].length + '</div></th>').join('')
+      + '<th style="padding:8px 10px;text-align:center;font-weight:600;color:var(--gray-500);white-space:nowrap;border-left:1px solid var(--gray-200)">Trend</th></tr>';
     const metrics = [
-      {
-        label: 'AVG margin',
-        compute: arr => avg(arr.map(x => x.netMargin)),
-        format: v => v != null ? v.toFixed(1) + '%' : '—',
-        higherIsBetter: true,
-        colorFn: v => v == null ? '' : v >= 20 ? 'var(--green-600)' : v >= 12 ? 'var(--amber-600)' : 'var(--red-600)',
-      },
-      {
-        label: 'AVG days in WH',
-        compute: arr => avg(arr.map(x => x.days)),
-        format: v => v != null ? v.toFixed(0) : '—',
-        higherIsBetter: false,
-        colorFn: v => v == null ? '' : v <= 21 ? 'var(--green-600)' : v <= 30 ? 'var(--amber-600)' : 'var(--red-600)',
-      },
-      {
-        label: 'AVG WH shrink',
-        compute: arr => avg(arr.map(x => x.whShrinkPct)),
-        format: v => v != null ? v.toFixed(1) + '%' : '—',
-        higherIsBetter: false,
-        colorFn: v => v == null ? '' : v <= 10 ? 'var(--green-600)' : v <= 15 ? 'var(--amber-600)' : 'var(--red-600)',
-      },
-      {
-        label: 'AVG crit defects',
-        compute: arr => avg(arr.map(x => x.moldPct)),
-        format: v => v != null ? v.toFixed(1) + '%' : '—',
-        higherIsBetter: false,
-        colorFn: v => v == null ? '' : v <= 3 ? 'var(--green-600)' : v <= 5 ? 'var(--amber-600)' : 'var(--red-600)',
-      },
-      {
-        label: 'AVG yield',
-        compute: arr => avg(arr.map(x => x.yieldPct)),
-        format: v => v != null ? v.toFixed(1) + '%' : '—',
-        higherIsBetter: true,
-        colorFn: v => v == null ? '' : v >= 90 ? 'var(--green-600)' : v >= 85 ? 'var(--amber-600)' : 'var(--red-600)',
-      },
-      {
-        label: 'Credit collection',
-        compute: arr => {
-          const c = arr.reduce((s, x) => s + (parseFloat(x.creditCalc)   || 0), 0);
-          const a = arr.reduce((s, x) => s + (parseFloat(x.creditAgreed) || 0), 0);
-          return c > 0 ? (a / c * 100) : null;
-        },
-        format: v => v != null ? v.toFixed(0) + '%' : '—',
-        higherIsBetter: true,
-        colorFn: v => v == null ? '' : v >= 50 ? 'var(--green-600)' : v >= 25 ? 'var(--amber-600)' : 'var(--red-600)',
-      },
+      { label: 'AVG margin (weighted)', unit: 'pct', higherIsBetter: true,
+        compute: arr => insWavg(arr.map(x => [f(x.netMargin), x._lbs])),
+        format: v => v != null ? v.toFixed(1) + '%' : '\u2014',
+        colorFn: v => v == null ? '' : marginColor(v) },
+      { label: 'AVG days in WH', unit: 'days', higherIsBetter: false,
+        compute: arr => { const d = arr.filter(x => f(x.days) > 0).map(x => f(x.days)); return d.length ? d.reduce((a, b) => a + b, 0) / d.length : null; },
+        format: v => v != null ? v.toFixed(0) : '\u2014',
+        colorFn: v => v == null ? '' : v <= INS_AGE_WATCH ? 'var(--green-600)' : v <= INS_AGE_CRIT ? 'var(--amber-600)' : 'var(--red-600)' },
+      { label: 'Shrink per day (weighted)', unit: 'pct', higherIsBetter: false,
+        compute: arr => insWavg(arr.filter(x => f(x.dailyShrinkPct) > 0).map(x => [f(x.dailyShrinkPct), x._lbs])),
+        format: v => v != null ? v.toFixed(2) + '%' : '\u2014',
+        colorFn: v => v == null ? '' : v <= 0.35 ? 'var(--green-600)' : v <= 0.55 ? 'var(--amber-600)' : 'var(--red-600)' },
+      { label: 'AVG crit defects (weighted)', unit: 'pct', higherIsBetter: false,
+        compute: arr => insWavg(arr.filter(x => x.moldPct != null && x.moldPct !== '').map(x => [f(x.moldPct), x._lbs])),
+        format: v => v != null ? v.toFixed(1) + '%' : '\u2014',
+        colorFn: v => v == null ? '' : v <= 3 ? 'var(--green-600)' : v <= 5 ? 'var(--amber-600)' : 'var(--red-600)' },
+      { label: 'AVG yield (weighted)', unit: 'pct', higherIsBetter: true,
+        compute: arr => insWavg(arr.filter(x => f(x.yieldPct) > 0).map(x => [f(x.yieldPct), x._lbs])),
+        format: v => v != null ? v.toFixed(1) + '%' : '\u2014',
+        colorFn: v => v == null ? '' : v >= 90 ? 'var(--green-600)' : v >= 85 ? 'var(--amber-600)' : 'var(--red-600)' },
     ];
-
-    // Trend arrow: compare last month vs first month shown
-    // Threshold for "stable" prevents flagging tiny noise as a trend.
-    const trendArrow = (firstVal, lastVal, higherIsBetter, unit) => {
-      if (firstVal == null || lastVal == null) return '<span style="color:var(--gray-300)">—</span>';
-      const diff = lastVal - firstVal;
-      // Stable threshold scales with unit: 0.5 pts for %, 1 unit for days
+    const trendArrow = (first, last, higherIsBetter, unit) => {
+      if (first == null || last == null) return '<span style="color:var(--gray-300)">\u2014</span>';
+      const diff = last - first;
       const stableThr = unit === 'pct' ? 0.5 : 1;
-      if (Math.abs(diff) < stableThr) {
-        return '<span style="color:var(--gray-500)" title="essentially flat">≈ stable</span>';
-      }
+      if (Math.abs(diff) < stableThr) return '<span style="color:var(--gray-500)" title="essentially flat">\u2248 stable</span>';
       const improving = higherIsBetter ? diff > 0 : diff < 0;
-      const color  = improving ? 'var(--green-600)' : 'var(--red-600)';
-      const arrow  = diff > 0 ? '▲' : '▼';
-      const sign   = diff > 0 ? '+' : '';
-      const suffix = unit === 'pct' ? ' pts' : '';
-      const verb   = improving ? 'improving' : 'worsening';
-      return '<span style="color:' + color + ';font-weight:700" title="' + verb + '">'
-        + arrow + ' ' + sign + diff.toFixed(1) + suffix + '</span>';
+      return '<span style="color:' + (improving ? 'var(--green-600)' : 'var(--red-600)') + ';font-weight:700" title="' + (improving ? 'improving' : 'worsening') + '">'
+        + (diff > 0 ? '\u25B2 +' : '\u25BC ') + diff.toFixed(unit === 'pct' ? 2 : 1) + (unit === 'pct' ? ' pts' : '') + '</span>';
     };
-
-    // Body rows
-    const bodyHTML = metrics.map(metric => {
-      const monthlyVals = sortedMonths.map(m => metric.compute(byMo[m]));
-      const first = monthlyVals[0];
-      const last  = monthlyVals[monthlyVals.length - 1];
-      // Determine unit type for the stable threshold
-      const isPct = metric.label.includes('margin') || metric.label.includes('shrink')
-                 || metric.label.includes('defects') || metric.label.includes('yield')
-                 || metric.label.includes('collection');
-      const cells = monthlyVals.map(v => {
-        const txt = metric.format(v);
-        const col = metric.colorFn(v);
-        return '<td style="padding:7px 10px;text-align:right;border-bottom:1px solid var(--gray-100);font-weight:600;color:' + col + '">' + txt + '</td>';
-      }).join('');
-      return '<tr>'
-        + '<td style="padding:7px 10px;text-align:left;border-bottom:1px solid var(--gray-100);color:var(--gray-600);font-weight:500">' + metric.label + '</td>'
-        + cells
-        + '<td style="padding:7px 10px;text-align:center;border-bottom:1px solid var(--gray-100);border-left:1px solid var(--gray-200)">' + trendArrow(first, last, metric.higherIsBetter, isPct ? 'pct' : 'days') + '</td>'
-        + '</tr>';
+    if (trendsBody) trendsBody.innerHTML = metrics.map(metric => {
+      const vals = sortedMonths.map(m => metric.compute(byMo[m]));
+      const cells = vals.map(v => '<td style="padding:7px 10px;text-align:right;border-bottom:1px solid var(--gray-100);font-weight:600;color:' + metric.colorFn(v) + '">' + metric.format(v) + '</td>').join('');
+      return '<tr><td style="padding:7px 10px;text-align:left;border-bottom:1px solid var(--gray-100);color:var(--gray-600);font-weight:500;white-space:nowrap">' + metric.label + '</td>'
+        + cells + '<td style="padding:7px 10px;text-align:center;border-bottom:1px solid var(--gray-100);border-left:1px solid var(--gray-200)">'
+        + trendArrow(vals[0], vals[vals.length - 1], metric.higherIsBetter, metric.unit) + '</td></tr>';
     }).join('');
-    if (trendsBody) trendsBody.innerHTML = bodyHTML;
   }
 
-  // ── SUPPLIER SCORECARD ──
-  // Identify the two vendors actually present in the data.
-  const vendors = Array.from(new Set(data.map(x => x.vendor).filter(Boolean)));
-  // Header cells reflect actual vendors present
-  if (vendors[0]) setText('sc-col-anawi', vendors[0]);
-  if (vendors[1]) setText('sc-col-interloom', vendors[1]);
-  // If only 1 vendor present, hide the second column gracefully later
-  const v1 = vendors[0] || '';
-  const v2 = vendors[1] || '';
-  const d1 = data.filter(x => x.vendor === v1);
-  const d2 = data.filter(x => x.vendor === v2);
-
-  // Per-vendor stat computations
-  const statOf = arr => {
-    if (arr.length === 0) return null;
-    const totalCalcV   = arr.reduce((s, x) => s + (parseFloat(x.creditCalc)   || 0), 0);
-    const totalAgreedV = arr.reduce((s, x) => s + (parseFloat(x.creditAgreed) || 0), 0);
-    const collectRate  = totalCalcV > 0 ? totalAgreedV / totalCalcV * 100 : null;
-    // Weight gap pattern: average gap across containers
-    const gaps = arr.map(x => {
-      const decl  = parseFloat(x.declaredLbs) || (x.boxes ? x.boxes * 30 : 0);
-      const real  = parseFloat(x.realArrLbs)  || (x.boxes && x.avgKg ? x.boxes * x.avgKg : decl);
-      return decl > 0 ? real - decl : null;
-    }).filter(g => g != null);
-    const avgGap = gaps.length ? gaps.reduce((s,g)=>s+g,0) / gaps.length : null;
-    return {
-      count: arr.length,
-      avgMargin: avg(arr.map(x => x.netMargin)),
-      avgShrink: avg(arr.map(x => x.whShrinkPct)),
-      avgDays:   avg(arr.map(x => x.days)),
-      totalCalc: totalCalcV,
-      totalAgreed: totalAgreedV,
-      collectRate: collectRate,
-      avgGap: avgGap,
-      // True cost per SELLABLE lb — total costs over packed-out lbs (recomputed
-      // from raw fields, never from the stored trueCostLb which had formula drift)
-      trueCostSellable: avg(arr.map(x => (x.totalCosts && x.lbsOut) ? x.totalCosts / x.lbsOut : null)),
-      // Annualized return on capital tied up in the container:
-      // (netProfit / totalCosts) scaled to a 365-day year by days-in-warehouse.
-      annualRoi: avg(arr.map(x => (x.netProfit && x.totalCosts && x.days > 0)
-        ? (x.netProfit / x.totalCosts) * (365 / x.days) * 100 : null)),
-      // Cost of ONE extra day in the warehouse: daily shrink value + daily
-      // cost of capital on the invoice value (rate from the Buy Planner setting).
-      holdCostDay: avg(arr.map(x => {
-        const d = parseFloat(x.days) || 0; if (d <= 0) return null;
-        const pl = parseFloat(x.priceLb) || 0;
-        const shrinkDay = (parseFloat(x.whShrink) || 0) / d;
-        const base = pl * (parseFloat(x.declaredLbs) || ((parseFloat(x.boxes) || 0) * 30));
-        const capRate = (typeof jlzCapitalRate === 'function') ? jlzCapitalRate() : 0.06;
-        return shrinkDay * pl + base * capRate / 365;
-      })),
-      // Plan vs actual: invoice price/lb vs contracted price/lb (order CIF/case ÷ 30).
-      // Positive = paying above contract on average.
-      contractDelta: avg(arr.map(x => {
-        if (typeof findOrderForPo !== 'function') return null;
-        const o = findOrderForPo(x.po); if (!o) return null;
-        const cif = parseFloat(o.cifPriceCase) || 0;
-        const inv = parseFloat(x.priceLb) || 0;
-        if (!(cif > 0) || !(inv > 0)) return null;
-        return inv - cif / 30;
-      })),
-    };
-  };
-  const s1 = statOf(d1);
-  const s2 = statOf(d2);
-
-  // Render scorecard rows
-  const cellVal = (v) => '<td style="padding:7px 10px;text-align:right;border-bottom:1px solid var(--gray-100);font-weight:600;color:var(--gray-800)">' + v + '</td>';
-  const cellLbl = (v) => '<td style="padding:7px 10px;text-align:left;border-bottom:1px solid var(--gray-100);color:var(--gray-600)">' + v + '</td>';
-  const fmtGap = g => g == null ? '—' : (g >= 0 ? '<span style="color:var(--green-600)">+' + Math.round(g).toLocaleString() + ' lbs over</span>'
-                                                : '<span style="color:var(--red-600)">' + Math.round(g).toLocaleString() + ' lbs short</span>');
-  const fmtCollect = (rate, calc, agreed) => {
-    if (calc === 0) return '—';
-    const color = rate >= 50 ? 'var(--green-600)' : rate >= 30 ? 'var(--amber-600)' : 'var(--red-600)';
-    return '<span style="color:'+color+'">' + fmt$(agreed) + ' / ' + fmt$(calc) + ' (' + rate.toFixed(0) + '%)</span>';
-  };
-  const fmtMarginColor = m => {
-    if (m == null) return '—';
-    const color = m >= 20 ? 'var(--green-600)' : m >= 12 ? 'var(--amber-600)' : 'var(--red-600)';
-    return '<span style="color:'+color+'">' + m.toFixed(1) + '%</span>';
-  };
-  const rowsHTML = [
-    ['# Containers',       s1 ? s1.count.toString() : '—',         s2 ? s2.count.toString() : '—'],
-    ['AVG margin',         s1 ? fmtMarginColor(s1.avgMargin) : '—', s2 ? fmtMarginColor(s2.avgMargin) : '—'],
-    ['AVG WH shrink',      s1 && s1.avgShrink != null ? s1.avgShrink.toFixed(1)+'%' : '—', s2 && s2.avgShrink != null ? s2.avgShrink.toFixed(1)+'%' : '—'],
-    ['AVG days in WH',     s1 && s1.avgDays != null ? s1.avgDays.toFixed(0) : '—',         s2 && s2.avgDays != null ? s2.avgDays.toFixed(0) : '—'],
-    ['Credits collected',  s1 ? fmtCollect(s1.collectRate || 0, s1.totalCalc, s1.totalAgreed) : '—', s2 ? fmtCollect(s2.collectRate || 0, s2.totalCalc, s2.totalAgreed) : '—'],
-    ['Weight gap pattern', s1 ? fmtGap(s1.avgGap) : '—',           s2 ? fmtGap(s2.avgGap) : '—'],
-    ['True cost / sellable lb',
-      s1 && s1.trueCostSellable != null ? '$' + s1.trueCostSellable.toFixed(4) : '—',
-      s2 && s2.trueCostSellable != null ? '$' + s2.trueCostSellable.toFixed(4) : '—'],
-    ['Annualized ROI on capital',
-      s1 && s1.annualRoi != null ? s1.annualRoi.toFixed(0) + '%' : '—',
-      s2 && s2.annualRoi != null ? s2.annualRoi.toFixed(0) + '%' : '—'],
-    ['Holding cost / extra day',
-      s1 && s1.holdCostDay != null ? '$' + s1.holdCostDay.toFixed(0) + '/day' : '—',
-      s2 && s2.holdCostDay != null ? '$' + s2.holdCostDay.toFixed(0) + '/day' : '—'],
-    ['Invoice vs contract Δ/lb',
-      s1 && s1.contractDelta != null ? (s1.contractDelta > 0 ? '+' : '') + '$' + s1.contractDelta.toFixed(4) : '—',
-      s2 && s2.contractDelta != null ? (s2.contractDelta > 0 ? '+' : '') + '$' + s2.contractDelta.toFixed(4) : '—'],
-  ];
-  setHTML('supp-scorecard-body', rowsHTML.map(row => {
-    return '<tr>' + cellLbl(row[0]) + cellVal(row[1]) + cellVal(row[2]) + '</tr>';
-  }).join(''));
-
   // ── TOP / BOTTOM 3 by margin ──
-  const sortedByMargin = data.slice()
-    .filter(x => x.netMargin != null && !isNaN(x.netMargin))
-    .sort((a,b) => (b.netMargin || 0) - (a.netMargin || 0));
-  const top3    = sortedByMargin.slice(0, 3);
+  const sortedByMargin = included.slice()
+    .filter(x => x.netMargin != null && !isNaN(f(x.netMargin)))
+    .sort((a, b) => f(b.netMargin) - f(a.netMargin));
+  const top3 = sortedByMargin.slice(0, 3);
   const bottom3 = sortedByMargin.slice(-3).reverse();
+  const perfRow = (x, color) => '<tr>'
+    + '<td style="padding:6px 4px;color:var(--gray-700);font-weight:600;font-size:11px;font-family:var(--fm)">PO ' + (x.po || '\u2014') + '</td>'
+    + '<td style="padding:6px 4px;color:var(--gray-500);font-size:10px">' + x._canon + '</td>'
+    + '<td style="padding:6px 4px;color:var(--gray-400);font-size:10px;text-align:right">' + (x.arrival || '\u2014') + '</td>'
+    + '<td style="padding:6px 4px;text-align:right;font-weight:700;color:' + color + ';font-size:12px">' + f(x.netMargin).toFixed(1) + '%</td></tr>';
+  setHTML('top-performers', top3.length ? top3.map(x => perfRow(x, 'var(--green-600)')).join('')
+    : '<tr><td style="padding:12px;text-align:center;color:var(--gray-300);font-size:11px">no data</td></tr>');
+  setHTML('bottom-performers', bottom3.length ? bottom3.map(x => perfRow(x, 'var(--red-600)')).join('')
+    : '<tr><td style="padding:12px;text-align:center;color:var(--gray-300);font-size:11px">no data</td></tr>');
 
-  const perfRow = (x, color) => {
-    const margin = parseFloat(x.netMargin);
-    return '<tr>'
-      + '<td style="padding:6px 4px;color:var(--gray-700);font-weight:600;font-size:11px;font-family:var(--fm)">PO ' + (x.po || '—') + '</td>'
-      + '<td style="padding:6px 4px;color:var(--gray-500);font-size:10px">' + (x.vendor || '—') + '</td>'
-      + '<td style="padding:6px 4px;color:var(--gray-400);font-size:10px;text-align:right">' + (x.arrival || '—') + '</td>'
-      + '<td style="padding:6px 4px;text-align:right;font-weight:700;color:'+color+';font-size:12px">' + (margin != null && !isNaN(margin) ? margin.toFixed(1) + '%' : '—') + '</td>'
-      + '</tr>';
-  };
-  setHTML('top-performers',
-    top3.length ? top3.map(x => perfRow(x, 'var(--green-600)')).join('')
-                : '<tr><td style="padding:12px;text-align:center;color:var(--gray-300);font-size:11px">no data</td></tr>');
-  setHTML('bottom-performers',
-    bottom3.length ? bottom3.map(x => perfRow(x, 'var(--red-600)')).join('')
-                   : '<tr><td style="padding:12px;text-align:center;color:var(--gray-300);font-size:11px">no data</td></tr>');
-
-  // ── ACTION ITEMS ──
-  const slowContainers   = data.filter(x => x.days != null && x.days > 21).length;
-  const unclaimedCalcGT0 = data.filter(x => (parseFloat(x.creditCalc) || 0) > 0 && (parseFloat(x.creditAgreed) || 0) === 0).length;
-  const noProfit         = data.filter(x => !x.netSales || x.netSales === 0).length;
+  // ── ACTION ITEMS — thresholds from the aging curve, not folklore ──
+  const watch = included.filter(x => f(x.days) > INS_AGE_WATCH && f(x.days) <= INS_AGE_CRIT).length;
+  const crit = included.filter(x => f(x.days) > INS_AGE_CRIT).length;
+  const unclaimed = modeRows.filter(x => f(x.creditCalc) > 0 && f(x.creditAgreed) === 0).length;
+  const rejPending = modeRows.filter(x => x.rejected && f(x.creditAgreed) === 0).length;
+  const noProf = included.filter(x => !f(x.netSales)).length;
   const actionCard = (count, label, color, bgColor) => {
     const isActive = count > 0;
     const c = isActive ? color : 'var(--gray-300)';
     const bg = isActive ? bgColor : 'var(--gray-50)';
     const border = isActive ? color : 'var(--gray-200)';
-    return '<div style="background:'+bg+';border:1px solid '+border+';border-radius:6px;padding:10px 12px">'
-      + '<div style="font-family:var(--fd);font-size:22px;font-weight:800;color:'+c+';line-height:1.1">' + count + '</div>'
-      + '<div style="font-size:10px;color:var(--gray-600);font-family:var(--fm);margin-top:4px;line-height:1.3">' + label + '</div>'
-      + '</div>';
+    return '<div style="background:' + bg + ';border:1px solid ' + border + ';border-radius:6px;padding:10px 12px">'
+      + '<div style="font-family:var(--fd);font-size:22px;font-weight:800;color:' + c + ';line-height:1.1">' + count + '</div>'
+      + '<div style="font-size:10px;color:var(--gray-600);font-family:var(--fm);margin-top:4px;line-height:1.3">' + label + '</div></div>';
   };
   setHTML('action-items',
-    actionCard(slowContainers,   'containers &gt;21 days in warehouse \u2014 review turnover', 'var(--amber-700)', 'var(--amber-50)')
-  + actionCard(unclaimedCalcGT0, 'containers with calculated credit but $0 agreed \u2014 claim queue', 'var(--red-700)',   'var(--red-50)')
-  + actionCard(noProfit,         'containers without profitability data loaded yet', 'var(--blue-600)',  'var(--blue-50)'));
+    actionCard(watch, 'held ' + (INS_AGE_WATCH + 1) + '\u2013' + INS_AGE_CRIT + ' days \u2014 margin under pressure', 'var(--amber-700)', 'var(--amber-50)')
+    + actionCard(crit, 'held past ' + INS_AGE_CRIT + ' days \u2014 margin cliff', 'var(--red-700)', 'var(--red-50)')
+    + actionCard(unclaimed, 'calculated credit, $0 agreed \u2014 claim queue', 'var(--red-700)', 'var(--red-50)')
+    + actionCard(rejPending, 'rejected \u2014 supplier credit pending', 'var(--red-700)', 'var(--red-50)')
+    + actionCard(noProf, 'missing profitability data', 'var(--blue-600)', 'var(--blue-50)')
+    + actionCard(excludedN, 'as-is / rejected \u2014 excluded from averages', 'var(--gray-500)', 'var(--gray-50)'));
 }
 
 // ════════════════════════════════════════════════════════════════════
