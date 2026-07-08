@@ -1265,7 +1265,7 @@ function updateProgressStrip(currentTab) {
   const lbsOut   = parseFloat((document.getElementById('lbsOut')||{}).value) || 0;
   const p        = window._profitability || {};
   const hasArrival = !!(po || vendor);
-  const hasOps     = lbsOut > 0;
+  const hasOps     = lbsOut > 0 || !!(document.getElementById('rejectedAtArrival')||{}).checked;
   const hasResults = !!(p.netSales || p.netProfit);
 
   const status = {
@@ -2697,6 +2697,7 @@ function authInjectLogo() {
       <div style="width:22px;height:22px;border-radius:4px;background:var(--jlz-light);color:var(--jlz);display:flex;align-items:center;justify-content:center;font-size:12px">↓</div>
       <span class="card-title">Container documents</span>
       <span class="card-hint">Parsed locally · nothing leaves your browser</span>
+      <span id="doc-mode-chip" class="chip chip-air" style="display:none;margin-left:8px;font-size:9px;font-weight:700;font-family:var(--fm);padding:1px 7px;border-radius:3px">&#9992; Air &mdash; QC not expected</span>
       <span id="doc-count" style="margin-left:auto;font-size:11px;font-weight:700;font-family:var(--fm);color:var(--gray-400)">Documents 0/5</span>
     </div>
     <div class="card-body">
@@ -2857,6 +2858,25 @@ function authInjectLogo() {
       <input type="text" id="soldAsIsReason" placeholder="Why was it sold as-is? (e.g., QC showed elevated mold risk)"
         oninput="recalc()"
         style="width:100%;height:30px;background:var(--amber-50);border:1px solid var(--amber-200);border-radius:4px;padding:0 10px;font-size:11px;font-family:var(--fb);color:var(--amber-800)"/>
+    </div>
+  </div>
+
+  <!-- ── REJECTED AT ARRIVAL TOGGLE ── -->
+  <!-- Exception case: container refused on quality at destination. Product is
+       never processed (no Work Order); the financial outcome resolves through
+       the supplier credit flow. Mutually exclusive with Sold as-is. -->
+  <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:12px 18px;margin-bottom:18px;box-shadow:var(--shadow-xs);display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;flex:1;min-width:280px">
+      <input type="checkbox" id="rejectedAtArrival" onchange="toggleRejected()" style="width:16px;height:16px;cursor:pointer;accent-color:var(--red-500)"/>
+      <div style="line-height:1.35">
+        <div style="font-size:12px;font-weight:600;color:var(--gray-800)">Rejected at arrival — container refused</div>
+        <div style="font-size:10px;color:var(--gray-500);font-family:var(--fm);margin-top:1px">Quality rejection at destination &mdash; never processed; supplier credit applies</div>
+      </div>
+    </label>
+    <div id="rejected-reason-wrap" style="display:none;flex:2;min-width:300px">
+      <input type="text" id="rejectedReason" placeholder="Why was it rejected? (e.g., QC found mold above tolerance)"
+        oninput="recalc()"
+        style="width:100%;height:30px;background:var(--red-50);border:1px solid var(--red-200);border-radius:4px;padding:0 10px;font-size:11px;font-family:var(--fb);color:var(--red-700)"/>
     </div>
   </div>
 
@@ -8251,8 +8271,21 @@ function renderRecommendedActions() {
     });
   }
 
-  // 1. MARGIN vs target
-  if(p.netMargin !== undefined && p.netMargin !== null && p.netMargin !== 0) {
+  // 0b. REJECTED context — container refused at arrival, never processed
+  const rejected = !!(el('rejectedAtArrival')||{}).checked;
+  const rejectedReason = (el('rejectedReason')||{}).value || '';
+  if(rejected) {
+    const reasonNote = rejectedReason
+      ? ` Reason: <em>${rejectedReason.replace(/</g,'&lt;')}</em>`
+      : ' No reason documented — consider adding one for future reference.';
+    insights.push({
+      kind: 'bad',
+      text: `<strong>Rejected at arrival</strong> — product never processed.${reasonNote} The margin below reflects WholesaleWare only; the real P&L resolves through the supplier credit (record it in Results).`,
+    });
+  }
+
+  // 1. MARGIN vs target (skip when rejected — WW margin excludes the supplier credit)
+  if(!rejected && p.netMargin !== undefined && p.netMargin !== null && p.netMargin !== 0) {
     if(p.netMargin >= 18) {
       insights.push({ kind:'good', text:`Container performed above target — Margin <strong>${p.netMargin.toFixed(1)}%</strong> (goal ≥ 18%).` });
     } else if(p.netMargin >= 10) {
@@ -8265,7 +8298,7 @@ function renderRecommendedActions() {
   }
 
   // 2. Margin vs historical average
-  if(avgMargin !== null && p.netMargin) {
+  if(!rejected && avgMargin !== null && p.netMargin) {
     const diff = p.netMargin - avgMargin;
     if(Math.abs(diff) >= 2) {
       const dir = diff > 0 ? 'above' : 'below';
@@ -8283,8 +8316,8 @@ function renderRecommendedActions() {
     insights.push({ kind:'good', text:`Transit shrink within tolerance at <strong>${transitPct.toFixed(1)}%</strong>.` });
   }
 
-  // 4. Warehouse shrink — internal issue (skip when flow-through, didn't go through warehouse)
-  if(!soldAsIs) {
+  // 4. Warehouse shrink — internal issue (skip when flow-through or rejected: never in warehouse)
+  if(!soldAsIs && !rejected) {
     if(whShrinkPct > 10) {
       insights.push({ kind:'bad', text:`Warehouse shrink high — <strong>${whShrinkPct.toFixed(1)}%</strong> (${Math.round(whShrink).toLocaleString()} lbs). Review storage conditions and processing timing.` });
     } else if(whShrinkPct > 5) {
@@ -9463,9 +9496,12 @@ function currentSnapshot() {
   // originLoss kept as alias for transitShrink (used downstream)
   const originLoss    = transitShrink;
   const realArr       = realArrLbs;
-  const whShrink      = realArr > 0 && lbsOut > 0 ? Math.max(0, realArr - lbsOut) : 0;
-  const whShrinkPct   = realArr > 0 ? whShrink / realArr * 100 : 0;
-  const dailyShrinkPct= days > 0 ? whShrinkPct / days : 0;
+  // Rejected containers never went through the warehouse: publishing lbsOut=0
+  // as shrink would poison the FIFO shrink calibration (bpHistRates skips NaN).
+  const wasRejected   = !!(document.getElementById('rejectedAtArrival')||{}).checked;
+  const whShrink      = (!wasRejected && realArr > 0 && lbsOut > 0) ? Math.max(0, realArr - lbsOut) : 0;
+  const whShrinkPct   = wasRejected ? null : (realArr > 0 ? whShrink / realArr * 100 : 0);
+  const dailyShrinkPct= wasRejected ? null : (days > 0 ? whShrinkPct / days : 0);
   const yieldPct      = lbsIn > 0 ? lbsOut / lbsIn * 100 : 0;
 
   // Cost calcs
@@ -9498,6 +9534,9 @@ function currentSnapshot() {
     // Flow-through case: sold as-is without warehouse processing
     soldAsIs: !!(document.getElementById('soldAsIs')||{}).checked,
     soldAsIsReason: (document.getElementById('soldAsIsReason')||{}).value || '',
+    // Quality rejection at destination: no processing, credit flow applies
+    rejected: !!(document.getElementById('rejectedAtArrival')||{}).checked,
+    rejectedReason: (document.getElementById('rejectedReason')||{}).value || '',
     boxes, priceLb, declKg, avgKg,
     defPct, moldPct: parseFloat((document.getElementById('moldPct')||{}).value)||0,
     // Profitability
@@ -9845,6 +9884,10 @@ function renderComparison() {
   // Completeness badge
   function statusBadge(x) {
     const hasOps = x.lbsOut > 0 || x.netSales > 0;
+    if(x.rejected) {
+      const reasonAttr = x.rejectedReason ? ' title="'+String(x.rejectedReason).replace(/"/g,'&quot;')+'"' : '';
+      return '<span'+reasonAttr+' style="font-size:9px;font-weight:700;font-family:var(--fm);padding:1px 6px;border-radius:3px;background:var(--red-500);color:#fff;border:1px solid var(--red-500);cursor:help">Rejected</span>';
+    }
     if(x.soldAsIs) {
       // Tooltip shows the reason if provided
       const reasonAttr = x.soldAsIsReason ? ' title="'+String(x.soldAsIsReason).replace(/"/g,'&quot;')+'"' : '';
@@ -14009,7 +14052,10 @@ function showLoadPanel() {
     list.innerHTML = h.map(x => {
       const hasOps = x.lbsOut > 0 || x.netSales > 0;
       let badge;
-      if(x.soldAsIs) {
+      if(x.rejected) {
+        const reasonAttr = x.rejectedReason ? ' title="'+String(x.rejectedReason).replace(/"/g,'&quot;')+'"' : '';
+        badge = '<span'+reasonAttr+' style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:3px;background:var(--red-500);color:#fff;border:1px solid var(--red-500);cursor:help">Rejected</span>';
+      } else if(x.soldAsIs) {
         const reasonAttr = x.soldAsIsReason ? ' title="'+String(x.soldAsIsReason).replace(/"/g,'&quot;')+'"' : '';
         badge = '<span'+reasonAttr+' style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:3px;background:var(--purple-500);color:#fff;border:1px solid var(--purple-500);cursor:help">Flow-through</span>';
       } else if(hasOps) {
@@ -14101,10 +14147,19 @@ function loadFromHistory(po) {
     // Apply the visual changes without overwriting the lbs values we just set
     const reasonWrap = el('soldAsIs-reason-wrap');
     if(reasonWrap) reasonWrap.style.display = snap.soldAsIs ? 'block' : 'none';
-    const dzWo = el('dz-wo');
-    if(dzWo) dzWo.style.display = snap.soldAsIs ? 'none' : '';
+    // WO row stays visible — the checklist chip shows the n/a state
     const uploadGrid = el('ops-upload-grid');
     if(uploadGrid) uploadGrid.style.gridTemplateColumns = snap.soldAsIs ? '1fr 1fr' : '1fr 1fr 1fr';
+  }
+
+  // Restore Rejected-at-arrival toggle and reason
+  const rejEl = document.getElementById('rejectedAtArrival');
+  if(rejEl) {
+    rejEl.checked = !!snap.rejected;
+    const rejReason = document.getElementById('rejectedReason');
+    if(rejReason) rejReason.value = snap.rejectedReason || '';
+    const rejWrap = el('rejected-reason-wrap');
+    if(rejWrap) rejWrap.style.display = snap.rejected ? 'block' : 'none';
   }
 
   // Restore cost allocations
@@ -14958,15 +15013,28 @@ async function inboxHandleFiles(fileList) {
 }
 
 // ── Data-derived checklist ──
+// Transport mode comes from the matched order (o.mode) — air shipments skip QC.
+function docContainerMode() {
+  const po = ((el('poId')||{}).value || '').trim();
+  const o = (po && typeof findOrderForPo === 'function') ? findOrderForPo(po) : null;
+  return (o && o.mode === 'air') ? 'air' : 'sea';
+}
 function docDataStatus() {
   const n = id => num(((el(id)||{}).value)) || 0;
   const soldAsIs = !!((el('soldAsIs')||{}).checked);
+  const rejected = !!((el('rejectedAtArrival')||{}).checked);
+  const isAir = docContainerMode() === 'air';
+  const p = window._profitability || {};
+  // Presence of parsed data, not netSales>0 — a rejected container's report
+  // can legitimately show zero/negative sales and must still count as loaded.
+  const hasProf = (p.netSales != null) || (p.totalCosts != null) || (p.netProfit != null);
   return {
     rs:    n('totalBoxes') > 0 && n('pricePerLb') > 0,
-    qr:    n('avgWeightKg') > 0,
-    wo:    soldAsIs ? 'na' : (n('lbsOut') > 0),
+    // If a QC report shows up anyway (parsed weight), data wins over the air n/a.
+    qr:    n('avgWeightKg') > 0 ? true : (isAir ? 'na-air' : false),
+    wo:    soldAsIs ? 'na-asis' : (rejected ? 'na-rejected' : (n('lbsOut') > 0)),
     alloc: ((window._allocBills || []).length > 0),
-    prof:  !!(((window._profitability || {}).netSales) > 0)
+    prof:  hasProf
   };
 }
 function renderDocChecklist() {
@@ -14976,8 +15044,9 @@ function renderDocChecklist() {
     const s = st[d.k];
     const chip = el('ds-' + d.k);
     const row = el(d.dz);
-    if(s === 'na') {
-      if(chip) chip.innerHTML = '<span class="ds-na">n/a — sold as-is</span>';
+    if(typeof s === 'string' && s.indexOf('na') === 0) {
+      const naLabel = ({'na-air':'n/a — air shipment','na-asis':'n/a — sold as-is','na-rejected':'n/a — rejected'})[s] || 'n/a';
+      if(chip) chip.innerHTML = '<span class="ds-na">' + naLabel + '</span>';
       if(row) row.classList.remove('has-data');
       return;
     }
@@ -14993,6 +15062,9 @@ function renderDocChecklist() {
   });
   const c = el('doc-count');
   if(c) { c.textContent = 'Documents ' + done + '/' + total; c.style.color = (done === total && total > 0) ? 'var(--green-600)' : 'var(--gray-400)'; }
+  // Air-shipment chip in the card header
+  const mc = el('doc-mode-chip');
+  if(mc) mc.style.display = (docContainerMode() === 'air') ? '' : 'none';
 }
 
 // ── Mount the shared card into whichever lifecycle tab is active ──
@@ -15989,12 +16061,15 @@ function toggleSoldAsIs() {
 }
 
 function applySoldAsIs(checked) {
+  if(checked) {
+    // Mutually exclusive with Rejected-at-arrival
+    const r = el('rejectedAtArrival');
+    if(r && r.checked) { r.checked = false; applyRejected(false); }
+  }
   const reasonWrap = el('soldAsIs-reason-wrap');
   if(reasonWrap) reasonWrap.style.display = checked ? 'block' : 'none';
 
-  // Show/hide Work Order dropzone — it's not needed when sold as-is
-  const dzWo = el('dz-wo');
-  if(dzWo) dzWo.style.display = checked ? 'none' : '';
+  // WO row stays visible — the checklist chip shows "n/a — sold as-is"
   // When hidden, the upload grid collapses to 2 columns
   const uploadGrid = el('ops-upload-grid');
   if(uploadGrid) uploadGrid.style.gridTemplateColumns = checked ? '1fr 1fr' : '1fr 1fr 1fr';
@@ -16015,6 +16090,27 @@ function applySoldAsIs(checked) {
     // Re-enabling normal mode: clear the auto-filled values so the user
     // can re-upload a Work Order (or fill them manually)
     const reasonEl = el('soldAsIsReason'); if(reasonEl) reasonEl.value = '';
+  }
+  recalc();
+}
+
+function toggleRejected() {
+  const checked = (el('rejectedAtArrival')||{}).checked;
+  applyRejected(checked);
+}
+
+function applyRejected(checked) {
+  const reasonWrap = el('rejected-reason-wrap');
+  if(reasonWrap) reasonWrap.style.display = checked ? 'block' : 'none';
+  if(checked) {
+    // Mutually exclusive with Sold as-is
+    const sEl = el('soldAsIs');
+    if(sEl && sEl.checked) { sEl.checked = false; applySoldAsIs(false); }
+    // Never processed: no warehouse days, no Work Order expected
+    const daysEl = el('daysWh'); if(daysEl) daysEl.value = 0;
+    const lastWoEl = el('lastWoDate'); if(lastWoEl) lastWoEl.value = '';
+  } else {
+    const reasonEl = el('rejectedReason'); if(reasonEl) reasonEl.value = '';
   }
   recalc();
 }
@@ -19192,8 +19288,7 @@ function captureWorkspace() {
 function syncSoldAsIsUi(on) {
   const reasonWrap = document.getElementById('soldAsIs-reason-wrap');
   if (reasonWrap) reasonWrap.style.display = on ? 'block' : 'none';
-  const dzWo = document.getElementById('dz-wo');
-  if (dzWo) dzWo.style.display = on ? 'none' : '';
+  // WO row stays visible — the checklist chip shows the n/a state
   const grid = document.getElementById('ops-upload-grid');
   if (grid) grid.style.gridTemplateColumns = on ? '1fr 1fr' : '1fr 1fr 1fr';
 }
@@ -19202,11 +19297,13 @@ function syncSoldAsIsUi(on) {
 function clearContainerWorkspace() {
   ['poId','lotId','vendor','arrivalDate','lastWoDate','daysWh','lbsIn','lbsOut','shrinkLbs','yieldPct',
    'pricePerLb','avgWeightKg','totalBoxes','defectPct','moldPct','qualityNotes','supplierCredit','driveFolder',
-   'soldAsIsReason','season','incoterm','anawi-extra-amt']
+   'soldAsIsReason','rejectedReason','season','incoterm','anawi-extra-amt']
     .forEach(id => { const e = document.getElementById(id); if (e) e.value = ''; });
   const dw = document.getElementById('declaredWeightKg'); if (dw) dw.value = '30';
   const sa = document.getElementById('soldAsIs'); if (sa) sa.checked = false;
   syncSoldAsIsUi(false);
+  const rj = document.getElementById('rejectedAtArrival'); if (rj) rj.checked = false;
+  const rjw = document.getElementById('rejected-reason-wrap'); if (rjw) rjw.style.display = 'none';
   window._allocBills = [];
   if (typeof renderAllocBills === 'function') renderAllocBills();
   window._profitability = {};
@@ -19224,6 +19321,8 @@ function restoreWorkspace(ws) {
     if (e) e.checked = !!ws.checks[id];
   });
   syncSoldAsIsUi(!!(ws.checks && ws.checks.soldAsIs));
+  const rw = document.getElementById('rejected-reason-wrap');
+  if (rw) rw.style.display = (ws.checks && ws.checks.rejectedAtArrival) ? 'block' : 'none';
   window._allocBills = (ws.allocBills || []).map(b => Object.assign({}, b));
   if (typeof renderAllocBills === 'function') renderAllocBills();
   window._profitability = Object.assign({}, ws.profitability || {});
