@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "static",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["/private/tmp/claude-501/-Users-juanjose-Library-CloudStorage-GoogleDrive-juan-jlzproduce-com-Mi-unidad-GitHub-jlz-container-intelligence/cd193df8-997d-4165-8220-defd764c992d/scratchpad/serve.py"],
+      "port": 8899
+    }
+  ]
+}
