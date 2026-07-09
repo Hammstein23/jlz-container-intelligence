@@ -4444,6 +4444,20 @@ function authInjectLogo() {
     </div>
   </div>
 
+  <!-- ── 2.5 ACTIVE PIPELINE — flag a downgraded container ── -->
+  <div class="card mb-4">
+    <div class="card-header" style="padding:12px 16px">
+      <div style="width:24px;height:24px;border-radius:var(--radius-sm);background:var(--amber-50);color:var(--amber-700);display:flex;align-items:center;justify-content:center;font-size:13px">⚠</div>
+      <span class="card-title">Active pipeline — flag a downgraded container</span>
+      <span class="card-subtitle ml-auto">click a row's status to toggle · what-if only, nothing real changes</span>
+    </div>
+    <div class="card-body" style="padding:0">
+      <div style="overflow-x:auto">
+        <table id="sim-pipeline-list" class="table" style="min-width:700px"></table>
+      </div>
+    </div>
+  </div>
+
   <!-- ── 3. STOCK PROJECTION (with hypothetical orders applied) ── -->
   <details class="card mb-4" open>
     <summary class="card-header" style="cursor:pointer;list-style:none">
@@ -16772,9 +16786,10 @@ function simGetState() {
     return {
       hypotheticalOrders: Array.isArray(s.hypotheticalOrders) ? s.hypotheticalOrders : [],
       quotes:             Array.isArray(s.quotes) ? s.quotes : [],
+      downgradedPos:      Array.isArray(s.downgradedPos) ? s.downgradedPos : [],
     };
   } catch (e) {
-    return { hypotheticalOrders: [], quotes: [] };
+    return { hypotheticalOrders: [], quotes: [], downgradedPos: [] };
   }
 }
 function simSaveState(state) {
@@ -16782,7 +16797,19 @@ function simSaveState(state) {
 }
 function simResetState() {
   if (!confirm('Clear all hypothetical orders and quotes? This cannot be undone.')) return;
-  simSaveState({ hypotheticalOrders: [], quotes: [] });
+  simSaveState({ hypotheticalOrders: [], quotes: [], downgradedPos: [] });
+  renderSimulator();
+}
+
+// Toggle a real order's "downgraded" (de-certified → conventional) flag.
+// Simulator-local what-if only — never touches the real Orders record
+// (jlz_orders_pipeline). Keyed by jlzPo, persisted in SIM_STORAGE_KEY.
+function simToggleDowngraded(po) {
+  if (!po) return;
+  const state = simGetState();
+  const idx = state.downgradedPos.indexOf(po);
+  if (idx === -1) state.downgradedPos.push(po); else state.downgradedPos.splice(idx, 1);
+  simSaveState(state);
   renderSimulator();
 }
 
@@ -17285,6 +17312,7 @@ function simToggleQuoteBreakdown(id) {
 function simRenderTimeline(realOrders, hypoOrders, stockDateStr) {
   const el = document.getElementById('sim-timeline');
   if (!el) return;
+  const downgradedSetTl = new Set(simGetState().downgradedPos);
   const allOrders = [
     ...realOrders.map(o => ({
       ...o,
@@ -17293,6 +17321,7 @@ function simRenderTimeline(realOrders, hypoOrders, stockDateStr) {
       _eta: normalizeDate(o.arrivalEstimated || o.arrivalActual),
       _mode: o.mode || 'sea',
       _cases: o.cases || 0,
+      _isDowngraded: downgradedSetTl.has(o.jlzPo),
     })),
     ...hypoOrders.map(o => {
       const eta = simComputeEta(o);
@@ -17346,13 +17375,14 @@ function simRenderTimeline(realOrders, hypoOrders, stockDateStr) {
     let leftPct = (daysFromToday / totalDays) * 100;
     leftPct = Math.max(0, Math.min(100, leftPct));
 
-    // Color coding: real=gray, hypothetical=purple (JLZ brand)
-    const bg = o._isReal ? 'var(--gray-500)' : '#8B5CF6';  // violet-500
-    const ring = o._isReal ? 'var(--gray-300)' : '#C4B5FD'; // violet-300
+    // Color coding: real=gray, hypothetical=purple (JLZ brand), downgraded=amber
+    const bg = o._isDowngraded ? 'var(--amber-600)' : (o._isReal ? 'var(--gray-500)' : '#8B5CF6');  // violet-500
+    const ring = o._isDowngraded ? 'var(--amber-300)' : (o._isReal ? 'var(--gray-300)' : '#C4B5FD'); // violet-300
     const etaLabel = eta.toLocaleDateString('en-US', { month:'short', day:'numeric' });
     const etaWk = (typeof isoWeek === 'function') ? isoWeek(o._eta) : '';
     const modeIcon = o._mode === 'air' ? '✈' : '🚢';
     const hypoIcon = !o._isReal ? '<span style="color:#7C3AED;margin-right:3px">🧪</span>' : '';
+    const dgIcon = o._isDowngraded ? '<span style="color:var(--amber-700);margin-right:3px" title="Downgraded — excluded from organic coverage">⚠</span>' : '';
     const daysLabel = isPast
       ? Math.abs(daysFromToday) + 'd ago'
       : daysFromToday === 0 ? 'today' : 'in ' + daysFromToday + 'd';
@@ -17364,10 +17394,10 @@ function simRenderTimeline(realOrders, hypoOrders, stockDateStr) {
         + '<div style="position:absolute;left:' + leftPct + '%;top:50%;transform:translate(-50%,calc(-50% - 18px));font-size:9px;color:' + (o._isReal ? 'var(--gray-600)' : '#7C3AED') + ';font-family:var(--fb);font-weight:600;white-space:nowrap;background:var(--white);padding:1px 4px;border-radius:2px">Wk ' + etaWk + '</div>'
         + '<div style="position:absolute;left:' + leftPct + '%;top:50%;transform:translate(-50%,calc(-50% + 18px));font-size:8px;color:var(--gray-400);font-family:var(--fm);white-space:nowrap;background:var(--white);padding:1px 3px;border-radius:2px">' + daysLabel + '</div>';
 
-    rows += '<div style="position:relative;height:44px;border-bottom:1px dashed var(--gray-100);display:flex;align-items:center" title="' + o._label + ' · arrives ' + etaLabel + ' (Wk ' + etaWk + ', ' + daysLabel + ')">'
+    rows += '<div style="position:relative;height:44px;border-bottom:1px dashed var(--gray-100);display:flex;align-items:center" title="' + o._label + ' · arrives ' + etaLabel + ' (Wk ' + etaWk + ', ' + daysLabel + ')' + (o._isDowngraded ? ' · DOWNGRADED — excluded from organic coverage' : '') + '">'
       // Left label area
       + '<div style="position:absolute;left:0;top:0;bottom:0;width:230px;font-size:11px;color:var(--gray-700);font-family:var(--fb);padding-right:8px;display:flex;align-items:center;border-right:1px solid var(--gray-200);background:var(--white);z-index:4;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">'
-        + '<span style="margin-right:4px">' + modeIcon + '</span>' + hypoIcon + o._label + ' <span style="color:var(--gray-400);font-weight:400;margin-left:4px">(' + o._cases.toLocaleString() + 'cs)</span>'
+        + '<span style="margin-right:4px">' + modeIcon + '</span>' + dgIcon + hypoIcon + o._label + ' <span style="color:var(--gray-400);font-weight:400;margin-left:4px">(' + o._cases.toLocaleString() + 'cs)</span>'
       + '</div>'
       // Marker area
       + '<div style="position:absolute;left:240px;right:0;top:0;bottom:0">'
@@ -17394,6 +17424,53 @@ function simRenderTimeline(realOrders, hypoOrders, stockDateStr) {
       + todayMarker
       + rows
     + '</div>';
+}
+
+// ── ACTIVE PIPELINE — flag a real order as downgraded (Simulator what-if) ──
+// Lists Contracted/In Transit orders with a click-to-toggle organic-status
+// chip. A downgraded PO stays visible everywhere (never silently vanishes)
+// but its cases are excluded from the coverage projection below. No schema
+// change: state lives only in SIM_STORAGE_KEY, keyed by jlzPo.
+function simRenderPipelineList(realOrders) {
+  const el = document.getElementById('sim-pipeline-list');
+  if (!el) return;
+  const downgradedSet = new Set(simGetState().downgradedPos);
+
+  if (!realOrders.length) {
+    el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--gray-400);font-size:12px">No active pipeline orders (Contracted / In Transit).</div>';
+    return;
+  }
+
+  let html = '<thead><tr style="background:var(--gray-50);border-bottom:2px solid var(--gray-200)">'
+    + '<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em">PO</th>'
+    + '<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em">Supplier</th>'
+    + '<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em">Mode</th>'
+    + '<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em">ETA</th>'
+    + '<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em">Cases</th>'
+    + '<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em">Organic status</th>'
+    + '</tr></thead><tbody>';
+
+  realOrders.forEach(o => {
+    const po = o.jlzPo || '—';
+    const isDg = downgradedSet.has(po);
+    const arrival = normalizeDate(o.arrivalEstimated || o.arrivalActual);
+    const wk = arrival ? isoWeek(arrival) : null;
+    const modeIcon = o.mode === 'air' ? '✈ Air' : '🚢 Sea';
+    const rowBg = isDg ? 'background:#fffdf7' : '';
+    const toggleHtml = isDg
+      ? '<span class="chip chip-warning" style="cursor:pointer" onclick="simToggleDowngraded(\'' + po + '\')" title="Click to clear — counts as organic again">⚠ Downgraded <span style="font-weight:400;opacity:.85">· de-certified → conventional</span></span>'
+      : '<span class="chip chip-success" style="cursor:pointer" onclick="simToggleDowngraded(\'' + po + '\')" title="Click to mark downgraded (de-certified → conventional)">✓ Counts as organic</span>';
+    html += '<tr style="border-bottom:1px solid var(--gray-100);' + rowBg + '">'
+      + '<td style="padding:9px 12px;font-family:var(--fm);font-weight:600;color:var(--gray-800)">' + po + '</td>'
+      + '<td style="padding:9px 12px;color:var(--gray-700)">' + (o.supplier || '—') + '</td>'
+      + '<td style="padding:9px 12px;color:var(--gray-600)">' + modeIcon + '</td>'
+      + '<td style="padding:9px 12px;color:var(--jlz);font-weight:600">' + (wk ? 'Wk ' + wk : '—') + '</td>'
+      + '<td style="padding:9px 12px;text-align:right;font-family:var(--fm);color:var(--gray-700)">' + (o.cases || 0).toLocaleString() + '</td>'
+      + '<td style="padding:9px 12px;text-align:right">' + toggleHtml + '</td>'
+      + '</tr>';
+  });
+  html += '</tbody>';
+  el.innerHTML = html;
 }
 
 // ── HYPOTHETICAL ORDERS TABLE ──
@@ -17836,18 +17913,19 @@ function simRenderProjection(realOrders, hypoOrders) {
   const safetyThreshold = weeklyDemand * safety;
 
   // Combine real + hypo into "arrivals by week" map
-  const arrivalsByWeek = {};  // wkKey → [{label, cases, isReal}]
+  const arrivalsByWeek = {};  // wkKey → [{label, cases, isReal, isDowngraded}]
   const addArrival = (wkKey, item) => {
     if (!arrivalsByWeek[wkKey]) arrivalsByWeek[wkKey] = [];
     arrivalsByWeek[wkKey].push(item);
   };
+  const downgradedSetProj = new Set(simGetState().downgradedPos);
   realOrders.forEach(o => {
     const arrival = normalizeDate(o.arrivalEstimated || o.arrivalActual);
     if (!arrival) return;
     const wk = isoWeek(arrival);
     const yr = (new Date(arrival + 'T00:00:00Z')).getUTCFullYear();
     const wkKey = yr + '-W' + String(wk).padStart(2, '0');
-    addArrival(wkKey, { label: 'PO ' + (o.jlzPo || '—'), cases: o.cases || 0, isReal: true });
+    addArrival(wkKey, { label: 'PO ' + (o.jlzPo || '—'), cases: o.cases || 0, isReal: true, isDowngraded: downgradedSetProj.has(o.jlzPo) });
   });
   hypoOrders.forEach(o => {
     const eta = simComputeEta(o);
@@ -17884,7 +17962,9 @@ function simRenderProjection(realOrders, hypoOrders) {
 
   futureWeeks.forEach(fw => {
     const arrivals = arrivalsByWeek[fw.week] || [];
-    const arrivalCases = arrivals.reduce((s,a) => s + a.cases, 0);
+    const activeArrivals = arrivals.filter(a => !a.isDowngraded);
+    const downgradedArrivals = arrivals.filter(a => a.isDowngraded);
+    const arrivalCases = activeArrivals.reduce((s,a) => s + a.cases, 0);
     const startStock = running;
     running = running + arrivalCases - weeklyDemand;
     const cover = weeklyDemand > 0 ? running / weeklyDemand : 0;
@@ -17903,10 +17983,13 @@ function simRenderProjection(realOrders, hypoOrders) {
     } else {
       statusBadge = '<span style="padding:2px 8px;border-radius:8px;background:#D1FAE5;color:#065F46;font-size:9px;font-weight:700">OK</span>';
     }
-    const hasHypo = arrivals.some(a => !a.isReal);
-    const arrivalText = arrivals.length
-      ? arrivals.map(a => (a.isReal ? '' : '🧪 ') + a.label + ' (' + a.cases + ')').join(', ')
+    const hasHypo = activeArrivals.some(a => !a.isReal);
+    const arrivalText = activeArrivals.length
+      ? activeArrivals.map(a => (a.isReal ? '' : '🧪 ') + a.label + ' (' + a.cases + ')').join(', ')
       : '—';
+    const downgradedText = downgradedArrivals.length
+      ? downgradedArrivals.map(a => a.label + ' (' + a.cases + ') ⨯ out of organic supply').join(', ')
+      : '';
     const coverColor = cover >= 3 ? 'var(--green-700)' : cover >= 1.5 ? 'var(--amber-600)' : 'var(--red-600)';
 
     html += '<tr style="border-bottom:1px solid var(--gray-100);' + rowBg + '">'
@@ -17915,6 +17998,7 @@ function simRenderProjection(realOrders, hypoOrders) {
       + '<td style="padding:8px 12px;text-align:right;color:' + (arrivalCases > 0 ? (hasHypo ? '#7C3AED;font-weight:600' : 'var(--green-700);font-weight:600') : 'var(--gray-300)') + '">'
         + (arrivalCases > 0 ? '+' + arrivalCases.toLocaleString() : '—')
         + (arrivalCases > 0 ? '<div style="font-size:9px;color:var(--gray-400);font-weight:400">' + arrivalText + '</div>' : '')
+        + (downgradedArrivals.length ? '<div style="font-size:9px;color:var(--amber-700);font-weight:600;text-decoration:line-through;text-decoration-color:var(--amber-300)">' + downgradedText + '</div>' : '')
       + '</td>'
       + '<td style="padding:8px 12px;text-align:right;color:var(--red-600)">−' + Math.round(weeklyDemand).toLocaleString() + '</td>'
       + '<td style="padding:8px 12px;text-align:right;font-weight:700;color:' + (running <= 0 ? 'var(--red-600)' : 'var(--gray-800)') + '">' + Math.round(running).toLocaleString() + '</td>'
@@ -17966,6 +18050,7 @@ function renderSimulator() {
 
   // Render each panel
   simRenderTimeline(activeOrders, state.hypotheticalOrders);
+  simRenderPipelineList(activeOrders);
   simRenderProjection(activeOrders, state.hypotheticalOrders);
   simRenderHypoTable(state.hypotheticalOrders);
   simRenderQuotesTable(state.quotes);
