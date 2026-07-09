@@ -16806,6 +16806,7 @@ function simResetState() {
 // (jlz_orders_pipeline). Keyed by jlzPo, persisted in SIM_STORAGE_KEY.
 function simToggleDowngraded(po) {
   if (!po) return;
+  po = String(po);  // keep the key consistent even if a caller ever passes a number
   const state = simGetState();
   const idx = state.downgradedPos.indexOf(po);
   if (idx === -1) state.downgradedPos.push(po); else state.downgradedPos.splice(idx, 1);
@@ -17321,7 +17322,7 @@ function simRenderTimeline(realOrders, hypoOrders, stockDateStr) {
       _eta: normalizeDate(o.arrivalEstimated || o.arrivalActual),
       _mode: o.mode || 'sea',
       _cases: o.cases || 0,
-      _isDowngraded: downgradedSetTl.has(o.jlzPo),
+      _isDowngraded: downgradedSetTl.has(String(o.jlzPo || '—')),
     })),
     ...hypoOrders.map(o => {
       const eta = simComputeEta(o);
@@ -17451,7 +17452,7 @@ function simRenderPipelineList(realOrders) {
     + '</tr></thead><tbody>';
 
   realOrders.forEach(o => {
-    const po = o.jlzPo || '—';
+    const po = String(o.jlzPo || '—');
     const isDg = downgradedSet.has(po);
     const arrival = normalizeDate(o.arrivalEstimated || o.arrivalActual);
     const wk = arrival ? isoWeek(arrival) : null;
@@ -17925,7 +17926,7 @@ function simRenderProjection(realOrders, hypoOrders) {
     const wk = isoWeek(arrival);
     const yr = (new Date(arrival + 'T00:00:00Z')).getUTCFullYear();
     const wkKey = yr + '-W' + String(wk).padStart(2, '0');
-    addArrival(wkKey, { label: 'PO ' + (o.jlzPo || '—'), cases: o.cases || 0, isReal: true, isDowngraded: downgradedSetProj.has(o.jlzPo) });
+    addArrival(wkKey, { label: 'PO ' + (o.jlzPo || '—'), cases: o.cases || 0, isReal: true, isDowngraded: downgradedSetProj.has(String(o.jlzPo || '—')) });
   });
   hypoOrders.forEach(o => {
     const eta = simComputeEta(o);
