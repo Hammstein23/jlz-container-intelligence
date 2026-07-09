@@ -892,6 +892,7 @@ html,body{background:var(--gray-50);color:var(--gray-800);font-family:var(--fb);
 .parse-bar.ok{background:var(--green-50);color:var(--green-700);border:1px solid var(--green-200)}
 .parse-bar.err{background:var(--red-50);color:var(--red-600);border:1px solid var(--red-100)}
 .parse-bar.info{background:var(--blue-50);color:var(--blue-600);border:1px solid var(--blue-100)}
+.parse-bar.warn{background:var(--amber-50);color:var(--amber-700);border:1px solid var(--amber-200)}
 
 /* ── COST TABLE ── */
 .cost-table{width:100%;border-collapse:collapse}
@@ -9593,6 +9594,8 @@ function currentSnapshot() {
   // Per-lb metrics
   const salePriceLb = p.netSales && lbsOut > 0 ? p.netSales/lbsOut : 0;
   const trueCostLb  = p.totalCosts && lbsOut > 0 ? p.totalCosts/lbsOut : 0;
+  // Source order for inherited pipeline-stage flags (downgraded).
+  const _dgOrder = (typeof findOrderForPo === 'function') ? findOrderForPo(po) : null;
 
   return {
     po, vendor, season, arrival, days, savedAt: new Date().toISOString(),
@@ -9607,6 +9610,12 @@ function currentSnapshot() {
     // Quality rejection at destination: no processing, credit flow applies
     rejected: !!(document.getElementById('rejectedAtArrival')||{}).checked,
     rejectedReason: (document.getElementById('rejectedReason')||{}).value || '',
+    // Downgraded (de-certified -> conventional): set upstream in Orders at
+    // the pipeline stage (before arrival), never re-entered here. Inherited
+    // from the linked order so History reflects whatever Orders decided.
+    downgraded: !!(_dgOrder && _dgOrder.downgraded),
+    downgradedDate: (_dgOrder && _dgOrder.downgradedDate) || '',
+    downgradedReason: (_dgOrder && _dgOrder.downgradedReason) || '',
     boxes, priceLb, declKg, avgKg,
     defPct, moldPct: parseFloat((document.getElementById('moldPct')||{}).value)||0,
     // Profitability
@@ -9976,6 +9985,16 @@ function renderComparison() {
     const m = modeOf[po] || 'sea';
     return ' <span class="invm-mc ' + m + '" style="font-size:8px;padding:0 4px;vertical-align:1px">' + m.toUpperCase() + '</span>';
   };
+  // CONV chip: a NEW segregation axis (organic vs conventional), orthogonal
+  // to sea/air and to Final/Provisional. Visually distinct (amber, matches
+  // chip-warning exactly) so it never reads as a mode or status chip.
+  const convChip = function(x){
+    if (!x.downgraded) return '';
+    const reasonAttr = x.downgradedReason
+      ? ' title="' + String(x.downgradedReason).replace(/"/g,'&quot;') + (x.downgradedDate ? ' (' + x.downgradedDate + ')' : '') + '"'
+      : (x.downgradedDate ? ' title="' + x.downgradedDate + '"' : '');
+    return ' <span class="chip chip-warning"' + reasonAttr + ' style="font-size:8px;padding:0 4px;vertical-align:1px;cursor:help">CONV</span>';
+  };
 
   // -- FOB vs FORMAL MARKET (Market Intel reuse, memoized per render) -----
   // Each saved container with a linked order is compared against the
@@ -10026,7 +10045,7 @@ function renderComparison() {
     const el = document.getElementById('hist-sup-rollup');
     if(!el) return;
     if(!supSel || data.length === 0) { el.style.display = 'none'; el.innerHTML = ''; return; }
-    const proc = data.filter(function(x){ return !x.rejected && !x.soldAsIs; });
+    const proc = data.filter(function(x){ return !x.rejected && !x.soldAsIs && !x.downgraded; });
     const wAvgOf = function(rows, vk, wk){
       let n = 0, d = 0;
       rows.forEach(function(x){
@@ -10045,6 +10064,7 @@ function renderComparison() {
     const drows = data.filter(function(x){ return x.etaDriftDays != null; });
     const drift = sAvgOf(drows, 'etaDriftDays');
     const rej   = data.filter(function(x){ return x.rejected; }).length;
+    const dg    = data.filter(function(x){ return x.downgraded; }).length;
     const fin   = data.filter(function(x){ return x.pnlFinal; }).length;
     const dels  = data.map(function(x){ return fobCtx[x.po]; })
                       .filter(function(f){ return f && f.delta != null; })
@@ -10056,8 +10076,8 @@ function renderComparison() {
         + '<div style="font-size:16px;font-weight:700;font-family:var(--fm);color:' + (color || 'var(--gray-800)') + ';margin-top:2px">' + val + '</div></div>';
     };
     el.innerHTML = '<div style="display:flex;gap:10px;flex-wrap:wrap">'
-      + kpi('Containers', String(data.length) + (rej ? ' <span style="font-size:10px;color:var(--red-600)">(' + rej + ' rej)</span>' : ''), null, 'Saved containers for this supplier under the current filters')
-      + kpi('Margin &middot; lbs-wtd', margW == null ? '&mdash;' : margW.toFixed(1) + '%', margW == null ? null : (margW > 18 ? 'var(--green-600)' : margW > 10 ? 'var(--amber-600)' : 'var(--red-600)'), 'Net margin weighted by received lbs. Rejected and flow-through excluded.')
+      + kpi('Containers', String(data.length) + (rej ? ' <span style="font-size:10px;color:var(--red-600)">(' + rej + ' rej)</span>' : '') + (dg ? ' <span style="font-size:10px;color:var(--amber-700)">(' + dg + ' conv)</span>' : ''), null, 'Saved containers for this supplier under the current filters')
+      + kpi('Margin &middot; lbs-wtd', margW == null ? '&mdash;' : margW.toFixed(1) + '%', margW == null ? null : (margW > 18 ? 'var(--green-600)' : margW > 10 ? 'var(--amber-600)' : 'var(--red-600)'), 'Net margin weighted by received lbs. Rejected, flow-through, and downgraded (conventional) excluded.')
       + kpi('WH shrink &middot; lbs-wtd', shrW == null ? '&mdash;' : shrW.toFixed(1) + '%', shrW == null ? null : (shrW < 10 ? 'var(--green-600)' : shrW < 15 ? 'var(--amber-600)' : 'var(--red-600)'), 'Warehouse shrink weighted by real-arrival lbs. Rejected and flow-through excluded. Zeros count as data.')
       + kpi('Crit defects', mold == null ? '&mdash;' : mold.toFixed(1) + '%', null, 'Average critical-defect % at arrival, all rows incl. rejected')
       + kpi('ETA drift', drift == null ? '&mdash;' : (drift > 0 ? '+' : '') + drift.toFixed(1) + 'd', drift == null ? null : (drift > 7 ? 'var(--red-600)' : drift > 3 ? 'var(--amber-600)' : 'var(--green-600)'), 'Average arrival delay vs first promised ETA (' + drows.length + ' of ' + data.length + ' rows with a linked order)')
@@ -10126,7 +10146,7 @@ function renderComparison() {
       return hasOps ? 'border-left:3px solid var(--green-500)' : 'border-left:3px solid var(--amber-400)';
     };
     b1.innerHTML = pag1.visible.map(x => '<tr style="'+rowBar(x)+'">'
-      +cell((x.po||'&mdash;')+modeChip(x.po),'left')
+      +cell((x.po||'&mdash;')+modeChip(x.po)+convChip(x),'left')
       +cell((x.vendor||'&mdash;')+(x.incoterm?' <span style="font-size:9px;color:var(--gray-400);font-family:var(--fm)">'+x.incoterm+'</span>':''),'left')
       +cell(x.arrival||'—','left')
       +'<td style="padding:6px 10px;text-align:center;border-bottom:1px solid var(--gray-100)">'+statusBadge(x)+'</td>'
@@ -10155,8 +10175,8 @@ function renderComparison() {
           +cell(avgRow0(rows.map(function(x){ const f=fobCtx[x.po]; return (f && f.delta!=null)?f.delta:null; }), fmtFobDelta))
           +'<td></td></tr>';
       };
-      const sea1 = allRows1.filter(function(x){ return modeOf[x.po] !== 'air'; });
-      const air1 = allRows1.filter(function(x){ return modeOf[x.po] === 'air'; });
+      const sea1 = allRows1.filter(function(x){ return modeOf[x.po] !== 'air' && !x.downgraded; });
+      const air1 = allRows1.filter(function(x){ return modeOf[x.po] === 'air' && !x.downgraded; });
       f1.innerHTML = (sea1.length ? foot1(sea1, 'Avg &middot; sea') : '')
                    + (air1.length ? foot1(air1, 'Avg &middot; air') : '');
     }
@@ -10204,7 +10224,7 @@ function renderComparison() {
       // Critical defects % color: green ≤3%, amber 3–5%, red >5%
       const moldColor = x.moldPct > 5 ? 'var(--red-600)' : x.moldPct > 3 ? 'var(--amber-600)' : x.moldPct > 0 ? 'var(--green-600)' : '';
       return '<tr style="'+rowBar(x)+'">'
-        +cell((x.po||'&mdash;')+modeChip(x.po),'left')
+        +cell((x.po||'&mdash;')+modeChip(x.po)+convChip(x),'left')
         +cell(x.vendor||'—','left')
         +cellR(x.arrival||'—','left')
         +cellR(x.moldPct > 0 ? fmtP(x.moldPct) : '—','right', moldColor)
@@ -10246,8 +10266,8 @@ function renderComparison() {
           +cell(avgRow0(proc.map(x=>x.holdingCostDay),function(v){ return '$'+parseFloat(v).toFixed(0); }))
           +'</tr>';
       };
-      const sea2 = allRows2.filter(function(x){ return modeOf[x.po] !== 'air'; });
-      const air2 = allRows2.filter(function(x){ return modeOf[x.po] === 'air'; });
+      const sea2 = allRows2.filter(function(x){ return modeOf[x.po] !== 'air' && !x.downgraded; });
+      const air2 = allRows2.filter(function(x){ return modeOf[x.po] === 'air' && !x.downgraded; });
       f2.innerHTML = (sea2.length ? foot2(sea2, 'Avg &middot; sea') : '')
                    + (air2.length ? foot2(air2, 'Avg &middot; air') : '');
     }
@@ -10268,7 +10288,7 @@ function renderComparison() {
       const c = x.costs || {};
       const total = Object.values(c).reduce((s,v)=>s+v,0);
       return '<tr style="'+rowBar3(x)+'">'
-        +cell((x.po||'&mdash;')+modeChip(x.po),'left')
+        +cell((x.po||'&mdash;')+modeChip(x.po)+convChip(x),'left')
         +cell((x.vendor||'&mdash;')+(x.incoterm?' <span style="font-size:9px;color:var(--gray-400);font-family:var(--fm)">'+x.incoterm+'</span>':''),'left')
         +cell(x.arrival||'—','left')
         +cell(fmtC(total))
@@ -10287,8 +10307,8 @@ function renderComparison() {
           +COST_CATS.map(function(cat){ return cell(fmtC(totals[cat]/rows.length)); }).join('')
           +'</tr>';
       };
-      const sea3 = data.filter(function(x){ return modeOf[x.po] !== 'air'; });
-      const air3 = data.filter(function(x){ return modeOf[x.po] === 'air'; });
+      const sea3 = data.filter(function(x){ return modeOf[x.po] !== 'air' && !x.downgraded; });
+      const air3 = data.filter(function(x){ return modeOf[x.po] === 'air' && !x.downgraded; });
       f3.innerHTML = (sea3.length ? foot3(sea3, 'Avg &middot; sea') : '')
                    + (air3.length ? foot3(air3, 'Avg &middot; air') : '');
     }
@@ -10333,7 +10353,7 @@ function renderComparison() {
       // Crit defects (mold %) — color matches Weight & Yield convention
       const moldColor = x.moldPct > 5 ? 'var(--red-600)' : x.moldPct > 3 ? 'var(--amber-600)' : x.moldPct > 0 ? 'var(--green-600)' : '';
       return '<tr style="'+rowBar4(x)+'">'
-        +cell((x.po||'&mdash;')+modeChip(x.po),'left')
+        +cell((x.po||'&mdash;')+modeChip(x.po)+convChip(x),'left')
         +cell(x.vendor||'—','left')
         +cell(x.arrival||'—','left')
         +cell(x.moldPct > 0 ? fmtP(x.moldPct) : '—', 'right', moldColor)
@@ -10355,8 +10375,8 @@ function renderComparison() {
           +cell(avgRow(rows.map(x=>x.creditAgreed),fmtC))
           +'<td></td></tr>';
       };
-      const sea4 = allRows4.filter(function(x){ return modeOf[x.po] !== 'air'; });
-      const air4 = allRows4.filter(function(x){ return modeOf[x.po] === 'air'; });
+      const sea4 = allRows4.filter(function(x){ return modeOf[x.po] !== 'air' && !x.downgraded; });
+      const air4 = allRows4.filter(function(x){ return modeOf[x.po] === 'air' && !x.downgraded; });
       f4.innerHTML = (sea4.length ? foot4(sea4, 'Avg &middot; sea') : '')
                    + (air4.length ? foot4(air4, 'Avg &middot; air') : '');
     }
@@ -11213,6 +11233,25 @@ function ordStatusChip(status) {
     + s.label + '</span>';
 }
 
+// ── DOWNGRADED CHIP + TOGGLE AFFORDANCE ──
+// Orthogonal to status: an order can be In Transit AND downgraded (e.g. an
+// APHIS-hold container that gets fumigated, losing organic certification).
+// Set at the pipeline stage (before arrival) per design; carries forward
+// into Inventory (Distressed bucket) and History (CONV chip) once arrived.
+function ordDowngradedChip(o, poEsc) {
+  if (o.downgraded) {
+    const reasonBits = [];
+    if (o.downgradedReason) reasonBits.push(o.downgradedReason);
+    if (o.downgradedDate) reasonBits.push('flagged ' + o.downgradedDate);
+    const titleAttr = reasonBits.length ? ' title="' + String(reasonBits.join(' \u00b7 ')).replace(/"/g,'&quot;') + ' \u2014 click to clear"' : ' title="Click to clear"';
+    return ' <span class="chip chip-warning" style="cursor:pointer"' + titleAttr
+      + ' onclick="event.stopPropagation();ordToggleDowngraded(\'' + poEsc + '\')">\u26a0 Downgraded</span>';
+  }
+  if (o.status === 'Contracted' || o.status === 'In Transit') {
+    return ' <span style="font-size:9px;color:var(--gray-300);cursor:pointer;text-decoration:underline dotted" title="Flag as downgraded (de-certified \u2192 conventional)" onclick="event.stopPropagation();ordToggleDowngraded(\'' + poEsc + '\')">flag downgraded</span>';
+  }
+  return '';
+}
 // ── MAIN RENDER ──
 function renderOrders() {
   // Refresh in-memory cache from localStorage on every render. Cheap and
@@ -11448,7 +11487,7 @@ function renderOrders() {
       nextBtn = '<span style="font-size:10px;color:var(--gray-300);font-family:var(--fm)">—</span>';
     }
     return '<tr onclick="openOrderPanelByPo(\'' + poEsc + '\')" style="cursor:pointer;border-bottom:1px solid var(--gray-100);transition:background .12s" onmouseover="this.style.background=\'var(--gray-50)\'" onmouseout="this.style.background=\'\'">'
-      + '<td style="padding:10px 12px">' + ordStatusChip(o.status) + '</td>'
+      + '<td style="padding:10px 12px">' + ordStatusChip(o.status) + ordDowngradedChip(o, poEsc) + '</td>'
       + '<td style="padding:10px 12px;color:var(--gray-800);font-weight:600">' + (o.jlzPo || '—') + modeChip + '</td>'
       + '<td style="padding:10px 12px;color:var(--gray-700)"><div style="display:flex;align-items:center;gap:6px"><span>' + (o.supplier || '—') + '</span>' + incotermChip + '</div></td>'
       + '<td style="padding:10px 12px;color:var(--gray-500);font-size:10px">' + (o.contractNo || '—') + '</td>'
@@ -11502,6 +11541,36 @@ function markNextStatus(po) {
   if (typeof showBar === 'function') showBar('✓ PO ' + o.jlzPo + ' → ' + o.status, 'ok');
 }
 
+// ── TOGGLE DOWNGRADED (real order, persisted) ──
+// Mirrors markNextStatus: lookup by PO, mutate, save, resync, toast. Unlike
+// the Simulator's what-if toggle (local only), this is real and flows
+// downstream to Inventory and History once the order arrives.
+function ordToggleDowngraded(po) {
+  const orders = getOrders();
+  const idx = orders.findIndex(o => String(o.jlzPo) === String(po));
+  if (idx < 0) {
+    console.warn('ordToggleDowngraded: PO not found:', po);
+    return;
+  }
+  const o = orders[idx];
+  if (o.downgraded) {
+    o.downgraded = false;
+    o.downgradedDate = null;
+    o.downgradedReason = null;
+  } else {
+    const reason = prompt('Reason for downgrade (optional) \u2014 e.g. "APHIS hold, fumigated, lost organic cert":', o.downgradedReason || '') || '';
+    o.downgraded = true;
+    o.downgradedDate = new Date().toISOString().slice(0, 10);
+    o.downgradedReason = reason;
+  }
+  saveOrders(orders);
+  window._ordersData = orders;
+  renderOrders();
+  if (typeof pushOrdersToSheet === 'function') pushOrdersToSheet();
+  if (typeof showBar === 'function') {
+    showBar(o.downgraded ? '⚠ PO ' + o.jlzPo + ' marked downgraded' : '✓ PO ' + o.jlzPo + ' cleared', o.downgraded ? 'warn' : 'ok');
+  }
+}
 // Open the side panel for a specific order, looked up by PO.
 // Wrapper around openOrderPanel(idx) that translates PO to storage index.
 function openOrderPanelByPo(po) {
@@ -12961,8 +13030,16 @@ function invmCompute(){
     var L=bpInvLot(id,st,hist); if(!L.o || L.cases<=0) return null;
     return { id:id, po:String(L.o.jlzPo||id), sup:L.o.supplier||'?', mode:L.mode,
       stored:L.stored, cases:L.cases, lbs:L.lbs, landed:L.landed,
-      addManual:(st.rows[id] && st.rows[id].days!=null)?st.rows[id].days:null, expDays:shelf-L.stored };
+      addManual:(st.rows[id] && st.rows[id].days!=null)?st.rows[id].days:null, expDays:shelf-L.stored,
+      downgraded: !!(L.o.downgraded) };
   }).filter(Boolean);
+  // Downgraded containers are a NEW segregation axis (organic vs
+  // conventional) -- same rigor as sea/air, formal/informal. They never
+  // count toward organic stock/coverage; surfaced separately below instead
+  // of silently vanishing (Juan still holds them physically, tracking the
+  // remate).
+  var distressedLots = lots.filter(function(l){ return l.downgraded; });
+  lots = lots.filter(function(l){ return !l.downgraded; });
   lots.sort(function(a,b){ return a.expDays-b.expDays; });   // FEFO: soonest expiry first
   var cum=0;
   lots.forEach(function(l){
@@ -12980,7 +13057,7 @@ function invmCompute(){
     l.coverDays=perDay?l.cases/perDay:0;
     l.zone=l.margin<0?'under':(l.margin<tmar*100?'thin':'healthy');
   });
-  return { lots:lots, demand:demand, perDay:perDay, sell:sell, tmar:tmar, rate:rate, shelf:shelf };
+  return { lots:lots, distressedLots:distressedLots, demand:demand, perDay:perDay, sell:sell, tmar:tmar, rate:rate, shelf:shelf };
 }
 function invmTotals(m){
   var t={cases:0,lbs:0,val:0,landLbs:0,netLbs:0,age:0,atCs:0,atUsd:0,oldest:0,under:0,thin:0,marginUsd:0};
@@ -13000,6 +13077,20 @@ function invmOverview(m,t){
     {l:'Avg age', v:Math.round(t.avgAge)+'d', s:'oldest '+t.oldest+'d'}
   ];
   var h='<div class="invm-kpis">'+kpis.map(function(k){ return '<div class="invm-kpi '+(k.c||'')+'"><div class="lbl">'+k.l+'</div><div class="val">'+k.v+'</div><div class="s2">'+k.s+'</div></div>'; }).join('')+'</div>';
+  // Distressed / non-organic bucket: downgraded lots, excluded from every
+  // KPI above, shown here so they never silently disappear.
+  if (m.distressedLots && m.distressedLots.length) {
+    var distCases = m.distressedLots.reduce(function(s,l){ return s+l.cases; }, 0);
+    h += '<div class="invm-card" style="border-color:var(--amber-200);background:#fffdf7;margin-top:12px;padding:14px 16px">'
+      + '<div style="font-size:10px;font-weight:700;color:var(--amber-700);text-transform:uppercase;letter-spacing:.05em;font-family:var(--fm);margin-bottom:8px">\u26a0 Distressed / non-organic \u2014 '+invmF(distCases)+' cs, excluded from stock above</div>'
+      + m.distressedLots.map(function(l){
+          return '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--amber-100);font-size:12px">'
+            + '<span><b>'+l.po+'</b> \u00b7 '+l.sup+'</span>'
+            + '<span style="font-family:var(--fm)">'+invmF(l.cases)+' cs <span style="color:var(--gray-400)">(remate / spot)</span></span>'
+            + '</div>';
+        }).join('')
+      + '</div>';
+  }
   var al=[];
   m.lots.forEach(function(l){ if(l.zone==='under') al.push({t:'bad',ic:'&#128308;',m:'<b>PO '+l.po+' is underwater</b> ('+l.margin.toFixed(0)+'% margin at sell-out) &mdash; '+l.sup+' '+String(l.mode).toUpperCase()+'. Sell first to cap the loss.'}); });
   m.lots.forEach(function(l){ if(l.total>m.shelf) al.push({t:'warn',ic:'&#9888;',m:'<b>PO '+l.po+'</b> would pass the '+m.shelf+'d shelf life before selling.'}); });
