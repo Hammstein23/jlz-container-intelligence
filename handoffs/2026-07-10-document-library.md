@@ -54,6 +54,21 @@ per-module document section with a lifecycle stepper (Ordered → In Transit →
   handlers `qAttach/qWaive/qDetach/qOpen/qClose/qReopen` (right after `containerDocStatus`).
   Scoped CSS lives inside the `#tab-quality` markup (global stylesheet untouched). Shows the
   active container's 5 quality docs; Quality Report auto-detects from the parser snapshot.
+- `619e852` — **Step 3: Library tab (DONE, verified).** New `library` tab (nav button first in
+  the **Analytics** sidebar section, `tb-library`/`tab-library`, registered in `switchTab`).
+  `renderLibrary()` + `lib*` helpers live right after `qReopen`. Renders the approved mockup v7
+  3-layer view: health tiles → needs-attention cards → all-containers **matrix/cards** with 8
+  filters (search/product/supplier/month/year/mode/stage/status). `libBuildRows()` merges real
+  containers from `jlz_container_history` (arrived, carries parsed snapshot) + `jlz_orders_pipeline`
+  (transit / arrived-not-saved; `Cancelled` skipped; history wins on dedup), each via
+  `containerDocStatus`. **Product** is derived from the app's own `PRODUCTS` supplier→commodity
+  map (`libSupplierProduct`); suppliers under >1 product (e.g. Crown Pacific) resolve to blank —
+  we don't guess the commodity. **Mode** for arrived containers comes from `findOrderForPo()`
+  (default sea; ground supported). Closed containers count missing/pending as N/A and leave the
+  attention radar. All CSS scoped under `.lib-root`; the `card`/`chip`/`legend` families that
+  collide with the global stylesheet use a `lib-` prefix. Verified via JavaScriptCore syntax
+  check + browser smoke test with synthetic data (tiles/sort/filters/cards/closed/empty all pass).
+  Screenshot confirmed against the mockup.
 
 ## Integration points already located (save yourself the search)
 
@@ -72,13 +87,7 @@ per-module document section with a lifecycle stepper (Ordered → In Transit →
 
 ## Next steps
 
-- **Step 3 — Library tab (the big one):** new `library` tab rendering the approved 3-layer
-  section: (1) health tiles (fleet), (2) "needs attention" cards, (3) All-containers matrix
-  **and** cards view with the 8 filters (search/product/supplier/month/year/mode/stage/status).
-  Data source: iterate containers from `jlz_orders_pipeline` + `jlz_container_history`, and for
-  each call `containerDocStatus(po, snap, arrived)`. Default sort: about-to-arrive-and-incomplete
-  first. The mockup's JS (`scratchpad/library_mockup.html`) is a near-drop-in reference for the
-  render + filter logic — adapt it to read real containers instead of the demo `ROWS`.
+- **Step 3 — Library tab: DONE** (`619e852`, see "What's built" above).
 - **Step 4 — Procurement & Operations doc sections + polish:** add the same doc-section pattern
   as the Quality tab into the Orders module (PO/BL/INV/PL) and Operations module (RS/WO/PROF/CA),
   reusing `containerDocStatus` filtered by stage. Apply the visual polish (severity stripe,
