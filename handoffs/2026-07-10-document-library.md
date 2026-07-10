@@ -2,7 +2,8 @@
 
 **Date:** 2026-07-10
 **Feature:** Per-container document tracking + a "Library" dashboard for JLZ Container Intelligence.
-**Status:** Phase 1 — steps 1 & 2 done and committed. Steps 3 & 4 remain.
+**Status:** **Phase 1 COMPLETE** — all 4 steps done, committed & verified. Only Phase-2+
+items remain (see "Later" below). Not yet deployed to GitHub Pages.
 
 ---
 
@@ -87,11 +88,27 @@ per-module document section with a lifecycle stepper (Ordered → In Transit →
 
 ## Next steps
 
-- **Step 3 — Library tab: DONE** (`619e852`, see "What's built" above).
-- **Step 4 — Procurement & Operations doc sections + polish:** add the same doc-section pattern
-  as the Quality tab into the Orders module (PO/BL/INV/PL) and Operations module (RS/WO/PROF/CA),
-  reusing `containerDocStatus` filtered by stage. Apply the visual polish (severity stripe,
-  lifecycle stepper) already in the mockup.
+- **Step 3 — Library tab: DONE** (`619e852`).
+- **Step 4 — Orders & Operations doc sections: DONE** (`1bcbe07`). Generic
+  `docSectionHTML(po, stage, snap, arrived)` + `docAttach/docWaive/docDetach/docOpen` handlers
+  (right after `qReopen`), reused by two mounts; each mounting view sets `window._docRefresh`
+  to its own re-render. Operations tab got an "Operations documents" section (RS/WO/PROF/CA,
+  parsed/auto-detected per decision #4) via `renderOpsDocs()` (dispatched from `switchTab`,
+  reads `poId` + `currentSnapshot`). Orders detail panel got a "Procurement documents"
+  collapsible group at the end of `buildOrderViewMode` (PO/BL/INV/PL Drive-link docs, keyed by
+  `o.jlzPo`); `renderOrderPanel` wires `_docRefresh`. Shared `.docsec` CSS added once (unique
+  prefix, global). The Quality tab's own `q*` renderer was left untouched.
+
+**Phase 1 is complete. Remaining work is all Phase-2+ (see "Later").** The only near-term
+follow-up worth noting: **deploy** — publish `JLZ_Container_Intelligence.html` **+**
+`market_data.js` together to GitHub Pages (still pending; nothing in this feature has shipped
+to production yet).
+
+### Possible polish (optional, not blocking)
+- `renderOpsDocs`/`renderQuality` only refresh on tab-switch, not when the active container
+  changes while you're already on the tab (same limitation the Quality tab already had).
+- History-mode `mode` for a container with no linked order defaults to `sea` (ground suppliers
+  like Christopher Ranch show 🚢 until an order links them). Documented, acceptable for v1.
 
 ## Later (out of Phase-1 scope)
 
