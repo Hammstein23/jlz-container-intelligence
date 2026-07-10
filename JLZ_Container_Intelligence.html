@@ -1183,7 +1183,7 @@ document.addEventListener('keydown', function(e) {
 });
 
 function switchTab(t) {
-  var ids = ['home','arrival','operations','results','history','insights','orders','planner','simulator','pricing','market','demand','inventory'];
+  var ids = ['home','arrival','operations','results','quality','history','insights','orders','planner','simulator','pricing','market','demand','inventory'];
   // 1) Isolate panes FIRST — for every tab, before any render runs. This way a
   //    render error can never abort the loop and leave another tab's pane
   //    visible underneath the active one (the "Buy Planner stacked under Orders" bug).
@@ -1204,6 +1204,7 @@ function switchTab(t) {
     if(t==='simulator' && typeof renderSimulator==='function')  renderSimulator();
     if(t==='pricing'   && typeof renderPricing==='function')    renderPricing();
     if(t==='demand'    && typeof renderDemand==='function')     renderDemand();
+    if(t==='quality'   && typeof renderQuality==='function')    renderQuality();
   } catch(e) {
     console.warn('Tab render failed for', t, e);
   }
@@ -2422,6 +2423,10 @@ function authInjectLogo() {
       <svg class="nav-icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>
       Results
     </button>
+    <button class="nav-item" id="tb-quality" onclick="switchTab('quality')">
+      <svg class="nav-icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+      Quality
+    </button>
   </div>
 
   <!-- ── SECTION: ANALYTICS (looking back at our containers) ── -->
@@ -3397,6 +3402,41 @@ function authInjectLogo() {
   </div>
 
 </div><!-- end tab-results -->
+
+
+<!-- ═══════════════════════════════════════════════════════════
+     TAB — QUALITY (per-container quality documents · Phase 1)
+═══════════════════════════════════════════════════════════ -->
+<div id="tab-quality" class="page" style="display:none">
+  <style>
+    .qdocs{max-width:760px;margin:0 auto;padding:12px 0 48px;}
+    .qdocs .q-empty{font-size:13px;color:var(--gray-500);background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:26px;text-align:center;}
+    .qdocs .q-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;}
+    .qdocs .q-po{font-family:var(--fm);font-size:18px;font-weight:700;color:var(--gray-900);}
+    .qdocs .q-title{font-size:12px;color:var(--gray-500);}
+    .qdocs .q-count{font-family:var(--fm);font-size:12px;color:var(--gray-600);}
+    .qdocs .q-closed{display:flex;align-items:center;gap:10px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:var(--r);padding:8px 12px;font-size:12px;color:var(--gray-600);margin-bottom:12px;}
+    .qdoc{border:1px solid var(--gray-200);border-radius:var(--r);margin-bottom:8px;background:var(--white);}
+    .qdoc-row{display:flex;align-items:center;gap:12px;padding:11px 13px;}
+    .qdoc-ic{width:30px;height:30px;border-radius:6px;background:#f5f3ff;border:1px solid #ede9fe;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;}
+    .qdoc-main{min-width:0;flex:1;}
+    .qdoc-name{font-size:13px;font-weight:600;color:var(--gray-800);}
+    .qdoc-sub{font-size:11px;color:var(--gray-400);font-family:var(--fm);}
+    .q-pill{font-size:9px;font-weight:700;font-family:var(--fm);text-transform:uppercase;letter-spacing:.05em;padding:2px 7px;border-radius:99px;white-space:nowrap;}
+    .q-pill.on{background:#dcfce7;color:#15803d;} .q-pill.miss{background:#fef3c7;color:#b45309;}
+    .q-pill.key{background:#fee2e2;color:#b91c1c;} .q-pill.na{background:var(--gray-200);color:var(--gray-600);}
+    .q-btn{font-family:var(--fb);font-size:11px;font-weight:600;border-radius:4px;padding:6px 11px;cursor:pointer;border:1px solid var(--gray-200);background:var(--white);color:var(--gray-700);white-space:nowrap;}
+    .q-btn.primary{background:#7c3aed;border-color:#7c3aed;color:#fff;} .q-btn.ghost{color:var(--gray-500);}
+    .qdoc-meta{border-top:1px solid var(--gray-100);padding:7px 13px 8px 55px;font-size:10.5px;color:var(--gray-500);font-family:var(--fm);}
+    .qdoc-meta.wait{color:#b45309;background:#fffbeb;border-top-color:#fef3c7;}
+    .qdoc-note{font-size:10px;color:var(--gray-400);font-style:italic;}
+    .q-closebar{margin-top:12px;}
+  </style>
+  <div class="qdocs">
+    <div id="q-head"></div>
+    <div id="q-docs"></div>
+  </div>
+</div>
 
 
 <!-- ═══════════════════════════════════════════════════════════
@@ -11212,6 +11252,65 @@ function containerDocStatus(po, snap, arrived) {
   });
   return out;
 }
+
+// ── DOCUMENT LIBRARY — Quality tab UI (Phase 1, step 2) ────────────────
+var Q_ICON = {TEMP:'🌡️', NIC:'🍃', PHY:'🌿', QC:'🔬', STOW:'🗺️'};
+var Q_SUB  = {TEMP:'Transit temperature · reefer log', NIC:'NOP Import Certificate · organic traceability',
+              PHY:'Phytosanitary certificate', QC:'SG Inspection · defects · weights', STOW:'Plano de estiba · load layout'};
+function qActivePo() { return (((document.getElementById('poId')||{}).value) || '').trim(); }
+function qUser() { return (typeof authUserEmail === 'function') ? authUserEmail() : ''; }
+function qFmtDate(ts) { if(!ts) return ''; try { return new Date(ts).toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'}); } catch(e) { return ''; } }
+function renderQuality() {
+  var head = document.getElementById('q-head'), body = document.getElementById('q-docs');
+  if(!head || !body) return;
+  var po = qActivePo();
+  if(!po) { head.innerHTML = '<div class="q-empty">Cargá un contenedor (en <b>Arrival</b>) para ver y adjuntar sus documentos de calidad.</div>'; body.innerHTML = ''; return; }
+  var snap = (typeof currentSnapshot === 'function') ? currentSnapshot() : {};
+  var st = containerDocStatus(po, snap, true);
+  var docs = st.docs.filter(function(d){ return d.stage === 'qual'; });
+  var onN = docs.filter(function(d){ return d.state === 'on'; }).length;
+  var closed = st.closed;
+  head.innerHTML =
+    '<div class="q-hd"><div><div class="q-po">' + po + '</div><div class="q-title">Quality documents</div></div>' +
+    '<div class="q-count">' + onN + ' of ' + docs.length + ' on file</div></div>' +
+    (closed ? '<div class="q-closed">🔒 Closed by ' + (closed.by || '—') + ' · ' + qFmtDate(closed.at) +
+              ' <button class="q-btn ghost" onclick="qReopen()">Reopen</button></div>' : '');
+  var html = docs.map(function(d) {
+    var pill = '', meta = '', actions = '';
+    var naByClose = closed && (d.state === 'missing' || d.state === 'pending');
+    if(d.state === 'on') {
+      pill = '<span class="q-pill on">On file</span>';
+      meta = '<div class="qdoc-meta">' + (d.source === 'parsed' ? 'Auto-detected from parsed data'
+             : ('🔗 Drive link · added ' + qFmtDate(d.uploadedAt) + (d.uploadedBy ? ' · by ' + d.uploadedBy : ''))) + '</div>';
+      if(d.source !== 'parsed') actions = '<button class="q-btn" onclick="qOpen(\'' + encodeURIComponent(d.driveLink) + '\')">Open</button>' +
+             (closed ? '' : '<button class="q-btn ghost" onclick="qDetach(\'' + d.key + '\')">Remove</button>');
+    } else if(d.state === 'waived' || naByClose) {
+      pill = '<span class="q-pill na">N/A</span>';
+      meta = '<div class="qdoc-meta wait">' + (naByClose ? 'N/A · container closed' : 'Marked N/A') + '</div>';
+      if(!closed) actions = '<button class="q-btn ghost" onclick="qDetach(\'' + d.key + '\')">Undo</button><button class="q-btn primary" onclick="qAttach(\'' + d.key + '\')">Attach</button>';
+    } else { // missing (quality docs never pending)
+      pill = (d.key === 'TEMP') ? '<span class="q-pill key">Missing · key</span>' : '<span class="q-pill miss">Missing</span>';
+      meta = '<div class="qdoc-meta wait">⏳ Not on file yet</div>';
+      actions = (d.source === 'parsed') ? '<span class="qdoc-note">from Quality Report parse</span>'
+             : '<button class="q-btn ghost" onclick="qWaive(\'' + d.key + '\')">N/A</button><button class="q-btn primary" onclick="qAttach(\'' + d.key + '\')">Attach</button>';
+    }
+    return '<div class="qdoc"><div class="qdoc-row"><div class="qdoc-ic">' + (Q_ICON[d.key] || '📄') + '</div>' +
+           '<div class="qdoc-main"><div class="qdoc-name">' + d.label + '</div><div class="qdoc-sub">' + (Q_SUB[d.key] || '') + '</div></div>' +
+           pill + actions + '</div>' + meta + '</div>';
+  }).join('');
+  html += '<div class="q-closebar">' + (closed ? '' : '<button class="q-btn" onclick="qClose()">🔒 Close documents (mark missing as N/A)</button>') + '</div>';
+  body.innerHTML = html;
+}
+function qAttach(type) {
+  var po = qActivePo(); if(!po) return;
+  var link = window.prompt('Pegá el link de Google Drive del documento (' + type + '):', '');
+  if(link && link.trim()) { attachDoc(po, type, link.trim(), qUser()); renderQuality(); }
+}
+function qWaive(type)  { var po = qActivePo(); if(po) { waiveDoc(po, type, qUser()); renderQuality(); } }
+function qDetach(type) { var po = qActivePo(); if(po) { detachDoc(po, type); renderQuality(); } }
+function qOpen(enc)    { var url = decodeURIComponent(enc || ''); if(url) window.open(url, '_blank', 'noopener'); }
+function qClose()      { var po = qActivePo(); if(po && window.confirm('¿Cerrar los documentos de ' + po + '? Los faltantes quedan marcados N/A.')) { closeContainer(po, qUser()); renderQuality(); } }
+function qReopen()     { var po = qActivePo(); if(po) { reopenContainer(po); renderQuality(); } }
 
 // In-memory cache, refreshed every renderOrders().
 window._ordersData = getOrders();
