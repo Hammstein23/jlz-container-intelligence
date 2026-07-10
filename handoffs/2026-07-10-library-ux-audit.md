@@ -20,7 +20,7 @@ patch `JLZ_Container_Intelligence.html`.
 6. **[Minor, noted only]** `containerDocStatus` re-parses the docs store per container per render.
    Fine under ~200 containers; memoize per render in Phase 2 if the fleet grows.
 
-## Approved fixes (spec — executor may already have landed these; verify `git log`)
+## Approved fixes — **LANDED in `006b05c`** (Opus executed, Fable reviewed diff + browser-verified)
 
 - **F1 TEMP pending:** `DOC_CATALOG` TEMP entry gets `atArrival:true`; in `containerDocStatus`
   both pending conditions change `d.stage === 'ops'` → `(d.stage === 'ops' || d.atArrival)`.
