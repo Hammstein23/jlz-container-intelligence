@@ -3518,14 +3518,13 @@ function authInjectLogo() {
     .lib-root .att-sub{font-size:11px;color:var(--lg400);margin-top:1px;}
     .lib-root .att-need{font-size:11px;margin-top:5px;font-weight:600;}
     .lib-root .att-need.red{color:var(--lrd600);} .lib-root .att-need.amber{color:var(--lam700);} .lib-root .att-none{font-size:12px;color:var(--lg400);}
+    .lib-root .att-close{font-size:10px;border:1px solid var(--lg200);border-radius:4px;background:transparent;color:var(--lg500);padding:3px 8px;cursor:pointer;margin-top:6px;}
+    .lib-root .att-more{background:var(--white);border:1px dashed var(--lg300);border-radius:var(--r);padding:12px 14px;box-shadow:0 1px 2px rgba(16,24,40,.04);text-align:center;color:var(--lg500);font-size:12px;font-weight:600;cursor:pointer;font-family:var(--fb);}
 
     .lib-root .lib-card{background:var(--white);border:1px solid var(--lg200);border-radius:var(--r);box-shadow:0 1px 2px rgba(16,24,40,.04);overflow:hidden;margin-top:20px;}
     .lib-root .lib-card-hd{padding:10px 16px;border-bottom:1px solid var(--lg100);display:flex;align-items:center;gap:8px;background:var(--lg50);}
     .lib-root .lib-card-title{font-size:12px;font-weight:600;color:var(--lg700);}
     .lib-root .lib-card-body{padding:12px 16px;}
-    .lib-root .subsw{display:inline-flex;background:var(--lg100);border:1px solid var(--lg200);border-radius:var(--r);padding:2px;gap:2px;margin-left:auto;}
-    .lib-root .subsw button{font-family:var(--fb);font-size:11px;font-weight:600;color:var(--lg500);background:transparent;border:0;padding:5px 11px;border-radius:4px;cursor:pointer;}
-    .lib-root .subsw button.on{background:var(--white);color:var(--lg900);box-shadow:0 1px 2px rgba(16,24,40,.08);}
 
     .lib-root .filters{display:flex;gap:7px 8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;}
     .lib-root .filters input,.lib-root .filters select{font-family:var(--fb);font-size:12px;color:var(--lg800);height:31px;border:1px solid var(--lg200);border-radius:var(--r);background:var(--white);padding:0 9px;}
@@ -3562,13 +3561,6 @@ function authInjectLogo() {
     .lib-root .empty-row td{padding:24px;text-align:center;color:var(--lg400);font-size:12px;}
     .lib-root .lib-legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:11px;color:var(--lg500);align-items:center;} .lib-root .lib-legend span{display:inline-flex;align-items:center;gap:6px;}
 
-    .lib-root .gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;}
-    .lib-root .gcard{background:var(--white);border:1px solid var(--lg200);border-top-width:3px;border-radius:var(--r);padding:14px;box-shadow:0 1px 2px rgba(16,24,40,.04);}
-    .lib-root .gcard.sev-red{border-top-color:var(--lrd500);} .lib-root .gcard.sev-amber{border-top-color:var(--lam500);} .lib-root .gcard.sev-green{border-top-color:var(--lgn500);} .lib-root .gcard.sev-gray{border-top-color:var(--lg300);}
-    .lib-root .gtop{display:flex;align-items:center;gap:6px;flex-wrap:wrap;} .lib-root .gtop .c-po{font-size:13px;}
-    .lib-root .gmid{display:flex;align-items:center;gap:12px;margin:12px 0;}
-    .lib-root .gmid .gtxt .gp{font-family:var(--fm);font-size:12px;font-weight:700;color:var(--lg800);} .lib-root .gmid .gtxt .gl{font-size:10px;color:var(--lg400);}
-    .lib-root .gsub{font-size:11px;color:var(--lg500);} .lib-root .gneed{font-size:11px;margin-top:6px;font-weight:600;} .lib-root .gneed.red{color:var(--lrd600);} .lib-root .gneed.amber{color:var(--lam700);} .lib-root .gneed.green{color:var(--lgn600);} .lib-root .gneed.gray{color:var(--lg500);}
     .lib-root .lib-note{margin-top:18px;border-top:1px solid var(--lg200);padding-top:12px;font-size:11px;color:var(--lg500);display:flex;gap:8px;align-items:flex-start;}
     .lib-root .lib-note .k{font-family:var(--fm);font-size:9px;text-transform:uppercase;letter-spacing:.06em;background:var(--lg100);color:var(--lg500);padding:2px 6px;border-radius:3px;flex-shrink:0;margin-top:1px;} .lib-root .lib-note b{color:var(--lg700);}
     @media (max-width:640px){ .lib-root .tiles{grid-template-columns:1fr 1fr;} }
@@ -3585,10 +3577,6 @@ function authInjectLogo() {
       <div class="lib-card">
         <div class="lib-card-hd">
           <span class="lib-card-title">All containers</span>
-          <div class="subsw">
-            <button id="lib-sw-matrix" class="on" onclick="libSetSub('matrix')">Matrix</button>
-            <button id="lib-sw-cards" onclick="libSetSub('cards')">Cards</button>
-          </div>
         </div>
         <div class="lib-card-body">
           <div class="filters">
@@ -3624,8 +3612,6 @@ function authInjectLogo() {
               <span><span class="dot waived"></span> N/A (waived)</span>
             </div>
           </div>
-
-          <div id="lib-cardsWrap" style="display:none"><div class="gal" id="lib-cardgrid"></div></div>
         </div>
       </div>
 
@@ -11382,7 +11368,7 @@ var DOC_CATALOG = [
   {key:'BL',   label:'Bill of Lading',   stage:'proc', source:'link'},
   {key:'INV',  label:'Invoice',          stage:'proc', source:'link'},
   {key:'PL',   label:'Packing List',     stage:'proc', source:'link'},
-  {key:'TEMP', label:'Temp Recorders',   stage:'qual', source:'link'},
+  {key:'TEMP', label:'Temp Recorders',   stage:'qual', source:'link', atArrival:true},
   {key:'NIC',  label:'NIC',              stage:'qual', source:'link'},
   {key:'PHY',  label:'Phyto',            stage:'qual', source:'link'},
   {key:'QC',   label:'Quality Report',   stage:'qual', source:'parsed', signal:function(s){ return !!(s && (s.avgKg || s.defPct || s.moldPct)); }},
@@ -11439,10 +11425,10 @@ function containerDocStatus(po, snap, arrived) {
     var s = stored.docs[d.key], state, link = '', at = null, by = '';
     if(s && s.waived) { state = 'waived'; at = s.waivedAt; by = s.waivedBy; }
     else if(d.source === 'parsed') {
-      state = d.signal(snap) ? 'on' : ((d.stage === 'ops' && !arrived) ? 'pending' : 'missing');
+      state = d.signal(snap) ? 'on' : (((d.stage === 'ops' || d.atArrival) && !arrived) ? 'pending' : 'missing');
     } else { // link-based doc
       if(s && s.onFile) { state = 'on'; link = s.driveLink; at = s.uploadedAt; by = s.uploadedBy; }
-      else { state = (d.stage === 'ops' && !arrived) ? 'pending' : 'missing'; }
+      else { state = ((d.stage === 'ops' || d.atArrival) && !arrived) ? 'pending' : 'missing'; }
     }
     out.docs.push({ key:d.key, label:d.label, stage:d.stage, source:d.source, state:state, driveLink:link, uploadedAt:at, uploadedBy:by });
   });
@@ -11452,7 +11438,7 @@ function containerDocStatus(po, snap, arrived) {
 // ── DOCUMENT LIBRARY — Quality tab UI (Phase 1, step 2) ────────────────
 var Q_ICON = {TEMP:'🌡️', NIC:'🍃', PHY:'🌿', QC:'🔬', STOW:'🗺️'};
 var Q_SUB  = {TEMP:'Transit temperature · reefer log', NIC:'NOP Import Certificate · organic traceability',
-              PHY:'Phytosanitary certificate', QC:'SG Inspection · defects · weights', STOW:'Plano de estiba · load layout'};
+              PHY:'Phytosanitary certificate', QC:'SG Inspection · defects · weights', STOW:'Load layout inside the container'};
 function qActivePo() { return (((document.getElementById('poId')||{}).value) || '').trim(); }
 function qUser() { return (typeof authUserEmail === 'function') ? authUserEmail() : ''; }
 function qFmtDate(ts) { if(!ts) return ''; try { return new Date(ts).toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'}); } catch(e) { return ''; } }
@@ -11460,7 +11446,7 @@ function renderQuality() {
   var head = document.getElementById('q-head'), body = document.getElementById('q-docs');
   if(!head || !body) return;
   var po = qActivePo();
-  if(!po) { head.innerHTML = '<div class="q-empty">Cargá un contenedor (en <b>Arrival</b>) para ver y adjuntar sus documentos de calidad.</div>'; body.innerHTML = ''; return; }
+  if(!po) { head.innerHTML = '<div class="q-empty">Load a container (in <b>Arrival</b>) to see and attach its quality documents.</div>'; body.innerHTML = ''; return; }
   var snap = (typeof currentSnapshot === 'function') ? currentSnapshot() : {};
   var st = containerDocStatus(po, snap, true);
   var docs = st.docs.filter(function(d){ return d.stage === 'qual'; });
@@ -11482,11 +11468,9 @@ function renderQuality() {
              (closed ? '' : '<button class="q-btn ghost" onclick="qDetach(\'' + d.key + '\')">Remove</button>');
     } else if(d.state === 'waived' || naByClose) {
       pill = '<span class="q-pill na">N/A</span>';
-      meta = '<div class="qdoc-meta wait">' + (naByClose ? 'N/A · container closed' : 'Marked N/A') + '</div>';
       if(!closed) actions = '<button class="q-btn ghost" onclick="qDetach(\'' + d.key + '\')">Undo</button><button class="q-btn primary" onclick="qAttach(\'' + d.key + '\')">Attach</button>';
     } else { // missing (quality docs never pending)
       pill = (d.key === 'TEMP') ? '<span class="q-pill key">Missing · key</span>' : '<span class="q-pill miss">Missing</span>';
-      meta = '<div class="qdoc-meta wait">⏳ Not on file yet</div>';
       actions = (d.source === 'parsed') ? '<span class="qdoc-note">from Quality Report parse</span>'
              : '<button class="q-btn ghost" onclick="qWaive(\'' + d.key + '\')">N/A</button><button class="q-btn primary" onclick="qAttach(\'' + d.key + '\')">Attach</button>';
     }
@@ -11499,13 +11483,13 @@ function renderQuality() {
 }
 function qAttach(type) {
   var po = qActivePo(); if(!po) return;
-  var link = window.prompt('Pegá el link de Google Drive del documento (' + type + '):', '');
+  var link = window.prompt('Paste the Google Drive link for this document (' + type + '):', '');
   if(link && link.trim()) { attachDoc(po, type, link.trim(), qUser()); renderQuality(); }
 }
 function qWaive(type)  { var po = qActivePo(); if(po) { waiveDoc(po, type, qUser()); renderQuality(); } }
 function qDetach(type) { var po = qActivePo(); if(po) { detachDoc(po, type); renderQuality(); } }
 function qOpen(enc)    { var url = decodeURIComponent(enc || ''); if(url) window.open(url, '_blank', 'noopener'); }
-function qClose()      { var po = qActivePo(); if(po && window.confirm('¿Cerrar los documentos de ' + po + '? Los faltantes quedan marcados N/A.')) { closeContainer(po, qUser()); renderQuality(); } }
+function qClose()      { var po = qActivePo(); if(po && window.confirm('Close documents for ' + po + '? Missing documents will be marked N/A.')) { closeContainer(po, qUser()); renderQuality(); } }
 function qReopen()     { var po = qActivePo(); if(po) { reopenContainer(po); renderQuality(); } }
 
 // ── GENERIC PER-CONTAINER DOCUMENT SECTION (Phase 1, step 4) ───────────
@@ -11527,13 +11511,14 @@ function docUser() { return (typeof authUserEmail === 'function') ? authUserEmai
 function docJs(s) { return String(s == null ? '' : s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); } // safe inside onclick='...'
 // Build the doc list for container `po`, limited to `stage` (proc|qual|ops).
 // snap: container snapshot (parsed signals). arrived: has it landed?
-function docSectionHTML(po, stage, snap, arrived) {
+function docSectionHTML(po, stage, snap, arrived, opts) {
   if(!po) return '<div class="docsec-empty">Load a container first to see and attach its documents.</div>';
   var st = containerDocStatus(po, snap || {}, arrived);
   var docs = st.docs.filter(function(d) { return d.stage === stage; });
   var onN = docs.filter(function(d) { return d.state === 'on'; }).length;
   var closed = st.closed, poJ = docJs(po);
-  var head = '<div class="docsec-hd"><span class="docsec-count">' + onN + ' of ' + docs.length + ' on file</span>' +
+  var head = (opts && opts.noHead) ? '' :
+    '<div class="docsec-hd"><span class="docsec-count">' + onN + ' of ' + docs.length + ' on file</span>' +
     (closed ? '<span class="docsec-closed">🔒 Closed by ' + libEsc(closed.by || '—') + ' · ' + docFmtDate(closed.at) + '</span>' : '') + '</div>';
   var rows = docs.map(function(d) {
     var pill = '', meta = '', actions = '';
@@ -11546,14 +11531,11 @@ function docSectionHTML(po, stage, snap, arrived) {
              (closed ? '' : '<button class="docsec-btn ghost" onclick="docDetach(\'' + poJ + '\',\'' + d.key + '\')">Remove</button>');
     } else if(d.state === 'waived' || naByClose) {
       pill = '<span class="docsec-pill na">N/A</span>';
-      meta = '<div class="docsec-meta wait">' + (naByClose ? 'N/A · container closed' : 'Marked N/A') + '</div>';
       if(!closed && d.source !== 'parsed') actions = '<button class="docsec-btn ghost" onclick="docDetach(\'' + poJ + '\',\'' + d.key + '\')">Undo</button><button class="docsec-btn primary" onclick="docAttach(\'' + poJ + '\',\'' + d.key + '\')">Attach</button>';
     } else if(d.state === 'pending') {
       pill = '<span class="docsec-pill pend">Pending</span>';
-      meta = '<div class="docsec-meta wait">⏳ Available once the container arrives</div>';
     } else { // missing
       pill = '<span class="docsec-pill miss">Missing</span>';
-      meta = '<div class="docsec-meta wait">⏳ Not on file yet</div>';
       actions = (d.source === 'parsed') ? '<span class="docsec-note">auto-detected from parsed data</span>'
              : '<button class="docsec-btn ghost" onclick="docWaive(\'' + poJ + '\',\'' + d.key + '\')">N/A</button><button class="docsec-btn primary" onclick="docAttach(\'' + poJ + '\',\'' + d.key + '\')">Attach</button>';
     }
@@ -11563,7 +11545,7 @@ function docSectionHTML(po, stage, snap, arrived) {
   }).join('');
   return head + rows;
 }
-function docAttach(po, type) { if(!po) return; var link = window.prompt('Pegá el link de Google Drive del documento (' + type + '):', ''); if(link && link.trim()) { attachDoc(po, type, link.trim(), docUser()); window._docRefresh(); } }
+function docAttach(po, type) { if(!po) return; var link = window.prompt('Paste the Google Drive link for this document (' + type + '):', ''); if(link && link.trim()) { attachDoc(po, type, link.trim(), docUser()); window._docRefresh(); } }
 function docWaive(po, type)  { if(po) { waiveDoc(po, type, docUser()); window._docRefresh(); } }
 function docDetach(po, type) { if(po) { detachDoc(po, type); window._docRefresh(); } }
 function docOpen(enc)        { var url = decodeURIComponent(enc || ''); if(url) window.open(url, '_blank', 'noopener'); }
@@ -11583,7 +11565,6 @@ function renderOpsDocs() {
 // view: health tiles → needs-attention → matrix/cards with 8 filters.
 var LIB_SHORT = ['PO','BL','INV','PL','TEMP','NIC','PHY','QC','STOW','RS','WO','PROF','CA'];
 var LIB_MON   = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-var LIB_SUB   = 'matrix';
 
 // supplier → product label, derived from the app's own PRODUCTS config.
 // Suppliers that appear under >1 product (e.g. Crown Pacific) are ambiguous:
@@ -11705,13 +11686,33 @@ function libRenderTiles(rows) {
 }
 function libRenderAttention(rows) {
   var el = document.getElementById('lib-attention'); if(!el) return;
-  var att = rows.filter(libAttention).sort(function(a, b) { return (libStat(b).key ? 1 : 0) - (libStat(a).key ? 1 : 0); });
-  el.innerHTML = att.length ? att.map(function(r) { var s = libStat(r), sv = libSev(r), nt = libNeedText(r);
+  var att = rows.filter(libAttention).sort(function(a, b) {
+    var kd = (libStat(b).key ? 1 : 0) - (libStat(a).key ? 1 : 0); if(kd) return kd;
+    return (b.ym || '') > (a.ym || '') ? 1 : -1;   // most recent ym first
+  });
+  if(!att.length) { el.innerHTML = '<div class="att-none">Nothing needs attention 🎉</div>'; return; }
+  var CAP = 6, shown = att.slice(0, CAP);
+  var html = shown.map(function(r) { var s = libStat(r), sv = libSev(r), nt = libNeedText(r);
     return '<div class="att sev-' + sv + '">' + libDonut(s.pct, libSevColor(sv), 48) +
       '<div class="att-body"><div class="att-po">' + libEsc(r.po) + ' ' + libStageChip(r) + '</div>' +
       '<div class="att-sub">' + libDesc(r) + '</div>' +
-      '<div class="att-need ' + nt.c + '">' + nt.t + '</div></div></div>';
-  }).join('') : '<div class="att-none">Nothing needs attention 🎉</div>';
+      '<div class="att-need ' + nt.c + '">' + nt.t + '</div>' +
+      '<button class="att-close" onclick="libCloseFromCard(\'' + docJs(r.po) + '\')">🔒 Close</button></div></div>';
+  }).join('');
+  if(att.length > CAP) html += '<button class="att-more" onclick="libViewAllAttention()">+ ' + (att.length - CAP) + ' more need attention →</button>';
+  el.innerHTML = html;
+}
+function libViewAllAttention() {
+  var sel = document.getElementById('lib-f-stat'); if(sel) sel.value = 'incomplete';
+  libRenderList();
+  var ms = document.querySelector('#tab-library .matrix-scroll');
+  if(ms && ms.scrollIntoView) ms.scrollIntoView({behavior:'smooth', block:'start'});
+}
+function libCloseFromCard(po) {
+  if(!po) return;
+  if(window.confirm('Close documents for ' + po + '? Missing documents will be marked N/A.')) {
+    closeContainer(po, docUser()); renderLibrary();
+  }
 }
 function libPasses(r) {
   var v = function(id) { var e = document.getElementById(id); return e ? e.value : ''; };
@@ -11760,7 +11761,7 @@ function libRenderList() {
   var vis = libSortRows(rows.filter(libPasses));
   var rc = document.getElementById('lib-rescount');
   if(rc) rc.innerHTML = '<b>' + vis.length + '</b> of ' + rows.length + ' shown';
-  if(LIB_SUB === 'matrix') libRenderMatrix(vis); else libRenderCards(vis);
+  libRenderMatrix(vis);
 }
 function libRenderMatrix(vis) {
   var b = document.getElementById('lib-mbody'); if(!b) return;
@@ -11781,23 +11782,6 @@ function libRenderMatrix(vis) {
     html += '</tr>';
   });
   b.innerHTML = vis.length ? html : '<tr class="empty-row"><td colspan="15">No containers match these filters.</td></tr>';
-}
-function libRenderCards(vis) {
-  var g = document.getElementById('lib-cardgrid'); if(!g) return;
-  g.innerHTML = vis.length ? vis.map(function(r) { var s = libStat(r), sv = libSev(r), nt = libNeedText(r);
-    return '<div class="gcard sev-' + sv + '"><div class="gtop"><span class="c-po">' + libEsc(r.po) + '</span>' + libModeChip(r) + libStageChip(r) + '</div>' +
-      '<div class="gmid">' + libDonut(s.pct, libSevColor(sv), 52) + '<div class="gtxt"><div class="gp">' + s.on + ' / ' + s.expected + '</div><div class="gl">docs on file</div></div></div>' +
-      '<div class="gsub">' + libDesc(r) + libYmLabel(r) + '</div>' +
-      '<div class="gneed ' + nt.c + '">' + nt.t + '</div></div>';
-  }).join('') : '<div style="font-size:12px;color:var(--lg400);padding:8px">No containers match these filters.</div>';
-}
-function libSetSub(m) {
-  LIB_SUB = m;
-  var bm = document.getElementById('lib-sw-matrix'), bc = document.getElementById('lib-sw-cards');
-  if(bm) bm.classList.toggle('on', m === 'matrix'); if(bc) bc.classList.toggle('on', m === 'cards');
-  var mw = document.getElementById('lib-matrixWrap'), cw = document.getElementById('lib-cardsWrap');
-  if(mw) mw.style.display = m === 'matrix' ? 'block' : 'none'; if(cw) cw.style.display = m === 'cards' ? 'block' : 'none';
-  libRenderList();
 }
 function libClearF() {
   ['lib-f-search','lib-f-prod','lib-f-sup','lib-f-month','lib-f-year','lib-f-mode','lib-f-stage','lib-f-stat']
@@ -12630,7 +12614,8 @@ function buildOrderViewMode(o) {
       product: true,      // collapsed
       dates: false,       // expanded by default
       changes: false,     // expanded if exists
-      observations: false // expanded if exists
+      observations: false,// expanded if exists
+      procdocs: true      // collapsed
     };
   }
   const grp = (title, key) => {
@@ -12771,11 +12756,17 @@ function buildOrderViewMode(o) {
 
     // ── Procurement documents (Phase 1 step 4 — same section as Quality/Ops)
     //    Keyed by this order's PO; PO/BL/INV/PL are Drive-link docs. Also
-    //    surfaced fleet-wide in the Library tab.
-    + grp('Procurement documents', 'procdocs')
-    + '<div class="group-body"><div class="docsec">'
-    + docSectionHTML(o.jlzPo, 'proc', {}, o.status === 'Arrived')
-    + '</div></div>';
+    //    surfaced fleet-wide in the Library tab. Collapsed by default; title
+    //    carries the on-file count so the panel reads at a glance.
+    + (function() {
+        var pdocs = containerDocStatus(o.jlzPo, {}, o.status === 'Arrived').docs.filter(function(d){ return d.stage === 'proc'; });
+        var pdOn = pdocs.filter(function(d){ return d.state === 'on'; }).length;
+        if (window._orderPanelCollapsed.procdocs === undefined) window._orderPanelCollapsed.procdocs = true;
+        return grp('Procurement documents · ' + pdOn + '/' + pdocs.length, 'procdocs')
+          + '<div class="group-body"><div class="docsec">'
+          + docSectionHTML(o.jlzPo, 'proc', {}, o.status === 'Arrived', {noHead:true})
+          + '</div></div>';
+      })();
 }
 
 // Toggle a specific group's collapse state in the order side panel
