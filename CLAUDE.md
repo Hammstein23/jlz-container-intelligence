@@ -41,11 +41,19 @@ entenderse sin explicación** — es el criterio de diseño #1, siempre.
   "verificar líneas+md5" que se usaba subiendo el archivo por chat — acá el
   repo mismo es la fuente de verdad).
 - Anclás por string único, nunca por número de línea (los números se corren).
-- Después de CUALQUIER patch sobre un `<script>` inline: `node --check` sobre
-  cada bloque de script + balance de divs. La sintaxis válida NO implica
-  lógica correcta — para lógica nueva, smoke test con data sintética
-  (ver ejemplos de sesiones anteriores: un bug real de este proyecto pasó
-  `node --check` limpio y solo se agarró releyendo la función completa).
+- Después de CUALQUIER patch sobre un `<script>` inline: chequeo de sintaxis por
+  bloque + balance de divs. Si `node` no está en el entorno (pasa seguido acá),
+  usá `osascript -l JavaScript` sobre el bloque extraído, con stubs de
+  `window`/`document`/`localStorage` al inicio (un `SyntaxError` falla; un
+  `ReferenceError` de runtime es esperable). La sintaxis válida NO implica lógica
+  correcta — para lógica nueva, smoke test con data sintética (ver ejemplos de
+  sesiones anteriores: un bug real pasó el check de sintaxis limpio y solo se
+  agarró releyendo la función completa).
+- Verificación en navegador: por DOM (`preview_eval` para estado,
+  `preview_inspect` para estilos computados), NO por screenshots. La app está
+  detrás de un login gate (no se puede ver la UI logueada sin credenciales — no
+  las ingreses) y el preview headless a veces saca capturas en blanco. Screenshots
+  solo si Juan los pide para verlos él.
 - Cambios grandes de UI/estructura: mockup interactivo primero, aprobación
   antes de tocar producción. Fixes chicos: directo.
 - Commits chicos y por tema — no un commit gigante mezclando módulos
