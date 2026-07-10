@@ -11605,7 +11605,7 @@ function libSupplierProduct(supplier) {
       }
     } catch(e) {}
   }
-  return _libSupProd[(supplier || '').trim().toLowerCase()] || '';
+  return _libSupProd[String(supplier == null ? '' : supplier).trim().toLowerCase()] || '';
 }
 // Mode for an arrived container isn't stored in its snapshot — resolve it
 // from the linked order (same contract renderComparison uses); default sea.
@@ -11614,7 +11614,7 @@ function libModeForPo(po, fallback) {
   var m = (o && o.mode) ? o.mode : (fallback || 'sea');
   return (m === 'air') ? 'air' : (m === 'ground') ? 'ground' : 'sea';
 }
-function libYm(d) { d = (d || '').trim(); return /^\d{4}-\d{2}/.test(d) ? d.slice(0,7) : ''; }
+function libYm(d) { d = String(d == null ? '' : d).trim(); return /^\d{4}-\d{2}/.test(d) ? d.slice(0,7) : ''; }
 function libMakeRow(po, supplier, mode, stage, ym, st) {
   return { po:po, supplier:supplier || '', product:libSupplierProduct(supplier),
            mode:(mode === 'air' ? 'air' : mode === 'ground' ? 'ground' : 'sea'),
@@ -11622,16 +11622,22 @@ function libMakeRow(po, supplier, mode, stage, ym, st) {
 }
 function libBuildRows() {
   var rows = [], seen = {}, hist = [];
-  try { hist = JSON.parse(localStorage.getItem('jlz_container_history') || '[]') || []; } catch(e) {}
+  // Use getHistory() (it migrates legacy snapshots — coerces po to String,
+  // normalizes dates) rather than reading localStorage raw. Real container POs
+  // are numeric (e.g. 2073724) and older records store po as a Number; calling
+  // .trim() on a Number throws and would blank the whole tab. String() below is
+  // a belt-and-suspenders guard for any store that skips migration.
+  try { hist = (typeof getHistory === 'function') ? (getHistory() || [])
+             : (JSON.parse(localStorage.getItem('jlz_container_history') || '[]') || []); } catch(e) { hist = []; }
   // Arrived / saved first — they carry the parsed-doc signals in the snapshot.
   hist.forEach(function(h) {
-    var po = (h.po || '').trim(); if(!po || seen[po]) return; seen[po] = true;
+    var po = String((h && h.po) || '').trim(); if(!po || seen[po]) return; seen[po] = true;
     rows.push(libMakeRow(po, h.vendor, libModeForPo(po, 'sea'), 'arrived',
                          libYm(h.arrival), containerDocStatus(po, h, true)));
   });
   // Pipeline orders — in transit, or arrived but not yet saved to history.
   (typeof getOrders === 'function' ? getOrders() : []).forEach(function(o) {
-    var po = (o.jlzPo || '').trim(); if(!po || seen[po] || o.status === 'Cancelled') return;
+    var po = String((o && o.jlzPo) || '').trim(); if(!po || seen[po] || o.status === 'Cancelled') return;
     seen[po] = true;
     var arrived = (o.status === 'Arrived');
     var ym = libYm(o.arrivalActual || o.arrivalEstimated || o.etdEstimated || '');
