@@ -44,7 +44,14 @@ patch `JLZ_Container_Intelligence.html`.
   confirm → "Close documents for X? Missing documents will be marked N/A."; `Q_SUB.STOW` →
   "Load layout inside the container". Comments may stay Spanish.
 
-## Quality tab redesign (NEEDS Juan's approval of mockup v8 first)
+## Quality tab redesign — **DONE** (`e9b879a`, mockup v8 approved by Juan 2026-07-10)
+
+Landed exactly as specced below: `qBuildRecord()` renders the Container record card
+(header + stepper + KPIs/ETA) into a new `#q-record` mount above `#q-head` in `renderQuality`.
+Thresholds reused from the app (mold `MOLD_THRESH`, days `INS_AGE_CRIT`, shrink vs
+`PRODUCTS[k].shrinkPct`). CSS scoped under `.qdocs` (`.qr-` prefix). Verified by DOM.
+
+### Original spec (kept for reference)
 
 **Mockup v8 (interactive):** https://claude.ai/code/artifact/f5e80300-c950-4292-ae3f-ff0377cc4442
 Local copy: session scratchpad `quality_mockup_v8.html` (Artifact URL is authoritative).
