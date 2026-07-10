@@ -3463,8 +3463,30 @@ function authInjectLogo() {
     .qdoc-meta.wait{color:#b45309;background:#fffbeb;border-top-color:#fef3c7;}
     .qdoc-note{font-size:10px;color:var(--gray-400);font-style:italic;}
     .q-closebar{margin-top:12px;}
+    /* Container record card — header + lifecycle stepper + KPIs (mockup v8) */
+    .qdocs .qr-card{background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);box-shadow:var(--shadow-xs);padding:15px 18px;margin-bottom:14px;}
+    .qdocs .qr-top{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;}
+    .qdocs .qr-po{font-family:var(--fm);font-size:19px;font-weight:700;color:var(--gray-900);}
+    .qdocs .qr-desc{font-size:13px;color:var(--gray-500);}
+    .qdocs .qr-ref{font-size:11px;color:var(--gray-400);font-family:var(--fm);margin-top:2px;}
+    .qdocs .qr-stepper{display:flex;align-items:center;margin:14px 0 2px;}
+    .qdocs .qr-step{display:flex;flex-direction:column;align-items:center;gap:4px;}
+    .qdocs .qr-sdot{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;background:var(--gray-100);color:var(--gray-400);border:1px solid var(--gray-200);}
+    .qdocs .qr-slbl{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-family:var(--fm);white-space:nowrap;}
+    .qdocs .qr-step.done .qr-sdot{background:#22c55e;color:#fff;border-color:#22c55e;} .qdocs .qr-step.done .qr-slbl{color:var(--gray-600);}
+    .qdocs .qr-step.cur .qr-sdot{background:#7c3aed;color:#fff;border-color:#7c3aed;} .qdocs .qr-step.cur .qr-slbl{color:#6d28d9;font-weight:700;}
+    .qdocs .qr-sline{flex:1;height:2px;background:var(--gray-200);margin:0 6px 15px;} .qdocs .qr-sline.done{background:#22c55e;}
+    .qdocs .qr-kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px;}
+    .qdocs .qr-kpi{border:1px solid var(--gray-200);border-radius:var(--r);padding:9px 11px;}
+    .qdocs .qr-kpi .lbl{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--gray-400);font-family:var(--fm);}
+    .qdocs .qr-kpi .val{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:2px;line-height:1;color:var(--gray-800);}
+    .qdocs .qr-kpi .sub{font-size:10px;color:var(--gray-400);margin-top:2px;}
+    .qdocs .qr-kpi.good .val{color:#16a34a;} .qdocs .qr-kpi.warn .val{color:#d97706;} .qdocs .qr-kpi.bad .val{color:#dc2626;}
+    .qdocs .qr-eta{margin-top:14px;font-size:12px;color:var(--gray-500);background:var(--gray-50);border:1px solid var(--gray-100);border-radius:var(--r);padding:9px 12px;font-family:var(--fm);}
+    @media (max-width:560px){ .qdocs .qr-kpis{grid-template-columns:1fr;} }
   </style>
   <div class="qdocs">
+    <div id="q-record"></div>
     <div id="q-head"></div>
     <div id="q-docs"></div>
   </div>
@@ -11442,12 +11464,85 @@ var Q_SUB  = {TEMP:'Transit temperature · reefer log', NIC:'NOP Import Certific
 function qActivePo() { return (((document.getElementById('poId')||{}).value) || '').trim(); }
 function qUser() { return (typeof authUserEmail === 'function') ? authUserEmail() : ''; }
 function qFmtDate(ts) { if(!ts) return ''; try { return new Date(ts).toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'}); } catch(e) { return ''; } }
+// ── Container-record card (header + lifecycle stepper + KPIs) — mockup v8.
+// Product/mode resolved from the linked order + the app's PRODUCTS map; KPI
+// thresholds reuse the app's own (mold MOLD_THRESH=5 / >3 amber; days cliff
+// INS_AGE_CRIT=40; shrink vs the product's expected PRODUCTS[k].shrinkPct).
+function qProductKeyForVendor(vendor) {
+  var key = null, nm = String(vendor == null ? '' : vendor).trim().toLowerCase();
+  if(!nm || typeof PRODUCTS !== 'object') return null;
+  Object.keys(PRODUCTS).forEach(function(k) {
+    var p = PRODUCTS[k]; if(!p || !p.suppliers) return;
+    p.suppliers.forEach(function(s) { if((s.name || '').trim().toLowerCase() === nm) { key = (key === null) ? k : (key === k ? k : '__amb'); } });
+  });
+  return (key === '__amb') ? null : key;   // ambiguous supplier → don't guess the product
+}
+function qKpi(lbl, val, cls, sub) {
+  return '<div class="qr-kpi ' + (cls || '') + '"><div class="lbl">' + lbl + '</div><div class="val">' + val + '</div><div class="sub">' + (sub || '') + '</div></div>';
+}
+function qStepper(stageIdx) {   // stageIdx = furthest reached: 0 Ordered · 1 In Transit · 2 Arrived · 3 Docs closed
+  var labels = ['Ordered', 'In Transit', 'Arrived', 'Docs closed'], h = '';
+  labels.forEach(function(lbl, i) {
+    var cls = i < stageIdx ? 'done' : i === stageIdx ? 'cur' : '';
+    var mark = i < stageIdx ? '✓' : i === stageIdx ? (i === 3 ? '🔒' : '●') : '';
+    if(i) h += '<div class="qr-sline' + (i - 1 < stageIdx ? ' done' : '') + '"></div>';
+    h += '<div class="qr-step ' + cls + '"><span class="qr-sdot">' + mark + '</span><span class="qr-slbl">' + lbl + '</span></div>';
+  });
+  return h;
+}
+function qBuildRecord(po, snap) {
+  var order = (typeof findOrderForPo === 'function') ? findOrderForPo(po) : null;
+  var vendor = (snap && snap.vendor) || (order && order.supplier) || '';
+  var prodKey = qProductKeyForVendor(vendor);
+  var prodLbl = (prodKey && PRODUCTS[prodKey] && PRODUCTS[prodKey].label) || '';
+  var mode = (order && order.mode) || 'sea';
+  var modeTxt = mode === 'air' ? '✈ Air' : mode === 'ground' ? '🚚 Ground' : '🚢 Sea';
+  var status = order ? order.status : null;
+  var hasSnap = !!(snap && (snap.lbsIn || snap.boxes || snap.netSales || snap.days));
+  var inHist = false; try { inHist = (typeof getHistory === 'function') && getHistory().some(function(h) { return String(h.po) === String(po); }); } catch(e) {}
+  var closed = !!containerDocStatus(po, snap, true).closed;
+  var arrived = (status === 'Arrived') || hasSnap || inHist;
+  var stageIdx = closed ? 3 : arrived ? 2 : (status === 'In Transit') ? 1 : 0;
+
+  var descBits = []; if(prodLbl) descBits.push('Organic ' + prodLbl); if(vendor) descBits.push(vendor); descBits.push(modeTxt);
+  var refBits = []; if(order && order.contractNo) refBits.push('Contract ' + order.contractNo); if(snap && snap.lot) refBits.push('Lot ' + snap.lot);
+
+  var bodyHtml;
+  if(arrived) {
+    var mold = (snap && snap.moldPct) || 0;
+    var moldVal = mold > 0 ? mold.toFixed(1) + '%' : '—';
+    var moldCls = mold <= 0 ? '' : mold > 5 ? 'bad' : mold > 3 ? 'warn' : 'good';
+    var moldSub = mold <= 0 ? 'not recorded' : mold > 5 ? 'critical' : mold > 3 ? 'elevated' : 'low';
+    var shrink = (snap && snap.lbsIn > 0 && snap.lbsOut > 0) ? (snap.lbsIn - snap.lbsOut) / snap.lbsIn * 100 : null;
+    var exp = (prodKey && PRODUCTS[prodKey] && PRODUCTS[prodKey].shrinkPct) || null;
+    var shVal = (shrink == null) ? '—' : shrink.toFixed(0) + '%';
+    var shCls = '', shSub = 'awaiting pack-out';
+    if(shrink != null && exp != null) { shCls = shrink <= exp ? 'good' : shrink <= exp * 1.4 ? 'warn' : 'bad'; shSub = 'vs ' + exp + '% expected'; }
+    else if(shrink != null) { shSub = 'transit + warehouse'; }
+    var days = (snap && snap.days) || 0;
+    var dVal = days > 0 ? String(days) : '—';
+    var dCls = days <= 0 ? '' : days >= 40 ? 'bad' : days >= 30 ? 'warn' : 'good';
+    var dSub = days <= 0 ? 'just arrived' : days >= 40 ? 'past cliff (>40d)' : days >= 30 ? 'near cliff' : 'within window';
+    bodyHtml = '<div class="qr-kpis">' + qKpi('Mold at arrival', moldVal, moldCls, moldSub) +
+      qKpi('Shrink', shVal, shCls, shSub) + qKpi('Days in warehouse', dVal, dCls, dSub) + '</div>';
+  } else {
+    var eta = order && (order.arrivalEstimated || order.etaEstimated || order.etdEstimated);
+    var etaTxt = eta ? ((typeof fmtWeekDate === 'function') ? fmtWeekDate(eta) : eta) : null;
+    var port = order && order.portOfDischarge;
+    bodyHtml = '<div class="qr-eta">' + modeTxt + ' — ' + (etaTxt ? ('ETA ' + etaTxt + (port ? ' · ' + port : '')) : 'in transit') +
+      '. Quality KPIs appear once the container arrives.</div>';
+  }
+  return '<div class="qr-card"><div class="qr-top"><span class="qr-po">' + libEsc(po) + '</span><span class="qr-desc">' + libEsc(descBits.join(' · ')) + '</span></div>' +
+    (refBits.length ? '<div class="qr-ref">' + libEsc(refBits.join(' · ')) + '</div>' : '') +
+    '<div class="qr-stepper">' + qStepper(stageIdx) + '</div>' + bodyHtml + '</div>';
+}
 function renderQuality() {
-  var head = document.getElementById('q-head'), body = document.getElementById('q-docs');
+  var head = document.getElementById('q-head'), body = document.getElementById('q-docs'), rec = document.getElementById('q-record');
   if(!head || !body) return;
   var po = qActivePo();
-  if(!po) { head.innerHTML = '<div class="q-empty">Load a container (in <b>Arrival</b>) to see and attach its quality documents.</div>'; body.innerHTML = ''; return; }
+  if(!po) { if(rec) rec.innerHTML = ''; head.innerHTML = '<div class="q-empty">Load a container (in <b>Arrival</b>) to see and attach its quality documents.</div>'; body.innerHTML = ''; return; }
   var snap = (typeof currentSnapshot === 'function') ? currentSnapshot() : {};
+  if(rec) rec.innerHTML = qBuildRecord(po, snap);
   var st = containerDocStatus(po, snap, true);
   var docs = st.docs.filter(function(d){ return d.stage === 'qual'; });
   var onN = docs.filter(function(d){ return d.state === 'on'; }).length;
