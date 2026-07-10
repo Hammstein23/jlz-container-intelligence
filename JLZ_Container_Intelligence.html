@@ -11136,6 +11136,83 @@ function saveOrders(arr) {
   catch(e) { console.error('saveOrders failed:', e); }
 }
 
+// ── DOCUMENT LIBRARY — data layer ──────────────────────────────────────
+// Per-container document tracking (Phase 1). Isolated store, keyed by PO.
+// Key: 'jlz_container_docs'. Never mixes with orders/history structures.
+// The 5 docs the app already parses (QC/RS/WO/PROF/CA) derive "on file"
+// from the container snapshot signals; the 8 new ones store a Drive link.
+var DOC_CATALOG = [
+  {key:'PO',   label:'Purchase Order',   stage:'proc', source:'link'},
+  {key:'BL',   label:'Bill of Lading',   stage:'proc', source:'link'},
+  {key:'INV',  label:'Invoice',          stage:'proc', source:'link'},
+  {key:'PL',   label:'Packing List',     stage:'proc', source:'link'},
+  {key:'TEMP', label:'Temp Recorders',   stage:'qual', source:'link'},
+  {key:'NIC',  label:'NIC',              stage:'qual', source:'link'},
+  {key:'PHY',  label:'Phyto',            stage:'qual', source:'link'},
+  {key:'QC',   label:'Quality Report',   stage:'qual', source:'parsed', signal:function(s){ return !!(s && (s.avgKg || s.defPct || s.moldPct)); }},
+  {key:'STOW', label:'Stowage Plan',     stage:'qual', source:'link'},
+  {key:'RS',   label:'Receiving Sheet',  stage:'ops',  source:'parsed', signal:function(s){ return !!(s && (s.boxes || s.priceLb)); }},
+  {key:'WO',   label:'Work Order',       stage:'ops',  source:'parsed', signal:function(s){ return !!(s && (s.lbsIn || s.lbsOut)); }},
+  {key:'PROF', label:'Profitability',    stage:'ops',  source:'parsed', signal:function(s){ return !!(s && (s.netSales || s.netProfit)); }},
+  {key:'CA',   label:'Cost Allocations', stage:'ops',  source:'parsed', signal:function(s){ return !!(s && s.allocBills && s.allocBills.length > 0); }}
+];
+function getContainerDocs() {
+  try { return JSON.parse(localStorage.getItem('jlz_container_docs') || '{}'); }
+  catch(e) { return {}; }
+}
+function saveContainerDocs(o) {
+  try { localStorage.setItem('jlz_container_docs', JSON.stringify(o)); }
+  catch(e) { console.error('saveContainerDocs failed:', e); }
+}
+function _cdEntry(all, po) { if(!all[po]) all[po] = {docs:{}, closed:null}; if(!all[po].docs) all[po].docs = {}; return all[po]; }
+// Attach a Drive link for a document type (Phase-1 mechanism: reference, not upload).
+function attachDoc(po, type, driveLink, user) {
+  var all = getContainerDocs(), e = _cdEntry(all, po);
+  e.docs[type] = { onFile:true, waived:false, driveLink:driveLink || '', uploadedAt:Date.now(), uploadedBy:user || '' };
+  saveContainerDocs(all);
+}
+// Mark a missing document as N/A (deliberately not coming).
+function waiveDoc(po, type, user) {
+  var all = getContainerDocs(), e = _cdEntry(all, po);
+  e.docs[type] = { onFile:false, waived:true, driveLink:'', waivedAt:Date.now(), waivedBy:user || '' };
+  saveContainerDocs(all);
+}
+// Remove any override for a doc type (back to its natural state).
+function detachDoc(po, type) {
+  var all = getContainerDocs();
+  if(all[po] && all[po].docs) { delete all[po].docs[type]; saveContainerDocs(all); }
+}
+// Close a container's documents even if incomplete — the operator's call.
+function closeContainer(po, user) {
+  var all = getContainerDocs(), e = _cdEntry(all, po);
+  e.closed = { at:Date.now(), by:user || '' };
+  saveContainerDocs(all);
+}
+function reopenContainer(po) {
+  var all = getContainerDocs();
+  if(all[po]) { all[po].closed = null; saveContainerDocs(all); }
+}
+// Combine stored overrides + existing-parser signals into per-doc status.
+// snap: the container snapshot (for parsed signals). arrived: has it landed?
+// Returns { closed, docs:[{key,label,stage,source,state,driveLink,uploadedAt,uploadedBy}] }
+// state ∈ 'on' | 'missing' | 'pending' | 'waived'  (pending = ops doc, not yet arrived)
+function containerDocStatus(po, snap, arrived) {
+  var stored = getContainerDocs()[po] || {docs:{}, closed:null};
+  var out = { closed: stored.closed || null, docs: [] };
+  DOC_CATALOG.forEach(function(d) {
+    var s = stored.docs[d.key], state, link = '', at = null, by = '';
+    if(s && s.waived) { state = 'waived'; at = s.waivedAt; by = s.waivedBy; }
+    else if(d.source === 'parsed') {
+      state = d.signal(snap) ? 'on' : ((d.stage === 'ops' && !arrived) ? 'pending' : 'missing');
+    } else { // link-based doc
+      if(s && s.onFile) { state = 'on'; link = s.driveLink; at = s.uploadedAt; by = s.uploadedBy; }
+      else { state = (d.stage === 'ops' && !arrived) ? 'pending' : 'missing'; }
+    }
+    out.docs.push({ key:d.key, label:d.label, stage:d.stage, source:d.source, state:state, driveLink:link, uploadedAt:at, uploadedBy:by });
+  });
+  return out;
+}
+
 // In-memory cache, refreshed every renderOrders().
 window._ordersData = getOrders();
 
