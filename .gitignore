@@ -1,0 +1,5 @@
+# Config local de preview/dev (rutas de máquina, no va al repo)
+.claude/
+
+# Basura de macOS
+.DS_Store
