@@ -1183,7 +1183,7 @@ document.addEventListener('keydown', function(e) {
 });
 
 function switchTab(t) {
-  var ids = ['home','arrival','operations','results','quality','history','insights','orders','planner','simulator','pricing','market','demand','inventory'];
+  var ids = ['home','arrival','operations','results','quality','library','history','insights','orders','planner','simulator','pricing','market','demand','inventory'];
   // 1) Isolate panes FIRST — for every tab, before any render runs. This way a
   //    render error can never abort the loop and leave another tab's pane
   //    visible underneath the active one (the "Buy Planner stacked under Orders" bug).
@@ -1205,6 +1205,7 @@ function switchTab(t) {
     if(t==='pricing'   && typeof renderPricing==='function')    renderPricing();
     if(t==='demand'    && typeof renderDemand==='function')     renderDemand();
     if(t==='quality'   && typeof renderQuality==='function')    renderQuality();
+    if(t==='library'   && typeof renderLibrary==='function')    renderLibrary();
   } catch(e) {
     console.warn('Tab render failed for', t, e);
   }
@@ -2432,6 +2433,10 @@ function authInjectLogo() {
   <!-- ── SECTION: ANALYTICS (looking back at our containers) ── -->
   <div class="sidebar-section-label" style="padding:8px 14px 4px;font-size:9px;color:var(--gray-400);text-transform:uppercase;letter-spacing:.08em;font-weight:600;font-family:var(--fb)">Analytics</div>
   <div class="sidebar-section">
+    <button class="nav-item" id="tb-library" onclick="switchTab('library')">
+      <svg class="nav-icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      Library
+    </button>
     <button class="nav-item" id="tb-history" onclick="switchTab('history')">
       <svg class="nav-icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>
       History
@@ -3435,6 +3440,170 @@ function authInjectLogo() {
   <div class="qdocs">
     <div id="q-head"></div>
     <div id="q-docs"></div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════
+     TAB — DOCUMENT LIBRARY (fleet-wide document status)
+     3 layers: health tiles → needs-attention cards → matrix/cards.
+     All CSS scoped under .lib-root; the 3 class families that collide
+     with the global stylesheet (card/chip/legend) use a lib- prefix.
+═══════════════════════════════════════════════════════════ -->
+<div id="tab-library" class="page" style="display:none">
+  <style>
+    .lib-root{
+      --lg50:#f7f8fa; --lg100:#eef0f3; --lg200:#e2e5ea; --lg300:#c8cdd5;
+      --lg400:#9aa0ab; --lg500:#6b7280; --lg600:#4b5563; --lg700:#374151; --lg800:#1f2937; --lg900:#111827;
+      --lgn100:#dcfce7; --lgn500:#22c55e; --lgn600:#16a34a; --lgn700:#15803d;
+      --lam50:#fffbeb; --lam100:#fef3c7; --lam500:#f59e0b; --lam600:#d97706; --lam700:#b45309;
+      --lrd50:#fef2f2; --lrd100:#fee2e2; --lrd500:#ef4444; --lrd600:#dc2626; --lrd700:#b91c1c;
+      --lbl50:#eff6ff; --lbl100:#dbeafe; --lbl500:#3b82f6; --lbl700:#1d4ed8;
+      --lpu50:#f5f3ff; --lpu100:#ede9fe; --lpu600:#7c3aed; --lpu700:#6d28d9;
+      --lsk50:#e0f2fe; --lsk800:#075985; --lte50:#f0fdfa; --lte700:#0f766e;
+      color:var(--lg800); font-family:var(--fb); line-height:1.5;
+    }
+    .lib-root *{box-sizing:border-box;}
+    .lib-root .wrap{max-width:1060px;margin:0 auto;padding-bottom:40px;}
+    .lib-root .sec-hd{margin:4px 0 12px;}
+    .lib-root .sec-hd h2{font-size:16px;font-weight:700;color:var(--lg900);margin:0;letter-spacing:-.01em;}
+    .lib-root .sec-hd p{font-size:12px;color:var(--lg500);margin:2px 0 0;}
+    .lib-root .sec-lbl{display:flex;align-items:center;gap:8px;margin:22px 0 10px;}
+    .lib-root .sec-lbl .n{font-size:10px;font-weight:700;font-family:var(--fm);color:var(--lg400);background:var(--lg100);border-radius:99px;width:20px;height:20px;display:flex;align-items:center;justify-content:center;}
+    .lib-root .sec-lbl h3{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--lg600);margin:0;}
+    .lib-root .sec-lbl .rule{flex:1;height:1px;background:var(--lg200);}
+
+    .lib-root .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
+    .lib-root .tile{background:var(--white);border:1px solid var(--lg200);border-radius:var(--r);padding:14px 16px;box-shadow:0 1px 2px rgba(16,24,40,.04);}
+    .lib-root .tile .k{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--lg400);font-family:var(--fm);}
+    .lib-root .tile .v{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1;margin-top:6px;color:var(--lg800);}
+    .lib-root .tile .s{font-size:11px;color:var(--lg400);margin-top:5px;}
+    .lib-root .tile .v.good{color:var(--lgn600);} .lib-root .tile .v.warn{color:var(--lam600);} .lib-root .tile .v.bad{color:var(--lrd600);} .lib-root .tile .v.mut{color:var(--lg500);}
+
+    .lib-root .ring{position:relative;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;}
+    .lib-root .ring .rt{position:absolute;font-family:var(--fm);font-weight:700;color:var(--lg700);}
+
+    .lib-root .att-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;}
+    .lib-root .att{display:flex;gap:12px;align-items:center;background:var(--white);border:1px solid var(--lg200);border-left-width:3px;border-radius:var(--r);padding:12px 14px;box-shadow:0 1px 2px rgba(16,24,40,.04);}
+    .lib-root .att.sev-red{border-left-color:var(--lrd500);} .lib-root .att.sev-amber{border-left-color:var(--lam500);}
+    .lib-root .att-body{min-width:0;}
+    .lib-root .att-po{font-family:var(--fm);font-weight:700;color:var(--lg900);font-size:13px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+    .lib-root .att-sub{font-size:11px;color:var(--lg400);margin-top:1px;}
+    .lib-root .att-need{font-size:11px;margin-top:5px;font-weight:600;}
+    .lib-root .att-need.red{color:var(--lrd600);} .lib-root .att-need.amber{color:var(--lam700);} .lib-root .att-none{font-size:12px;color:var(--lg400);}
+
+    .lib-root .lib-card{background:var(--white);border:1px solid var(--lg200);border-radius:var(--r);box-shadow:0 1px 2px rgba(16,24,40,.04);overflow:hidden;margin-top:20px;}
+    .lib-root .lib-card-hd{padding:10px 16px;border-bottom:1px solid var(--lg100);display:flex;align-items:center;gap:8px;background:var(--lg50);}
+    .lib-root .lib-card-title{font-size:12px;font-weight:600;color:var(--lg700);}
+    .lib-root .lib-card-body{padding:12px 16px;}
+    .lib-root .subsw{display:inline-flex;background:var(--lg100);border:1px solid var(--lg200);border-radius:var(--r);padding:2px;gap:2px;margin-left:auto;}
+    .lib-root .subsw button{font-family:var(--fb);font-size:11px;font-weight:600;color:var(--lg500);background:transparent;border:0;padding:5px 11px;border-radius:4px;cursor:pointer;}
+    .lib-root .subsw button.on{background:var(--white);color:var(--lg900);box-shadow:0 1px 2px rgba(16,24,40,.08);}
+
+    .lib-root .filters{display:flex;gap:7px 8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;}
+    .lib-root .filters input,.lib-root .filters select{font-family:var(--fb);font-size:12px;color:var(--lg800);height:31px;border:1px solid var(--lg200);border-radius:var(--r);background:var(--white);padding:0 9px;}
+    .lib-root .filters input{min-width:150px;}
+    .lib-root .filters input:focus,.lib-root .filters select:focus{outline:2px solid var(--lbl500);outline-offset:-1px;border-color:var(--lbl500);}
+    .lib-root .filters .clear{font-size:11px;font-weight:600;color:var(--lbl700);background:transparent;border:0;cursor:pointer;padding:4px 6px;}
+    .lib-root .filters .count{margin-left:auto;font-family:var(--fm);font-size:11px;color:var(--lg500);white-space:nowrap;}
+    .lib-root .filters .count b{color:var(--lg800);}
+
+    .lib-root .matrix-scroll{overflow-x:auto;border:1px solid var(--lg200);border-radius:var(--r);background:var(--white);}
+    .lib-root table.matrix{border-collapse:collapse;font-size:11px;min-width:100%;white-space:nowrap;}
+    .lib-root table.matrix th,.lib-root table.matrix td{padding:0;text-align:center;}
+    .lib-root .grp-row th{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:7px 6px;border-bottom:1px solid var(--lg200);}
+    .lib-root .grp-proc{background:var(--lbl50);color:var(--lbl700);} .lib-root .grp-qual{background:var(--lpu50);color:var(--lpu700);} .lib-root .grp-ops{background:var(--lte50);color:var(--lte700);} .lib-root .grp-corner{background:var(--lg50);}
+    .lib-root .col-row th{font-size:9px;font-weight:600;color:var(--lg500);font-family:var(--fm);padding:6px 7px;border-bottom:1px solid var(--lg200);background:var(--lg50);}
+    .lib-root .col-row th.sep,.lib-root .grp-row th.sep,.lib-root td.sep{border-left:1px solid var(--lg200);}
+    .lib-root th.stick,.lib-root td.stick{position:sticky;left:0;text-align:left;background:var(--white);padding:8px 12px;border-right:1px solid var(--lg200);border-left:3px solid transparent;min-width:238px;z-index:2;}
+    .lib-root th.stick{background:var(--lg50);z-index:3;}
+    .lib-root tbody tr{border-bottom:1px solid var(--lg100);} .lib-root tbody tr:last-child{border-bottom:0;}
+    .lib-root tbody tr:hover td{background:var(--lbl50);}
+    .lib-root tr.sev-red td.stick{border-left-color:var(--lrd500);} .lib-root tr.sev-amber td.stick{border-left-color:var(--lam500);}
+    .lib-root tr.sev-green td.stick{border-left-color:var(--lgn500);} .lib-root tr.sev-gray td.stick{border-left-color:var(--lg300);}
+    .lib-root tr.row-closed{background:var(--lg50);} .lib-root tr.row-closed td.stick .c-po,.lib-root tr.row-closed td.stick .c-sub{color:var(--lg400);}
+    .lib-root .c-top{display:flex;align-items:center;gap:6px;flex-wrap:wrap;} .lib-root .c-po{font-family:var(--fm);font-weight:700;color:var(--lg900);font-size:12px;} .lib-root .c-sub{font-size:10px;color:var(--lg400);margin-top:2px;}
+    .lib-root .lib-chip{font-size:8px;font-weight:700;font-family:var(--fm);text-transform:uppercase;letter-spacing:.04em;padding:1px 6px;border-radius:99px;white-space:nowrap;display:inline-block;}
+    .lib-root .lib-chip-sea{background:var(--lg100);color:var(--lg600);} .lib-root .lib-chip-air{background:var(--lsk50);color:var(--lsk800);} .lib-root .lib-chip-ground{background:var(--lam100);color:var(--lam700);}
+    .lib-root .lib-chip-transit{background:var(--lam100);color:var(--lam700);} .lib-root .lib-chip-arrived{background:var(--lgn100);color:var(--lgn700);} .lib-root .lib-chip-closed{background:var(--lg200);color:var(--lg600);}
+    .lib-root td.cell{padding:8px 7px;} .lib-root td.g-proc{background:rgba(59,130,246,.03);} .lib-root td.g-qual{background:rgba(139,92,246,.035);} .lib-root td.g-ops{background:rgba(13,148,136,.03);}
+    .lib-root .dot{display:inline-block;width:12px;height:12px;border-radius:50%;vertical-align:middle;}
+    .lib-root .dot.on{background:var(--lgn500);} .lib-root .dot.miss{background:transparent;border:1.5px solid var(--lg300);}
+    .lib-root .dot.key{background:transparent;border:2px solid var(--lrd500);box-shadow:0 0 0 2px var(--lrd100);}
+    .lib-root .dot.pend{width:8px;height:2px;border-radius:2px;background:var(--lg200);} .lib-root .dot.waived{background:var(--lg300);opacity:.7;}
+    .lib-root .pct{display:flex;align-items:center;gap:7px;padding:8px 12px;} .lib-root .pct .bar{width:50px;height:6px;background:var(--lg100);border-radius:99px;overflow:hidden;} .lib-root .pct .bar>i{display:block;height:100%;border-radius:99px;} .lib-root .pct .num{font-family:var(--fm);font-size:10px;color:var(--lg500);}
+    .lib-root .empty-row td{padding:24px;text-align:center;color:var(--lg400);font-size:12px;}
+    .lib-root .lib-legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:11px;color:var(--lg500);align-items:center;} .lib-root .lib-legend span{display:inline-flex;align-items:center;gap:6px;}
+
+    .lib-root .gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;}
+    .lib-root .gcard{background:var(--white);border:1px solid var(--lg200);border-top-width:3px;border-radius:var(--r);padding:14px;box-shadow:0 1px 2px rgba(16,24,40,.04);}
+    .lib-root .gcard.sev-red{border-top-color:var(--lrd500);} .lib-root .gcard.sev-amber{border-top-color:var(--lam500);} .lib-root .gcard.sev-green{border-top-color:var(--lgn500);} .lib-root .gcard.sev-gray{border-top-color:var(--lg300);}
+    .lib-root .gtop{display:flex;align-items:center;gap:6px;flex-wrap:wrap;} .lib-root .gtop .c-po{font-size:13px;}
+    .lib-root .gmid{display:flex;align-items:center;gap:12px;margin:12px 0;}
+    .lib-root .gmid .gtxt .gp{font-family:var(--fm);font-size:12px;font-weight:700;color:var(--lg800);} .lib-root .gmid .gtxt .gl{font-size:10px;color:var(--lg400);}
+    .lib-root .gsub{font-size:11px;color:var(--lg500);} .lib-root .gneed{font-size:11px;margin-top:6px;font-weight:600;} .lib-root .gneed.red{color:var(--lrd600);} .lib-root .gneed.amber{color:var(--lam700);} .lib-root .gneed.green{color:var(--lgn600);} .lib-root .gneed.gray{color:var(--lg500);}
+    .lib-root .lib-note{margin-top:18px;border-top:1px solid var(--lg200);padding-top:12px;font-size:11px;color:var(--lg500);display:flex;gap:8px;align-items:flex-start;}
+    .lib-root .lib-note .k{font-family:var(--fm);font-size:9px;text-transform:uppercase;letter-spacing:.06em;background:var(--lg100);color:var(--lg500);padding:2px 6px;border-radius:3px;flex-shrink:0;margin-top:1px;} .lib-root .lib-note b{color:var(--lg700);}
+    @media (max-width:640px){ .lib-root .tiles{grid-template-columns:1fr 1fr;} }
+  </style>
+
+  <div class="lib-root" id="lib-root">
+    <div class="wrap">
+      <div class="sec-hd"><h2>Document Library</h2><p>Every container, every document — fleet status at a glance.</p></div>
+      <div class="tiles" id="lib-tiles"></div>
+
+      <div class="sec-lbl"><span class="n">1</span><h3>Needs attention</h3><span class="rule"></span></div>
+      <div class="att-grid" id="lib-attention"></div>
+
+      <div class="lib-card">
+        <div class="lib-card-hd">
+          <span class="lib-card-title">All containers</span>
+          <div class="subsw">
+            <button id="lib-sw-matrix" class="on" onclick="libSetSub('matrix')">Matrix</button>
+            <button id="lib-sw-cards" onclick="libSetSub('cards')">Cards</button>
+          </div>
+        </div>
+        <div class="lib-card-body">
+          <div class="filters">
+            <input id="lib-f-search" type="text" placeholder="Search container…" oninput="libRenderList()"/>
+            <select id="lib-f-prod" onchange="libRenderList()"><option value="">All products</option></select>
+            <select id="lib-f-sup" onchange="libRenderList()"><option value="">All suppliers</option></select>
+            <select id="lib-f-month" onchange="libRenderList()"><option value="">Any month</option><option value="1">Jan</option><option value="2">Feb</option><option value="3">Mar</option><option value="4">Apr</option><option value="5">May</option><option value="6">Jun</option><option value="7">Jul</option><option value="8">Aug</option><option value="9">Sep</option><option value="10">Oct</option><option value="11">Nov</option><option value="12">Dec</option></select>
+            <select id="lib-f-year" onchange="libRenderList()"><option value="">Any year</option></select>
+            <select id="lib-f-mode" onchange="libRenderList()"><option value="">Sea + Air</option><option value="sea">🚢 Sea</option><option value="air">✈ Air</option><option value="ground">🚚 Ground</option></select>
+            <select id="lib-f-stage" onchange="libRenderList()"><option value="">Any stage</option><option value="transit">In Transit</option><option value="arrived">Arrived</option></select>
+            <select id="lib-f-stat" onchange="libRenderList()"><option value="">Any status</option><option value="incomplete">Incomplete</option><option value="complete">Complete</option><option value="key">Missing key</option><option value="open">Open</option><option value="closed">Closed</option></select>
+            <button class="clear" onclick="libClearF()">Clear</button>
+            <span class="count" id="lib-rescount"></span>
+          </div>
+
+          <div id="lib-matrixWrap">
+            <div class="matrix-scroll">
+              <table class="matrix">
+                <thead>
+                  <tr class="grp-row"><th class="stick grp-corner"></th><th colspan="4" class="grp-proc">Procurement</th><th colspan="5" class="grp-qual sep">Quality</th><th colspan="4" class="grp-ops sep">Operations</th><th class="grp-corner sep"></th></tr>
+                  <tr class="col-row"><th class="stick">Container</th>
+                    <th title="Purchase Order">PO</th><th title="Bill of Lading">BL</th><th title="Invoice">INV</th><th title="Packing List">PL</th>
+                    <th class="sep" title="Temp Recorders">TEMP</th><th title="NIC">NIC</th><th title="Phyto">PHY</th><th title="Quality Report">QC</th><th title="Stowage Plan">STOW</th>
+                    <th class="sep" title="Receiving Sheet">RS</th><th title="Work Order">WO</th><th title="Profitability">PROF</th><th title="Cost Allocations">CA</th>
+                    <th class="sep">Complete</th></tr>
+                </thead>
+                <tbody id="lib-mbody"></tbody>
+              </table>
+            </div>
+            <div class="lib-legend">
+              <span><span class="dot on"></span> On file</span><span><span class="dot miss"></span> Missing</span>
+              <span><span class="dot key"></span> Missing · key</span><span><span class="dot pend"></span> Pending (not arrived)</span>
+              <span><span class="dot waived"></span> N/A (waived)</span>
+            </div>
+          </div>
+
+          <div id="lib-cardsWrap" style="display:none"><div class="gal" id="lib-cardgrid"></div></div>
+        </div>
+      </div>
+
+      <div class="lib-note"><span class="k">One source</span><span>Whatever you attach inside a container's <b>Quality</b> / <b>Operations</b> section shows up here — one source, two views. A <b>Closed</b> container drops off the "needs attention" radar but keeps its record (🔒 + how many docs were marked N/A).</span></div>
+    </div>
   </div>
 </div>
 
@@ -11311,6 +11480,237 @@ function qDetach(type) { var po = qActivePo(); if(po) { detachDoc(po, type); ren
 function qOpen(enc)    { var url = decodeURIComponent(enc || ''); if(url) window.open(url, '_blank', 'noopener'); }
 function qClose()      { var po = qActivePo(); if(po && window.confirm('¿Cerrar los documentos de ' + po + '? Los faltantes quedan marcados N/A.')) { closeContainer(po, qUser()); renderQuality(); } }
 function qReopen()     { var po = qActivePo(); if(po) { reopenContainer(po); renderQuality(); } }
+
+// ── DOCUMENT LIBRARY — fleet dashboard (Phase 1, step 3) ───────────────
+// Reads real containers from jlz_container_history (arrived, carries the
+// parsed snapshot) + jlz_orders_pipeline (in-transit / arrived-not-saved),
+// runs each through containerDocStatus(), and renders the approved 3-layer
+// view: health tiles → needs-attention → matrix/cards with 8 filters.
+var LIB_SHORT = ['PO','BL','INV','PL','TEMP','NIC','PHY','QC','STOW','RS','WO','PROF','CA'];
+var LIB_MON   = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+var LIB_SUB   = 'matrix';
+
+// supplier → product label, derived from the app's own PRODUCTS config.
+// Suppliers that appear under >1 product (e.g. Crown Pacific) are ambiguous:
+// we mark them '' rather than guess (honest — never invent the commodity).
+var _libSupProd = null;
+function libSupplierProduct(supplier) {
+  if(_libSupProd === null) {
+    _libSupProd = {};
+    try {
+      if(typeof PRODUCTS === 'object' && PRODUCTS) {
+        Object.keys(PRODUCTS).forEach(function(k) {
+          var p = PRODUCTS[k]; if(!p || !p.suppliers) return;
+          p.suppliers.forEach(function(s) {
+            var nm = (s.name || '').trim().toLowerCase(); if(!nm) return;
+            if(_libSupProd[nm] === undefined) _libSupProd[nm] = p.label;
+            else if(_libSupProd[nm] !== p.label) _libSupProd[nm] = null; // ambiguous
+          });
+        });
+      }
+    } catch(e) {}
+  }
+  return _libSupProd[(supplier || '').trim().toLowerCase()] || '';
+}
+// Mode for an arrived container isn't stored in its snapshot — resolve it
+// from the linked order (same contract renderComparison uses); default sea.
+function libModeForPo(po, fallback) {
+  var o = (typeof findOrderForPo === 'function') ? findOrderForPo(po) : null;
+  var m = (o && o.mode) ? o.mode : (fallback || 'sea');
+  return (m === 'air') ? 'air' : (m === 'ground') ? 'ground' : 'sea';
+}
+function libYm(d) { d = (d || '').trim(); return /^\d{4}-\d{2}/.test(d) ? d.slice(0,7) : ''; }
+function libMakeRow(po, supplier, mode, stage, ym, st) {
+  return { po:po, supplier:supplier || '', product:libSupplierProduct(supplier),
+           mode:(mode === 'air' ? 'air' : mode === 'ground' ? 'ground' : 'sea'),
+           stage:stage, ym:ym, closed:!!(st && st.closed), docs:(st && st.docs) || [] };
+}
+function libBuildRows() {
+  var rows = [], seen = {}, hist = [];
+  try { hist = JSON.parse(localStorage.getItem('jlz_container_history') || '[]') || []; } catch(e) {}
+  // Arrived / saved first — they carry the parsed-doc signals in the snapshot.
+  hist.forEach(function(h) {
+    var po = (h.po || '').trim(); if(!po || seen[po]) return; seen[po] = true;
+    rows.push(libMakeRow(po, h.vendor, libModeForPo(po, 'sea'), 'arrived',
+                         libYm(h.arrival), containerDocStatus(po, h, true)));
+  });
+  // Pipeline orders — in transit, or arrived but not yet saved to history.
+  (typeof getOrders === 'function' ? getOrders() : []).forEach(function(o) {
+    var po = (o.jlzPo || '').trim(); if(!po || seen[po] || o.status === 'Cancelled') return;
+    seen[po] = true;
+    var arrived = (o.status === 'Arrived');
+    var ym = libYm(o.arrivalActual || o.arrivalEstimated || o.etdEstimated || '');
+    rows.push(libMakeRow(po, o.supplier, o.mode, arrived ? 'arrived' : 'transit', ym,
+                         containerDocStatus(po, {}, arrived)));
+  });
+  return rows;
+}
+// Per-container rollup. Closed containers treat missing/pending as N/A
+// (they've been deliberately finalized — locked decision #6).
+function libStat(r) {
+  var on = 0, expected = 0, waived = 0, key = false;
+  r.docs.forEach(function(d) {
+    var s = d.state;
+    if(r.closed && (s === 'missing' || s === 'pending')) { waived++; return; }
+    if(s === 'waived')  { waived++; return; }
+    if(s === 'pending') { return; }              // ops doc, not arrived — not counted
+    expected++;
+    if(s === 'on') on++;
+    else if(d.key === 'TEMP') key = true;         // missing key doc (Temp Recorders)
+  });
+  return { on:on, expected:expected, waived:waived, pct:expected ? on/expected : 1,
+           incomplete:on < expected, key:key, closed:r.closed };
+}
+function libSev(r) { var s = libStat(r); return s.closed ? 'gray' : s.key ? 'red' : s.incomplete ? 'amber' : 'green'; }
+function libSevColor(s) { return s === 'red' ? 'var(--lrd500)' : s === 'amber' ? 'var(--lam500)' : s === 'green' ? 'var(--lgn500)' : 'var(--lg400)'; }
+function libAttention(r) { var s = libStat(r); return !s.closed && (s.key || (r.stage === 'arrived' && s.incomplete)); }
+function libMissing(r) { var out = []; r.docs.forEach(function(d, i) { if(d.state === 'missing') out.push(LIB_SHORT[i]); }); return out; }
+function libEsc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function libNeedText(r) {
+  var s = libStat(r);
+  if(s.closed) return { t:'Closed · ' + s.waived + ' waived', c:'gray' };
+  if(s.key) { var ks = r.docs.filter(function(d){ return d.state === 'missing' && d.key === 'TEMP'; }).map(function(d){ return d.label; });
+    return { t:'⚠ Missing key: ' + libEsc(ks.join(', ')), c:'red' }; }
+  if(s.incomplete) { var m = libMissing(r); return { t:'Missing: ' + libEsc(m.slice(0,3).join(', ')) + (m.length > 3 ? '…' : ''), c:'amber' }; }
+  return { t:'All documents on file', c:'green' };
+}
+function libDonut(pct, color, size) {
+  var st = (size - 5) / 2, c = 2 * Math.PI * st, off = c * (1 - Math.max(0, Math.min(1, pct)));
+  return '<span class="ring" style="width:' + size + 'px;height:' + size + 'px">' +
+    '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '">' +
+    '<circle cx="' + size/2 + '" cy="' + size/2 + '" r="' + st + '" fill="none" stroke="var(--lg100)" stroke-width="4"/>' +
+    '<circle cx="' + size/2 + '" cy="' + size/2 + '" r="' + st + '" fill="none" stroke="' + color + '" stroke-width="4" stroke-linecap="round" stroke-dasharray="' + c.toFixed(1) + '" stroke-dashoffset="' + off.toFixed(1) + '" transform="rotate(-90 ' + size/2 + ' ' + size/2 + ')"/>' +
+    '</svg><span class="rt" style="font-size:' + (size > 44 ? '11px' : '10px') + '">' + Math.round(pct*100) + '%</span></span>';
+}
+function libStageChip(r) { return r.closed ? '<span class="lib-chip lib-chip-closed">🔒 Closed</span>' :
+  r.stage === 'transit' ? '<span class="lib-chip lib-chip-transit">In Transit</span>' : '<span class="lib-chip lib-chip-arrived">Arrived</span>'; }
+function libModeChip(r) { return r.mode === 'air' ? '<span class="lib-chip lib-chip-air">✈ Air</span>' :
+  r.mode === 'ground' ? '<span class="lib-chip lib-chip-ground">🚚 Ground</span>' : '<span class="lib-chip lib-chip-sea">🚢 Sea</span>'; }
+function libDesc(r) { return 'Organic ' + libEsc((r.product || '—')) + ' · ' + libEsc(r.supplier || '—'); }
+function libYmLabel(r) { if(!r.ym) return ''; var mo = parseInt(r.ym.slice(5), 10); return ' · ' + LIB_MON[mo] + ' ' + r.ym.slice(0,4); }
+function libGrpClass(i) { return i < 4 ? 'g-proc' : i < 9 ? 'g-qual' : 'g-ops'; }
+
+function libRenderTiles(rows) {
+  var el = document.getElementById('lib-tiles'); if(!el) return;
+  var totOn = 0, totExp = 0, att = 0, transit = 0, closed = 0;
+  rows.forEach(function(r) { var s = libStat(r); totOn += s.on; totExp += s.expected;
+    if(libAttention(r)) att++; if(r.stage === 'transit') transit++; if(s.closed) closed++; });
+  var pct = totExp ? Math.round(totOn / totExp * 100) : 100;
+  el.innerHTML =
+    '<div class="tile"><div class="k">Docs on file</div><div class="v ' + (pct >= 90 ? 'good' : pct >= 60 ? 'warn' : 'bad') + '">' + pct + '%</div><div class="s">across the fleet, by stage</div></div>' +
+    '<div class="tile"><div class="k">Need attention</div><div class="v ' + (att ? 'bad' : 'good') + '">' + att + '</div><div class="s">arrived &amp; incomplete / key missing</div></div>' +
+    '<div class="tile"><div class="k">Arriving soon</div><div class="v mut">' + transit + '</div><div class="s">in transit</div></div>' +
+    '<div class="tile"><div class="k">Closed</div><div class="v mut">' + closed + '</div><div class="s">finalized</div></div>';
+}
+function libRenderAttention(rows) {
+  var el = document.getElementById('lib-attention'); if(!el) return;
+  var att = rows.filter(libAttention).sort(function(a, b) { return (libStat(b).key ? 1 : 0) - (libStat(a).key ? 1 : 0); });
+  el.innerHTML = att.length ? att.map(function(r) { var s = libStat(r), sv = libSev(r), nt = libNeedText(r);
+    return '<div class="att sev-' + sv + '">' + libDonut(s.pct, libSevColor(sv), 48) +
+      '<div class="att-body"><div class="att-po">' + libEsc(r.po) + ' ' + libStageChip(r) + '</div>' +
+      '<div class="att-sub">' + libDesc(r) + '</div>' +
+      '<div class="att-need ' + nt.c + '">' + nt.t + '</div></div></div>';
+  }).join('') : '<div class="att-none">Nothing needs attention 🎉</div>';
+}
+function libPasses(r) {
+  var v = function(id) { var e = document.getElementById(id); return e ? e.value : ''; };
+  var q = (v('lib-f-search') || '').toLowerCase().trim();
+  if(q && (r.po + ' ' + r.product + ' ' + r.supplier).toLowerCase().indexOf(q) < 0) return false;
+  if(v('lib-f-prod') && r.product !== v('lib-f-prod')) return false;
+  if(v('lib-f-sup')  && r.supplier !== v('lib-f-sup')) return false;
+  if(v('lib-f-mode') && r.mode !== v('lib-f-mode')) return false;
+  if(v('lib-f-stage')&& r.stage !== v('lib-f-stage')) return false;
+  if(v('lib-f-year') && r.ym.slice(0,4) !== v('lib-f-year')) return false;
+  if(v('lib-f-month')&& parseInt(r.ym.slice(5), 10) !== parseInt(v('lib-f-month'), 10)) return false;
+  var s = libStat(r), fs = v('lib-f-stat');
+  if(fs === 'complete'   && s.incomplete) return false;
+  if(fs === 'incomplete' && (s.closed || !s.incomplete)) return false;
+  if(fs === 'key'        && (s.closed || !s.key)) return false;
+  if(fs === 'open'       && s.closed) return false;
+  if(fs === 'closed'     && !s.closed) return false;
+  return true;
+}
+// Sort: about-to-arrive-and-incomplete first, closed last.
+function libScore(r) { var s = libStat(r); if(s.closed) return 9; return (r.stage === 'transit' ? 0 : 2) + (s.incomplete ? 0 : 1); }
+function libSortRows(rows) {
+  return rows.slice().sort(function(a, b) {
+    var d = libScore(a) - libScore(b); if(d) return d;
+    if(a.stage === 'transit' && !a.closed) return (a.ym || '9999') < (b.ym || '9999') ? -1 : 1; // soonest ETA first
+    return (a.ym || '') > (b.ym || '') ? -1 : 1;                                                 // newest arrival first
+  });
+}
+function libFillSelect(id, values, allLabel) {
+  var el = document.getElementById(id); if(!el) return;
+  var cur = el.value;
+  var opts = '<option value="">' + allLabel + '</option>';
+  values.forEach(function(x) { opts += '<option value="' + libEsc(x) + '">' + libEsc(x) + '</option>'; });
+  el.innerHTML = opts;
+  el.value = (cur === '' || values.indexOf(cur) >= 0) ? cur : '';
+}
+function libBuildFilterOptions(rows) {
+  var sup = {}, prod = {}, yr = {};
+  rows.forEach(function(r) { if(r.supplier) sup[r.supplier] = 1; if(r.product) prod[r.product] = 1; if(r.ym) yr[r.ym.slice(0,4)] = 1; });
+  libFillSelect('lib-f-prod', Object.keys(prod).sort(), 'All products');
+  libFillSelect('lib-f-sup',  Object.keys(sup).sort(),  'All suppliers');
+  libFillSelect('lib-f-year', Object.keys(yr).sort().reverse(), 'Any year');
+}
+function libRenderList() {
+  var rows = window._libRows || [];
+  var vis = libSortRows(rows.filter(libPasses));
+  var rc = document.getElementById('lib-rescount');
+  if(rc) rc.innerHTML = '<b>' + vis.length + '</b> of ' + rows.length + ' shown';
+  if(LIB_SUB === 'matrix') libRenderMatrix(vis); else libRenderCards(vis);
+}
+function libRenderMatrix(vis) {
+  var b = document.getElementById('lib-mbody'); if(!b) return;
+  var html = '';
+  vis.forEach(function(r) { var s = libStat(r), sv = libSev(r);
+    html += '<tr class="sev-' + sv + (r.closed ? ' row-closed' : '') + '">';
+    html += '<td class="stick"><div class="c-top"><span class="c-po">' + libEsc(r.po) + '</span>' + libModeChip(r) + libStageChip(r) + '</div>' +
+            '<div class="c-sub">' + libDesc(r) + libYmLabel(r) + '</div></td>';
+    r.docs.forEach(function(d, i) {
+      var cls = (r.closed && (d.state === 'missing' || d.state === 'pending')) ? 'waived' :
+                d.state === 'on' ? 'on' : d.state === 'waived' ? 'waived' : d.state === 'pending' ? 'pend' :
+                (d.key === 'TEMP') ? 'key' : 'miss';
+      var sep = (i === 4 || i === 9) ? ' sep' : '';
+      html += '<td class="cell ' + libGrpClass(i) + sep + '"><span class="dot ' + cls + '"></span></td>';
+    });
+    if(r.closed) html += '<td class="sep"><div class="pct"><span class="num">🔒 Closed' + (s.waived ? ' · ' + s.waived + ' N/A' : '') + '</span></div></td>';
+    else html += '<td class="sep"><div class="pct"><span class="bar"><i style="width:' + Math.round(s.pct*100) + '%;background:' + libSevColor(sv) + '"></i></span><span class="num">' + s.on + '/' + s.expected + '</span></div></td>';
+    html += '</tr>';
+  });
+  b.innerHTML = vis.length ? html : '<tr class="empty-row"><td colspan="15">No containers match these filters.</td></tr>';
+}
+function libRenderCards(vis) {
+  var g = document.getElementById('lib-cardgrid'); if(!g) return;
+  g.innerHTML = vis.length ? vis.map(function(r) { var s = libStat(r), sv = libSev(r), nt = libNeedText(r);
+    return '<div class="gcard sev-' + sv + '"><div class="gtop"><span class="c-po">' + libEsc(r.po) + '</span>' + libModeChip(r) + libStageChip(r) + '</div>' +
+      '<div class="gmid">' + libDonut(s.pct, libSevColor(sv), 52) + '<div class="gtxt"><div class="gp">' + s.on + ' / ' + s.expected + '</div><div class="gl">docs on file</div></div></div>' +
+      '<div class="gsub">' + libDesc(r) + libYmLabel(r) + '</div>' +
+      '<div class="gneed ' + nt.c + '">' + nt.t + '</div></div>';
+  }).join('') : '<div style="font-size:12px;color:var(--lg400);padding:8px">No containers match these filters.</div>';
+}
+function libSetSub(m) {
+  LIB_SUB = m;
+  var bm = document.getElementById('lib-sw-matrix'), bc = document.getElementById('lib-sw-cards');
+  if(bm) bm.classList.toggle('on', m === 'matrix'); if(bc) bc.classList.toggle('on', m === 'cards');
+  var mw = document.getElementById('lib-matrixWrap'), cw = document.getElementById('lib-cardsWrap');
+  if(mw) mw.style.display = m === 'matrix' ? 'block' : 'none'; if(cw) cw.style.display = m === 'cards' ? 'block' : 'none';
+  libRenderList();
+}
+function libClearF() {
+  ['lib-f-search','lib-f-prod','lib-f-sup','lib-f-month','lib-f-year','lib-f-mode','lib-f-stage','lib-f-stat']
+    .forEach(function(id) { var e = document.getElementById(id); if(e) e.value = ''; });
+  libRenderList();
+}
+function renderLibrary() {
+  if(!document.getElementById('lib-root')) return;
+  window._libRows = libBuildRows();
+  libBuildFilterOptions(window._libRows);
+  libRenderTiles(window._libRows);
+  libRenderAttention(window._libRows);
+  libRenderList();
+}
 
 // In-memory cache, refreshed every renderOrders().
 window._ordersData = getOrders();
