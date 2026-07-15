@@ -4435,13 +4435,14 @@ function authInjectLogo() {
     <summary class="card-header" style="cursor:pointer;list-style:none">
       <div style="width:24px;height:24px;border-radius:var(--radius-sm);background:var(--green-50);color:var(--green-700);display:flex;align-items:center;justify-content:center;font-size:13px">📈</div>
       <span class="card-title">Demand — what feeds the plan</span>
-      <span class="card-subtitle ml-auto">weekly run-rate · coverage shown in status above</span>
+      <span class="card-subtitle ml-auto"><span id="bp-quiet-sum"></span>weekly run-rate · coverage shown in status above</span>
     </summary>
     <div class="card-body">
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px">
         <div class="kpi-card"><div class="kpi-label">Weekly demand</div><div class="kpi-value"><span id="bp-demand-cs">—</span> <span style="font-size:12px;color:var(--gray-400);font-weight:600">cs</span></div><div class="kpi-sub"><span id="bp-demand-lbs">—</span> lb/wk · post-shrink</div></div>
         <div class="kpi-card"><div class="kpi-label">Demand source</div><div class="kpi-value" id="bp-demand-src" style="font-size:13px">—</div><div class="kpi-sub">feeds the plan</div></div>
       </div>
+      <div id="bp-quiet-panel" style="margin-top:12px"></div>
     </div>
   </details>
 
@@ -13783,7 +13784,7 @@ function invmF(n){ return Math.round(n||0).toLocaleString('en-US'); }
 function invmMoney(n){ return (n<0?'-$':'$')+Math.abs(Math.round(n||0)).toLocaleString('en-US'); }
 function invmDemand(){
   if(window._bpDigest && _bpDigest.weeklyDemand>0) return _bpDigest.weeklyDemand;
-  var rr=(window._dmModelG && _dmModelG.runRate13)?_dmModelG.runRate13:0;
+  var rr=(typeof dmEffectiveRunRateLbs==='function' && dmEffectiveRunRateLbs()>0)?dmEffectiveRunRateLbs():0;
   var sales=rr>0?rr/30:0;
   return sales>0 ? sales/0.92 : 1147;
 }
@@ -14358,7 +14359,7 @@ function renderBuyPlanner() {
   // source of demand truth. We use its 13-week run-rate, converted to 30-lb
   // cases, as "what the customer buys". If the Demand module hasn't been loaded
   // on this device yet, fall back to the rolling average of pasted sales.
-  const dmRunRateLbs = (typeof _dmModelG === 'object' && _dmModelG && _dmModelG.runRate13) ? _dmModelG.runRate13 : null;
+  const dmRunRateLbs = (typeof dmEffectiveRunRateLbs === 'function') ? dmEffectiveRunRateLbs() : null;
   const usingDemandModule = dmRunRateLbs != null;
   const salesDemand = usingDemandModule ? (dmRunRateLbs / 30) : baseAvg;   // cases/wk sold (post-shrink)
   const demandLbsWk = usingDemandModule ? dmRunRateLbs : (baseAvg * 30);
@@ -14715,6 +14716,63 @@ function renderBuyPlanner() {
     safetyDip: safetyDipTarget ? { weekNum: safetyDipTarget.weekNum, date: safetyDipTarget.weekStartDate } : null,
     seaDeadline, airDeadline,
   };
+
+  // ── Quiet-account panel: who is held out of the plan + Out/Half/Full toggle ──
+  (function(){
+    try {
+      const panel = document.getElementById('bp-quiet-panel');
+      const sumEl = document.getElementById('bp-quiet-sum');
+      const ql = (typeof qaQuietList === 'function') ? qaQuietList() : [];
+      if (!ql.length) { if (panel) panel.innerHTML = ''; if (sumEl) sumEl.textContent = ''; return; }
+      const esc = (s)=>String(s==null?'':s).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+      const jsStr = (s)=>String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+      const seg = (c, pct)=>{
+        const opts = [['Out',0],['Half',50],['Full',100]];
+        return '<div style="display:inline-flex;border:1px solid var(--gray-200);border-radius:var(--radius-sm);overflow:hidden;font-family:var(--fm)">'
+          + opts.map(([lbl,p],i)=>{
+              const on = p===pct;
+              const oc = 'qaSetPct(\'' + jsStr(c) + '\', ' + p + ')';
+              return '<button type="button" onclick="' + esc(oc) + '" style="border:0;'
+                + (i>0?'border-left:1px solid var(--gray-200);':'')
+                + 'padding:4px 10px;font-size:11px;font-weight:'+(on?'700':'500')+';cursor:pointer;'
+                + 'background:'+(on?'var(--jlz,#0d5026)':'var(--white,#fff)')+';color:'+(on?'#fff':'var(--gray-600)')+'">'+lbl+'</button>';
+            }).join('')
+          + '</div>';
+      };
+      const rows = ql.map(x=>{
+        const pct = (typeof qaPct==='function') ? qaPct(x.c) : 0;
+        const rawCases = (x.rrCases!=null) ? x.rrCases : ((x.rrLbs||0)/30);
+        const cases = Math.round(rawCases);
+        const half = Math.round(rawCases/2);
+        const days = (x.days!=null) ? x.days : '—';
+        const cad = (x.cad!=null) ? x.cad : '—';
+        const pillTxt = pct===0 ? 'HELD OUT OF PLAN' : (pct===50 ? 'IN PLAN — HALF' : 'IN PLAN — FULL');
+        const pillBg = pct===0 ? 'var(--amber-50)' : 'var(--green-50,#ecfdf3)';
+        const pillFg = pct===0 ? 'var(--amber-700)' : 'var(--green-700,#027a48)';
+        const sentence = pct===0
+          ? (cases.toLocaleString()+' cs/wk excluded from the buying plan.')
+          : (pct===50
+              ? (half.toLocaleString()+' of '+cases.toLocaleString()+' cs/wk added back to the buying plan.')
+              : ('All '+cases.toLocaleString()+' cs/wk added back to the buying plan.'));
+        return '<div style="display:flex;align-items:center;gap:10px;justify-content:space-between;'
+          + 'border-left:3px solid var(--amber-500);background:var(--amber-50);border-radius:var(--radius-sm);padding:9px 12px;margin-top:8px">'
+          + '<div style="min-width:0">'
+          +   '<div style="font-family:var(--fm);font-size:12px"><b>'+esc(x.c)+'</b>'
+          +     '<span style="margin-left:8px;font-size:9px;font-weight:700;padding:1px 6px;border-radius:3px;background:'+pillBg+';color:'+pillFg+'">'+pillTxt+'</span></div>'
+          +   '<div style="font-family:var(--fm);font-size:11px;color:var(--gray-600);margin-top:3px">No orders in '+days+' days — normally every '+cad+' days. '+sentence+'</div>'
+          + '</div>'
+          + seg(x.c, pct)
+          + '</div>';
+      }).join('');
+      if (panel) panel.innerHTML = '<div style="font-family:var(--fm);font-size:11px;color:var(--gray-400)">Quiet accounts — held out of the buying plan until they order again. Add them back only with a committed PO.</div>' + rows;
+      if (sumEl) {
+        const nOut = ql.filter(x=>((typeof qaPct==='function')?qaPct(x.c):0)===0).length;
+        const nOn = ql.length - nOut;
+        sumEl.textContent = nOn>0 ? (ql.length+' quiet · scenario on · ')
+                                  : (nOut+' quiet account'+(nOut!==1?'s':'')+' held out · ');
+      }
+    } catch(e){ console.warn('bp-quiet-panel:', e); }
+  })();
 
   // collapsed-section header summaries (Path A reorg)
   (function(){
@@ -18773,7 +18831,7 @@ function simRenderProjection(realOrders, hypoOrders) {
   // Demand = what customer buys; weeklyDemand = what leaves warehouse (inflated by shrink)
   const baseAvgSim = baseline === 4 ? avg4 : baseline === 12 ? avg12 : avg8;
   // Use the Demand module run-rate (Peru ginger, lbs→30-lb cases) to match Buy Planner; fall back to pasted-sales avg
-  const _dmRR = (typeof _dmModelG === 'object' && _dmModelG && _dmModelG.runRate13) ? _dmModelG.runRate13 : null;
+  const _dmRR = (typeof dmEffectiveRunRateLbs === 'function') ? dmEffectiveRunRateLbs() : null;
   const salesDemand = (_dmRR != null) ? (_dmRR / 30) : baseAvgSim;
   const weeklyDemand = salesDemand / (1 - shrinkPct);
   const safetyThreshold = weeklyDemand * safety;
@@ -18895,7 +18953,7 @@ function renderSimulator() {
   };
   const baseAvgSim = avgFn(sales, baseline);
   // Match Buy Planner: prefer the Demand module run-rate (Peru ginger, lbs→30-lb cases)
-  const _dmRR = (typeof _dmModelG === 'object' && _dmModelG && _dmModelG.runRate13) ? _dmModelG.runRate13 : null;
+  const _dmRR = (typeof dmEffectiveRunRateLbs === 'function') ? dmEffectiveRunRateLbs() : null;
   const avg = (_dmRR != null) ? (_dmRR / 30) : baseAvgSim;
   // Inflate by shrink to match the projection's warehouse-demand model
   const shrinkPctSim = parseFloat(document.getElementById('bp-shrink-pct')?.value);
@@ -18908,8 +18966,17 @@ function renderSimulator() {
   const hypoEl  = document.getElementById('sim-hypo-count');
   if (stockEl) stockEl.textContent = Math.round(stockCases).toLocaleString() + ' cases · ' + Math.round(stockLbs).toLocaleString() + ' lbs';
   if (demEl) {
+    let _qNote = '';
+    try {
+      const ql = (typeof qaQuietList === 'function') ? qaQuietList() : [];
+      if (ql.length) {
+        const _e = s => String(s==null?'':s).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+        const _lbl = p => p===50 ? 'Half' : (p===100 ? 'Full' : 'Out');
+        _qNote = ' · ' + ql.map(x => _e(x.c) + ' ' + _lbl((typeof qaPct==='function')?qaPct(x.c):0)).join(', ') + ' — change in Buy Planner';
+      }
+    } catch(e){}
     demEl.innerHTML = Math.round(warehouseDemand).toLocaleString() + ' cases/wk'
-      + '<span style="font-weight:400;color:var(--gray-500);font-size:var(--text-11);font-family:var(--fm)"> · ' + Math.round(avg) + ' sold + ' + Math.round(shrinkSim*100) + '% shrink</span>';
+      + '<span style="font-weight:400;color:var(--gray-500);font-size:var(--text-11);font-family:var(--fm)"> · ' + Math.round(avg) + ' sold + ' + Math.round(shrinkSim*100) + '% shrink' + _qNote + '</span>';
   }
   if (pipEl)   pipEl.textContent = activeOrders.length + ' orders · ' + activeOrders.reduce((s,o)=>s+(o.cases||0),0).toLocaleString() + ' cases';
   if (hypoEl)  hypoEl.textContent = state.hypotheticalOrders.length;
@@ -21185,6 +21252,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
   // list to who's genuinely buying now; clients tapering off (7+ weeks quiet) drop
   // to the "en fuga" list when their lifetime volume is material.
   const DM_ACTIVE_DAYS = 42, DM_MIN_RATE = 100;
+  const DM_QUIET_X = 2, DM_QUIET_MIN = 14;   // quiet-for-forecast: silent > max(2× cadence, 14d)
   const activeCusts = {};
   Object.keys(custLifetime).forEach(c => { if (daysSince(c) <= DM_ACTIVE_DAYS) activeCusts[c] = true; });
 
@@ -21253,9 +21321,11 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
     const gpR = cd ? _sumWinF(cd,_winR,'gp') : null;
     const gsR = cd ? _sumWinF(cd,_winR,'gs') : null;
     const gpP = cd ? _sumWinF(cd,_winP,'gp') : null;
+    const cadv = cadence(c);
     return {
       c, status: (ds <= DM_ACTIVE_DAYS ? 'active' : 'quiet'),
-      days: isFinite(ds) ? ds : null, last: lastOrder(c), cad: cadence(c),
+      fcQuiet: (cadv != null && isFinite(ds) && rrLbs > 0 && ds > Math.max(DM_QUIET_X * cadv, DM_QUIET_MIN)),
+      days: isFinite(ds) ? ds : null, last: lastOrder(c), cad: cadv,
       spark: _r10.map(w => Math.round((wkCust[w] && wkCust[w][c]) || 0)), trend,
       rrLbs: Math.round(rrLbs), rrCases: rrLbs / caseLb,
       life: Math.round(custLifetime[c] || 0),
@@ -21281,6 +21351,35 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
            weekly: allWeeks.map(w => ({ week:w, lbs:Math.round(weekTotal[w]||0) })),
            dataMax, weeksCovered:allWeeks.length, weeklyOnly:!!weeklyOnly };
 }
+
+// ── QUIET-ACCOUNT FORECAST RULE ─────────────────────────────────────────
+// A customer silent for more than max(2× their cadence, 14 days) is held out
+// of the buying plan. The Demand page keeps showing the historical run-rate;
+// only the demand that FEEDS Buy Planner / Simulator / Inventory is reduced.
+// Per-account scenario (Out 0% / Half 50% / Full 100%) persists per device.
+const QA_LS_KEY = 'jlz_quiet_scenario';
+function qaScenario(){ try { return JSON.parse(localStorage.getItem(QA_LS_KEY) || '{}') || {}; } catch(e){ return {}; } }
+function qaPct(c){ const v = qaScenario()[c]; return (v === 50 || v === 100) ? v : 0; }
+function qaModelG(){ return window._dmModelG || (typeof _dmModelG !== 'undefined' ? _dmModelG : null); }
+function qaQuietList(){
+  const m = qaModelG();
+  if (!m || !Array.isArray(m.customers)) return [];
+  return m.customers.filter(x => x.fcQuiet);
+}
+function dmEffectiveRunRateLbs(){
+  const m = qaModelG();
+  if (!m || !(m.runRate13 > 0)) return null;
+  let ex = 0;
+  qaQuietList().forEach(x => { ex += (x.rrLbs || 0) * (1 - qaPct(x.c) / 100); });
+  return Math.max(0, m.runRate13 - ex);
+}
+window.qaSetPct = function(cust, pct){
+  const s = qaScenario(); s[cust] = pct;
+  try { localStorage.setItem(QA_LS_KEY, JSON.stringify(s)); } catch(e){}
+  try { if (typeof renderBuyPlanner === 'function') renderBuyPlanner(); } catch(e){ console.warn('qaSetPct bp:', e); }
+  try { if (typeof renderSimulator === 'function') renderSimulator(); } catch(e){ console.warn('qaSetPct sim:', e); }
+  try { const th = document.getElementById('tab-home'); if (typeof renderHome === 'function' && th && th.style.display !== 'none') renderHome(); } catch(e){}
+};
 
 // ════════════════════════════════════════════════════════════════════════
 //  CUSTOMER 360 — one entity-centric customer view. Consolidates the former
@@ -21659,8 +21758,11 @@ function cxKpis(m){
   const quiet  = m.customers.filter(c=>c.status==='quiet').length;
   const conc = (m.concTop2!=null) ? m.concTop2 : 0;
   const bm = (m.blendMg!=null) ? m.blendMg.toFixed(0)+'%' : '\u2014';
+  const _feedsPlan = (typeof _dmModelG !== 'undefined' && _dmModel === _dmModelG);
+  const _quietCs = _feedsPlan ? m.customers.filter(c=>c.fcQuiet).reduce((s,c)=>s+((c.rrLbs||0)/(m.caseLb||DM_CASE_LB)),0) : 0;
+  const _qkNote = _quietCs>0 ? ' \u00b7 '+cxFmtN(_quietCs)+' cs/wk quiet \u2014 out of buying plan' : '';
   return '<div class="cx-kpis">'
-    + '<div class="cx-kpi"><div class="v">'+cxFmtN(m.runRate13/(m.caseLb||DM_CASE_LB))+' '+dmRunRateDelta()+'</div><div class="l">Run-rate cases/wk'+cxInfo('Average cases sold per week over the most recent fully-reported weeks (~13). Your current demand speed \u2014 this is the number that feeds the Buy Planner. 1 case = '+(m.caseLb||DM_CASE_LB)+' lb, post-shrink.')+'</div><div class="x">'+cxFmtN(m.runRate13)+' lbs/wk \u00b7 post-shrink</div></div>'
+    + '<div class="cx-kpi"><div class="v">'+cxFmtN(m.runRate13/(m.caseLb||DM_CASE_LB))+' '+dmRunRateDelta()+'</div><div class="l">Run-rate cases/wk'+cxInfo('Average cases sold per week over the most recent fully-reported weeks (~13). Your current demand speed \u2014 this is the number that feeds the Buy Planner. 1 case = '+(m.caseLb||DM_CASE_LB)+' lb, post-shrink.')+'</div><div class="x">'+cxFmtN(m.runRate13)+' lbs/wk \u00b7 post-shrink'+_qkNote+'</div></div>'
     + '<div class="cx-kpi"><div class="v">'+active+'</div><div class="l">Active clients</div><div class="x">'+quiet+' going quiet</div></div>'
     + '<div class="cx-kpi risk"><div class="v">'+Math.round(conc)+'%</div><div class="l">Concentration \u00b7 top 2'+cxInfo('Combined share of total volume held by your two largest accounts. High = your revenue leans on very few customers (a risk if one of them leaves or pauses).')+'</div><div class="x">share of total volume</div></div>'
     + '<div class="cx-kpi"><div class="v">'+bm+'</div><div class="l">Blended gross margin'+cxInfo('Total gross profit \u00f7 total gross sales across all customers, over the last 13 weeks. \u201cGross\u201d = FOB price minus full cost, before shrink and holding cost (those arrive in Step 2 = true margin).')+'</div><div class="x">'+(m.blendMg!=null?'last 13 wks \u00b7 shrink/holding pending':'upload for $')+'</div></div>'
@@ -21706,7 +21808,7 @@ function cxRenderList(){
   const r=cxFilteredSorted();
   if(!_cxState.sel || !r.some(c=>c.c===_cxState.sel)) _cxState.sel=(r[0]&&r[0].c)||(m.customers[0]&&m.customers[0].c);
   lb.innerHTML = r.map((c,i)=>{
-    const stb = c.status==='active' ? '<span class="cx-st act">ACTIVE</span>' : '<span class="cx-st quiet">QUIET '+(c.days!=null?c.days+'d':'')+'</span>';
+    const stb = c.fcQuiet ? '<span class="cx-st fq">OUT OF PLAN · '+(c.days!=null?c.days+'d':'')+'</span>' : (c.status==='active' ? '<span class="cx-st act">ACTIVE</span>' : '<span class="cx-st quiet">QUIET '+(c.days!=null?c.days+'d':'')+'</span>');
     const dcb = c.dcN>1 ? '<span class="cx-st dc">'+c.dcN+' DCs</span>' : '';
     const tr = cxTP[c.trend]||'\u2014';
     const dArrow = (c.gpD==null) ? '' : (c.gpD>=0
@@ -21855,7 +21957,7 @@ function cxRenderDetail(){
 
   const lenses=[['demand','Demand'],['profit','Profitability'],['dc','By DC'],['orders','Orders'],['trace','Traceability',true]];
   if(!lenses.some(l=>l[0]===_cxState.lens)) _cxState.lens='demand';
-  const stb = sel.status==='active'?'<span class="cx-st act">ACTIVE</span>':'<span class="cx-st quiet">QUIET '+(sel.days!=null?sel.days+'d':'')+'</span>';
+  const stb = sel.fcQuiet ? '<span class="cx-st fq">OUT OF PLAN · '+(sel.days!=null?sel.days+'d':'')+'</span>' : (sel.status==='active'?'<span class="cx-st act">ACTIVE</span>':'<span class="cx-st quiet">QUIET '+(sel.days!=null?sel.days+'d':'')+'</span>');
   const head='<div class="cx-dh"><div class="t">360 \u00b7 <span>'+cxEsc(sel.c)+'</span> '+stb+'</div><div class="cx-lens">'+lenses.map(l=>'<button data-l="'+l[0]+'" class="'+(_cxState.lens===l[0]?'on':'')+'">'+l[1]+(l[2]?'<span class="soon">soon</span>':'')+'</button>').join('')+'</div></div>';
   const body = _cxState.lens==='profit'?vProfit() : _cxState.lens==='dc'?vDC() : _cxState.lens==='orders'?vOrders() : _cxState.lens==='trace'?vTrace() : vDemand();
   host.innerHTML = head + '<div class="cx-pane">'+body+'</div>';
@@ -21938,7 +22040,7 @@ function cxStyles(){ return '<style>'
   + '.cx-num{font-family:var(--fm);font-variant-numeric:tabular-nums}.cx-nm{font-weight:600;color:var(--gray-800)}'
   + '.cx-rank{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:3px;background:var(--gray-100);color:var(--gray-500);font-family:var(--fm);font-size:10px;font-weight:700}'
   + '.cx-st{display:inline-block;font-family:var(--fm);font-size:9px;font-weight:700;padding:1px 6px;border-radius:3px;margin-left:7px}'
-  + '.cx-st.act{background:var(--green-100);color:var(--green-700)}.cx-st.quiet{background:var(--red-100);color:var(--red-700)}'
+  + '.cx-st.act{background:var(--green-100);color:var(--green-700)}.cx-st.quiet{background:var(--red-100);color:var(--red-700)}.cx-st.fq{background:var(--amber-50);color:var(--amber-700)}'
   + '.cx-st.dc{background:var(--blue-50);border:1px solid var(--blue-200);color:var(--blue-700)}'
   + '.cx-up{color:var(--green-600)}.cx-dn{color:var(--red-600)}.cx-fl{color:var(--gray-400)}'
   + '.cx-mg{display:inline-block;font-family:var(--fm);font-size:11px;font-weight:600;padding:1px 7px;border-radius:3px}.cx-mg.hi{background:var(--green-100);color:var(--green-700)}.cx-mg.mid{background:var(--amber-100);color:var(--amber-800)}.cx-mg.lo{background:var(--red-100);color:var(--red-700)}'
