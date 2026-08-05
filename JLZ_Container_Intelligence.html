@@ -21226,13 +21226,14 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
   const custSumWeeks = (c,weeks) => weeks.reduce((s,w)=>s+((wkCust[w]&&wkCust[w][c])||0),0);
 
   const w4 = lastN(4), w8 = lastN(8), w13 = lastN(13), prior4 = allWeeks.slice(-8,-4);
-  // Reporting-lag correction (data-driven): a week only counts toward the run-rate once
-  // the latest sale on file (dataMax) covers its full Sun-Sat span. The most recent week
-  // is otherwise under-reported (fulfillment/invoicing trails the sale) and would bias the
-  // rate low. This self-adjusts to however far behind the export is, dropping a clearly
-  // incomplete trailing week without discarding an earlier complete one.
-  const _wkEnd = (wk) => { const d = new Date(wk + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 6); return d.toISOString().slice(0,10); };
-  const reliableWeeks = dataMax ? allWeeks.filter(w => _wkEnd(w) <= dataMax) : allWeeks;
+  // Reporting-lag correction (data-driven): a week only counts toward the run-rate once the
+  // latest sale on file (dataMax) lands in that week's ISO week or a later one. Weeks run
+  // Mon-Sun and Sunday never has dispatches, so the old rule (require dataMax to reach the
+  // week's Sunday) systematically dropped the newest *complete* week — its last real dispatch
+  // is Fri/Sat, never Sunday. Comparing ISO weeks is assumption-free (correct whether the last
+  // dispatch was Friday or Saturday) and only drops weeks that fall entirely after the data.
+  const _dmaxWk = dataMax ? dmWeekKey(new Date(dataMax)) : '';
+  const reliableWeeks = _dmaxWk ? allWeeks.filter(w => _dmaxWk >= w) : allWeeks;
   const rateWeeks = (reliableWeeks.length ? reliableWeeks : allWeeks).slice(-13);
   const runRate13 = rateWeeks.length ? sumWeeks(rateWeeks)/rateWeeks.length : 0;
 
@@ -21442,11 +21443,11 @@ function dmIsInternalAcct(c){ const x=String(c||'').toLowerCase(); return x.inde
 // the realized liquidation tax, and a separate donation/write-off disposal bucket.
 function dmClearanceScan(prodKey, caseLb, dmax, weeks){
   weeks=weeks||52; caseLb=caseLb||DM_CASE_LB;
-  const all=(_dmRawAll||[]), wkEnd=k=>dmWkEndISO(k);
+  const all=(_dmRawAll||[]), _cwk=dmax?dmWeekKey(new Date(dmax)):'';   // ISO week of latest sale (robust incomplete-week rule, in sync with dmBuildModel/renderDemand)
   const sw={};
   all.forEach(r=>{ if((r.prod||'ginger')!==prodKey) return; if(r.type&&r.type!=='Sale') return; if(dmIsInternalAcct(r.c)) return;
     const k=dmWeekKey(new Date(r.d)); const o=sw[k]||(sw[k]={lbs:0,gs:0,gp:0}); o.lbs+=(r.lbs||0); o.gs+=(r.gs||0); o.gp+=(r.gp||0); });
-  const ser=Object.keys(sw).sort().map(k=>({week:k,cases:sw[k].lbs/caseLb,gs:sw[k].gs,gp:sw[k].gp,inc:wkEnd(k)>dmax}));
+  const ser=Object.keys(sw).sort().map(k=>({week:k,cases:sw[k].lbs/caseLb,gs:sw[k].gs,gp:sw[k].gp,inc:!!dmax&&_cwk<k}));
   const comp=ser.filter(s=>!s.inc), last=comp.slice(-weeks);
   const clr=last.filter(s=>s.gp<0&&s.cases>0);
   const liqLoss=clr.reduce((a,b)=>a+b.gp,0), casesDumped=clr.reduce((a,b)=>a+b.cases,0);
@@ -21460,7 +21461,7 @@ function dmClearanceScan(prodKey, caseLb, dmax, weeks){
   const dw={};
   all.forEach(r=>{ if((r.prod||'ginger')!==prodKey) return; if(r.type&&r.type!=='Sale') return; if(!dmIsInternalAcct(r.c)) return;
     const k=dmWeekKey(new Date(r.d)); const o=dw[k]||(dw[k]={lbs:0,gp:0}); o.lbs+=(r.lbs||0); o.gp+=(r.gp||0); });
-  const dks=Object.keys(dw).filter(k=>wkEnd(k)<=dmax).sort().slice(-weeks);
+  const dks=Object.keys(dw).filter(k=>_cwk>=k).sort().slice(-weeks);
   let dispCases=0,dispCost=0; dks.forEach(k=>{ dispCases+=dw[k].lbs/caseLb; dispCost+=dw[k].gp; });
   return { cleanRunRate:rr, sigma13:sd, normalMargin:normalMargin, gpPerCase:gpPerCase, liqLoss:liqLoss, liqWeeks:clr.length, casesDumped:casesDumped, dispCases:dispCases, dispCost:dispCost, weeks:weeks };
 }
@@ -21492,7 +21493,8 @@ function dmProductSeries(rows, caseLb, dmax){
     const o = wk[k] || (wk[k] = { lbs:0, gs:0 });
     o.lbs += (r.lbs || 0); o.gs += (r.gs || 0);
   });
-  const inc = k => !!dmax && dmWkEndISO(k) > dmax;
+  const _cwk = dmax ? dmWeekKey(new Date(dmax)) : '';       // ISO week of latest sale — robust incomplete-week rule, in sync with the run-rate
+  const inc = k => !!dmax && _cwk < k;
   return Object.keys(wk).sort().map(k => ({
     week:k, lbs:wk[k].lbs, gs:wk[k].gs,
     cases:(wk[k].lbs / caseLb),
@@ -21836,8 +21838,8 @@ function cxRenderDetail(){
 
   const axis=(m.weekly||[]).map(w=>w.week).slice(-13);
   const dmax=m.dataMax||'';
-  const wkEnd=wk=>{ const d=new Date(wk+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+6); return d.toISOString().slice(0,10); };
-  const incomplete=wk=>!!dmax && wkEnd(wk)>dmax;
+  const _dmaxWk = dmax ? dmWeekKey(new Date(dmax)) : '';   // ISO week (Mon key) of the latest sale on file
+  const incomplete=wk=>!!dmax && _dmaxWk < wk;             // incomplete = the week starts after that ISO week (robust rule, in sync with reliableWeeks)
   const allWk=(m.weekly||[]).map(w=>w.week);
   const relWk=allWk.filter(w=>!incomplete(w));   // complete (reliable) weeks, for windowed $ views
   const shortLab=wk=>'W'+cxWeekNo(wk);
