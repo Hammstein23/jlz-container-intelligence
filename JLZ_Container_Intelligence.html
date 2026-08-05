@@ -2600,6 +2600,31 @@ function authInjectLogo() {
     <div id="dm-body"></div>
     <div id="dm-accuracy" style="margin-top:18px"></div>
     <div id="dm-customers" style="margin-top:18px"></div>
+    <style>
+      .dmc-card{background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:16px 18px;}
+      .dmc-empty{font-size:12.5px;color:var(--gray-500);}
+      .dmc-cols{display:flex;gap:20px;flex-wrap:wrap;}
+      .dmc-col{flex:1 1 300px;min-width:260px;}
+      .dmc-h{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-600);margin-bottom:4px;}
+      .dmc-hint{font-size:11px;color:var(--gray-400);margin-bottom:8px;}
+      .dmc-l{display:block;font-size:11px;font-weight:600;color:var(--gray-500);margin:10px 0 3px;}
+      .dmc-in{width:100%;height:32px;padding:0 9px;border:1px solid var(--gray-200);border-radius:var(--r);font-size:13px;font-family:var(--fb);color:var(--gray-800);background:var(--white);}
+      .dmc-in:disabled{background:var(--gray-50);color:var(--gray-400);}
+      input.dmc-in{height:32px;}
+      .dmc-row2{display:flex;gap:10px;}.dmc-row2>div{flex:1;}
+      .dmc-seg{display:flex;gap:6px;margin-top:4px;}
+      .dmc-segb{flex:1;height:32px;border:1px solid var(--gray-200);background:var(--white);border-radius:var(--r);font-size:12px;font-family:var(--fb);color:var(--gray-600);cursor:pointer;}
+      .dmc-segb.on{border-color:var(--jlz);background:var(--jlz-light);color:var(--jlz);font-weight:600;}
+      .dmc-add{margin-top:14px;width:100%;height:36px;border:none;border-radius:var(--r);background:var(--jlz);color:#fff;font-size:13px;font-weight:600;font-family:var(--fb);cursor:pointer;}
+      .dmc-add:disabled{background:var(--gray-300);cursor:not-allowed;}
+      .dmc-chips{display:flex;flex-direction:column;gap:6px;}
+      .dmc-chip{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:var(--r);padding:6px 9px;}
+      .dmc-tag{font-size:9px;font-weight:700;font-family:var(--fm);text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);background:var(--gray-100);padding:1px 6px;border-radius:99px;margin-left:2px;}
+      .dmc-tag.direct{color:#6d28d9;background:#ede9fe;}
+      .dmc-rm{border:none;background:none;color:var(--gray-400);cursor:pointer;font-size:16px;line-height:1;padding:2px 4px;}
+      .dmc-rm:hover{color:var(--red-600);}
+    </style>
+    <div id="dm-committed" style="margin-top:18px"></div>
   </div>
 </div>
 
@@ -11379,6 +11404,72 @@ function getOrders() {
 function saveOrders(arr) {
   try { localStorage.setItem('jlz_orders_pipeline', JSON.stringify(arr)); }
   catch(e) { console.error('saveOrders failed:', e); }
+}
+
+// ── SALES COMMITMENTS — data layer (Frente B0) ─────────────────────────
+// Sell-side commitments the operator enters by hand: already sold, not yet
+// invoiced. TWO kinds, stored apart on purpose (handoff decisions #1/#2):
+//   • committed-inv → ships from OUR warehouse. Demand-side, not tied to a
+//     container. Top-level store 'jlz_committed_v1':
+//     [{customer, wk, cases, type:'inv'}] (wk = dmWeekKey Monday 'YYYY-MM-DD').
+//     Feeds the buy plan via max(), never summed into it.
+//   • direct-ship  → ships port → customer, tied to a container. Stored as a
+//     `directShip:[{customer,cases}]` list ON the procurement order object; its
+//     week is the container's ETA week, so it is not stored per row. Ingested at
+//     the pipeline/port stage — same lifecycle point as `downgraded`.
+// Local-first for v1 (like pnlFinal, won't sync via the Sheet until Code.gs
+// columns exist). Never blended with organic/formal/sea/air aggregates.
+function getCommitted() {
+  try { return JSON.parse(localStorage.getItem('jlz_committed_v1') || '[]') || []; }
+  catch(e) { return []; }
+}
+function saveCommitted(arr) {
+  try { localStorage.setItem('jlz_committed_v1', JSON.stringify(arr || [])); }
+  catch(e) { console.error('saveCommitted failed:', e); }
+}
+// Add a warehouse-committed order. cases coerced to a positive integer.
+function addCommitted(customer, wk, cases) {
+  var n = Math.round(Number(cases) || 0);
+  if(!customer || !wk || n <= 0) return getCommitted();
+  var all = getCommitted();
+  all.push({ customer: String(customer), wk: String(wk), cases: n, type: 'inv' });
+  saveCommitted(all);
+  return all;
+}
+function removeCommitted(idx) {
+  var all = getCommitted();
+  if(idx >= 0 && idx < all.length) { all.splice(idx, 1); saveCommitted(all); }
+  return all;
+}
+// Σ warehouse-committed cases for a week key (per-customer entries summed).
+function committedInvForWeek(wk) {
+  return getCommitted().reduce(function(s, c){ return s + ((c.wk === wk && c.type === 'inv') ? (c.cases || 0) : 0); }, 0);
+}
+// ── Direct-ship (per-container, on the order object) ──
+function getDirectShip(po) {
+  var o = (typeof findOrderForPo === 'function') ? findOrderForPo(po) : null;
+  return (o && Array.isArray(o.directShip)) ? o.directShip : [];
+}
+function _mutateOrderDirectShip(po, fn) {
+  var all = getOrders(), norm = String(po == null ? '' : po).trim().toLowerCase();
+  var i = all.findIndex(function(o){ return String(o.jlzPo || '').trim().toLowerCase() === norm; });
+  if(i < 0) return [];
+  if(!Array.isArray(all[i].directShip)) all[i].directShip = [];
+  fn(all[i].directShip);
+  saveOrders(all);
+  return all[i].directShip;
+}
+function addDirectShip(po, customer, cases) {
+  var n = Math.round(Number(cases) || 0);
+  if(!po || !customer || n <= 0) return getDirectShip(po);
+  return _mutateOrderDirectShip(po, function(list){ list.push({ customer: String(customer), cases: n }); });
+}
+function removeDirectShip(po, idx) {
+  return _mutateOrderDirectShip(po, function(list){ if(idx >= 0 && idx < list.length) list.splice(idx, 1); });
+}
+// Σ direct-ship cases for a container (Buy Planner / Inventory free-stock use this).
+function directShipTotal(po) {
+  return getDirectShip(po).reduce(function(s, d){ return s + (d.cases || 0); }, 0);
 }
 
 // ── DOCUMENT LIBRARY — data layer ──────────────────────────────────────
@@ -21753,7 +21844,124 @@ function renderDemand(){
   if (dmws) dmws.addEventListener('click', e=>{ const b=e.target.closest('button'); if(!b) return; _dmWin=+b.dataset.w; dmws.querySelectorAll('button').forEach(x=>x.classList.toggle('on', x===b)); dmRenderTrendPrice(); });
   if (cust) cust.innerHTML = dmZoneLabel(5,'Data coverage','captured vs dropped \u00b7 mixed-origin &amp; rolled-up rows listed here') + cxReconHTML(m) + cxNote(m);
   renderDemandAccuracy();
+  if (typeof renderCommittedPanel === 'function') renderCommittedPanel(m);
 }
+
+// \u2500\u2500 COMMITTED ORDERS + DIRECT-SHIP \u2014 manual entry panel (Frente B0) \u2500\u2500\u2500\u2500
+// Sits under the Demand tab (static #dm-committed host, survives dm-body
+// re-renders). Warehouse-committed \u2192 jlz_committed_v1; direct-ship \u2192 the
+// order's directShip list (week = container ETA). Customers are data-driven
+// (from the active demand model), never a hardcoded list. Chart states (B1)
+// and buy-plan netting (B2) read this same data \u2014 this panel is entry only.
+var _dmcType = 'inv';
+function dmcCustomers(model) {
+  var m = model || (typeof _dmModel !== 'undefined' ? _dmModel : null);
+  if(!m || !Array.isArray(m.customers)) return [];
+  var seen = {}, out = [];
+  m.customers.forEach(function(x) {
+    var c = x && x.c; if(!c || seen[c]) return;
+    if(typeof dmIsInternalAcct === 'function' && dmIsInternalAcct(c)) return;  // skip internal/disposal accounts
+    seen[c] = 1; out.push(c);
+  });
+  return out.sort();
+}
+function dmcArrivingOrders() {
+  return (typeof getOrders === 'function' ? getOrders() : []).filter(function(o) {
+    return o && o.jlzPo && (o.status === 'Contracted' || o.status === 'In Transit');
+  });
+}
+function dmcOrderEtaWk(o) {
+  var d = o && (o.arrivalEstimated || o.arrivalActual); if(!d) return '';
+  try { return dmWeekKey(new Date(d)); } catch(e) { return ''; }
+}
+function dmcWeekLabel(wk) {
+  if(!wk) return '\u2014';
+  var no = (typeof cxWeekNo === 'function') ? cxWeekNo(wk) : '';
+  return no ? ('W' + no) : wk;
+}
+function renderCommittedPanel(model) {
+  var host = document.getElementById('dm-committed'); if(!host) return;
+  var m = model || (typeof _dmModel !== 'undefined' ? _dmModel : null);
+  var custs = dmcCustomers(m);
+  var futures = (typeof bpFutureWeeks === 'function') ? bpFutureWeeks(11).slice(1) : [];  // next 10 weeks (skip the current, still-open week)
+  var arriving = dmcArrivingOrders();
+  var zone = '<div class="dm-zl"><span class="n">6</span><span class="t">Committed orders</span><span class="h">sold, not yet shipped \u00b7 feeds the buying plan</span></div>';
+  if(!custs.length) {
+    host.innerHTML = zone + '<div class="dmc-card"><div class="dmc-empty">Load a <b>Sales</b> report at the top of this tab to pick customers, then add committed orders here.</div></div>';
+    return;
+  }
+  var opt = function(v, lab, extra) { return '<option value="' + libEsc(v) + '"' + (extra || '') + '>' + libEsc(lab) + '</option>'; };
+  var html = '<div class="dmc-cols"><div class="dmc-col">'
+    + '<div class="dmc-h">Add a committed order</div>'
+    + '<div class="dmc-hint">An order you\u2019ve already sold but not shipped.</div>'
+    + '<label class="dmc-l">Customer</label><select class="dmc-in" id="dmc-cust">' + custs.map(function(c){ return opt(c, c); }).join('') + '</select>'
+    + '<div class="dmc-row2"><div><label class="dmc-l">Week</label><select class="dmc-in" id="dmc-week">'
+      + futures.map(function(f){ return opt(f.weekStartISO, dmcWeekLabel(f.weekStartISO) + ' \u00b7 ' + f.week); }).join('') + '</select></div>'
+      + '<div><label class="dmc-l">Cases</label><input class="dmc-in" id="dmc-cases" type="number" min="1" step="1" value="300"/></div></div>'
+    + '<label class="dmc-l">How does it ship?</label><div class="dmc-seg">'
+      + '<button type="button" class="dmc-segb' + (_dmcType === 'inv' ? ' on' : '') + '" data-t="inv">From warehouse</button>'
+      + '<button type="button" class="dmc-segb' + (_dmcType === 'direct' ? ' on' : '') + '" data-t="direct">Direct-ship from port</button></div>'
+    + '<div id="dmc-cwrap" style="display:' + (_dmcType === 'direct' ? 'block' : 'none') + '"><label class="dmc-l">From which container?</label>'
+      + (arriving.length
+          ? '<select class="dmc-in" id="dmc-cont">' + arriving.map(function(o){ var wk = dmcOrderEtaWk(o); return opt(o.jlzPo, 'PO ' + o.jlzPo + ' \u2014 arrives ' + dmcWeekLabel(wk) + (o.supplier ? ' \u00b7 ' + o.supplier : ''), ' data-wk="' + wk + '"'); }).join('') + '</select>'
+             + '<div class="dmc-hint">The week is set by the container\u2019s arrival.</div>'
+          : '<div class="dmc-hint">No in-transit containers in the Orders pipeline yet.</div>') + '</div>'
+    + '<button type="button" class="dmc-add" id="dmc-add"' + ((_dmcType === 'direct' && !arriving.length) ? ' disabled' : '') + '>Add committed order</button>'
+    + '</div><div class="dmc-col"><div class="dmc-h">On file</div><div id="dmc-chips" class="dmc-chips"></div></div></div>';
+  host.innerHTML = zone + '<div class="dmc-card">' + html + '</div>';
+  dmcApplyType();
+  dmcRenderChips();
+  var seg = host.querySelector('.dmc-seg');
+  if(seg) seg.addEventListener('click', function(e){ var b = e.target.closest('button'); if(b) dmcSetType(b.dataset.t); });
+  var add = host.querySelector('#dmc-add'); if(add) add.addEventListener('click', dmcAdd);
+  var cont = host.querySelector('#dmc-cont'); if(cont) cont.addEventListener('change', dmcApplyType);
+}
+function dmcSetType(t) { _dmcType = (t === 'direct') ? 'direct' : 'inv'; dmcApplyType(); }
+function dmcApplyType() {
+  var host = document.getElementById('dm-committed'); if(!host) return;
+  host.querySelectorAll('.dmc-segb').forEach(function(b){ b.classList.toggle('on', b.dataset.t === _dmcType); });
+  var cw = host.querySelector('#dmc-cwrap'); if(cw) cw.style.display = (_dmcType === 'direct') ? 'block' : 'none';
+  var wsel = host.querySelector('#dmc-week'), cont = host.querySelector('#dmc-cont'), add = host.querySelector('#dmc-add');
+  if(_dmcType === 'direct') {
+    if(wsel) wsel.disabled = true;               // week is the container's arrival, not chosen here
+    if(add) add.disabled = !(cont && cont.value);
+  } else {
+    if(wsel) wsel.disabled = false;
+    if(add) add.disabled = false;
+  }
+}
+function dmcAdd() {
+  var host = document.getElementById('dm-committed'); if(!host) return;
+  var cust = (host.querySelector('#dmc-cust') || {}).value;
+  var cases = parseInt((host.querySelector('#dmc-cases') || {}).value, 10);
+  if(!cust || !cases || cases < 1) return;
+  if(_dmcType === 'direct') {
+    var cont = host.querySelector('#dmc-cont'); if(!cont || !cont.value) return;
+    addDirectShip(cont.value, cust, cases);      // week derived from the container's ETA
+  } else {
+    var wk = (host.querySelector('#dmc-week') || {}).value; if(!wk) return;
+    addCommitted(cust, wk, cases);
+  }
+  renderCommittedPanel();
+}
+function dmcRenderChips() {
+  var box = document.getElementById('dmc-chips'); if(!box) return;
+  var html = '';
+  getCommitted().forEach(function(c, i) {
+    html += '<div class="dmc-chip"><span><b>' + libEsc(c.customer) + '</b> \u00b7 ' + dmcWeekLabel(c.wk) + ' \u00b7 ' + c.cases + ' cs <span class="dmc-tag">from warehouse</span></span>'
+      + '<button class="dmc-rm" onclick="dmcRemoveInv(' + i + ')" title="Remove">\u00d7</button></div>';
+  });
+  (typeof getOrders === 'function' ? getOrders() : []).forEach(function(o) {
+    if(!o || !Array.isArray(o.directShip)) return;
+    o.directShip.forEach(function(d, i) {
+      html += '<div class="dmc-chip"><span><b>' + libEsc(d.customer) + '</b> \u00b7 ' + libEsc(o.jlzPo) + ' \u00b7 ' + d.cases + ' cs <span class="dmc-tag direct">direct-ship</span></span>'
+        + '<button class="dmc-rm" onclick="dmcRemoveDirect(\'' + docJs(o.jlzPo) + '\',' + i + ')" title="Remove">\u00d7</button></div>';
+    });
+  });
+  box.innerHTML = html || '<div class="dmc-hint">Nothing committed yet.</div>';
+}
+function dmcRemoveInv(i) { removeCommitted(i); renderCommittedPanel(); }
+function dmcRemoveDirect(po, i) { removeDirectShip(po, i); renderCommittedPanel(); }
 
 function cxKpis(m){
   const active = m.customers.filter(c=>c.status==='active').length;
