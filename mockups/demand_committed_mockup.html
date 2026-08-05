@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Demand — Booked vs Forecast (mockup)</title>
+<style>
+  :root{
+    --ink:#1b2733; --muted:#6b7a86; --line:#e4eaee; --panel:#f7f9fa;
+    --paper:#ffffff; --runrate:#0f766e;
+    --wfm:#2f7d5b; --solti:#c98a2b; --cr:#b5563f; --alb:#4a6b8a; --earl:#7d5a8c; --oth:#9aa5ad;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#eef2f4;color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:14px;line-height:1.45;}
+  .wrap{max-width:1000px;margin:0 auto;padding:20px 16px 60px;}
+  .card{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:18px 18px;margin-bottom:16px;}
+  h1{font-size:19px;margin:0 0 2px;letter-spacing:-.2px;}
+  .thesis{color:var(--muted);font-size:13.5px;margin:0 0 4px;}
+  .mock-tag{display:inline-block;font-size:11px;font-weight:600;letter-spacing:.4px;
+    color:#8a5a00;background:#fff3d6;border:1px solid #f0d488;border-radius:5px;padding:2px 7px;margin-bottom:12px;}
+  .legend{display:flex;flex-wrap:wrap;gap:14px 18px;margin:6px 0 2px;font-size:12.5px;color:var(--ink);}
+  .legend .li{display:flex;align-items:center;gap:7px;}
+  .sw{width:18px;height:13px;border-radius:2px;display:inline-block;flex:none;}
+  .sw.realized{background:var(--oth);}
+  .sw.incomplete{background:repeating-linear-gradient(45deg,#c6ced3,#c6ced3 3px,#e9edef 3px,#e9edef 6px);}
+  .sw.committed{background:rgba(154,165,173,.22);border:1.6px solid var(--oth);}
+  .sw.direct{background:rgba(154,165,173,.22);border:1.6px solid var(--oth);
+    background-image:repeating-linear-gradient(45deg,rgba(27,39,51,.35),rgba(27,39,51,.35) 1.5px,transparent 1.5px,transparent 4px);}
+  .legend .desc{color:var(--muted);}
+  svg{width:100%;height:auto;display:block;}
+  .cols{display:flex;gap:16px;flex-wrap:wrap;}
+  .col{flex:1 1 380px;min-width:280px;}
+  h2{font-size:14px;margin:0 0 10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);}
+  label{display:block;font-size:12px;color:var(--muted);margin:10px 0 3px;font-weight:600;}
+  select,input[type=number]{width:100%;padding:8px 9px;border:1px solid var(--line);border-radius:7px;
+    font-size:14px;color:var(--ink);background:var(--paper);}
+  .row2{display:flex;gap:10px;}.row2>div{flex:1;}
+  .radios{display:flex;gap:8px;margin-top:4px;}
+  .radios button{flex:1;padding:8px;border:1px solid var(--line);background:var(--paper);border-radius:7px;
+    font-size:12.5px;cursor:pointer;color:var(--ink);}
+  .radios button.on{border-color:var(--runrate);background:#e6f4f1;color:#0b5148;font-weight:600;}
+  .addbtn{margin-top:14px;width:100%;padding:10px;border:none;border-radius:8px;background:var(--ink);
+    color:#fff;font-size:14px;font-weight:600;cursor:pointer;}
+  .addbtn:hover{background:#0f1b26;}
+  .chips{margin-top:12px;display:flex;flex-direction:column;gap:6px;}
+  .chip{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12.5px;
+    background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:6px 8px;}
+  .chip .dot{width:9px;height:9px;border-radius:50%;flex:none;display:inline-block;margin-right:6px;vertical-align:middle;}
+  .chip .rm{border:none;background:none;color:var(--muted);cursor:pointer;font-size:15px;line-height:1;padding:2px 4px;}
+  .chip .rm:hover{color:var(--cr);}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  th,td{text-align:right;padding:6px 6px;border-bottom:1px solid var(--line);}
+  th:first-child,td:first-child{text-align:left;}
+  th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px;}
+  td.plan{font-weight:700;}
+  tr.hl td{background:#fbf6ea;}
+  .num{font-variant-numeric:tabular-nums;}
+  .callout{margin-top:12px;background:#e6f4f1;border:1px solid #bfe0d9;border-radius:8px;padding:10px 12px;
+    font-size:12.5px;color:#0b5148;}
+  .callout b{color:#083d36;}
+  .foot{font-size:12px;color:var(--muted);}
+  .foot b{color:var(--ink);}
+  .foot .k{display:inline-block;padding:1px 5px;background:var(--panel);border:1px solid var(--line);border-radius:4px;font-size:11px;}
+  .divider{height:1px;background:var(--line);margin:14px 0;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="card">
+    <span class="mock-tag">MOCKUP · not live · for design review</span>
+    <h1>Demand — booked vs. forecast</h1>
+    <p class="thesis">Ginger, cases per week. What you've already sold is shown separately from what you're forecasting — the two are never added together.</p>
+    <div class="legend">
+      <div class="li"><span class="sw realized"></span><span>Realized <span class="desc">— sold &amp; shipped</span></span></div>
+      <div class="li"><span class="sw incomplete"></span><span>This week <span class="desc">— data still arriving, not counted yet</span></span></div>
+      <div class="li"><span class="sw committed"></span><span>Committed <span class="desc">— sold, ships from your warehouse</span></span></div>
+      <div class="li"><span class="sw direct"></span><span>Direct-ship <span class="desc">— sold, ships from port to the customer</span></span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <svg id="chart" viewBox="0 0 960 470" role="img" aria-label="Weekly ginger demand chart"></svg>
+  </div>
+
+  <div class="card">
+    <div class="cols">
+      <div class="col">
+        <h2>Add a committed order</h2>
+        <p class="foot" style="margin:0 0 4px">Enter an order you've already sold but not shipped. It shows on the chart and feeds the buying plan.</p>
+        <label>Customer</label>
+        <select id="fCust"></select>
+        <div class="row2">
+          <div><label>Week</label><select id="fWeek"></select></div>
+          <div><label>Cases</label><input id="fCases" type="number" min="1" step="1" value="300"/></div>
+        </div>
+        <label>How does it ship?</label>
+        <div class="radios">
+          <button id="tInv" class="on" data-t="inv">From warehouse</button>
+          <button id="tDir" data-t="direct">Direct-ship from port</button>
+        </div>
+        <div id="containerWrap" style="display:none">
+          <label>From which container?</label>
+          <select id="fContainer"></select>
+        </div>
+        <button class="addbtn" id="addBtn">Add committed order</button>
+        <div class="chips" id="chips"></div>
+      </div>
+
+      <div class="col">
+        <h2>How the plan uses this</h2>
+        <table id="nettbl">
+          <thead><tr><th>Week</th><th>Forecast</th><th>Committed</th><th>Plan buys</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <div class="callout" id="dscallout"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card foot">
+    <b>Reading the plan.</b> Each future week the buying plan uses <span class="k">max(committed, forecast)</span> — never the sum. A committed order <i>consumes</i> the forecast (it's the forecast coming true), so it only raises the plan when it's larger than the run-rate. <span style="color:var(--wfm)">Whole Foods W35 (900)</span> pushes that week up; <span style="color:var(--alb)">Albert's W34 (250)</span> sits under the forecast, so the plan stays at the run-rate.
+    <div class="divider"></div>
+    <b>Direct-ship nets against its container, not the warehouse.</b> Pre-sold cases that go port → customer never enter your warehouse: they're excluded from stock, excluded from the shrink model, and they don't add to what you need to buy — the arriving container already covers them.
+    <div class="divider"></div>
+    <b>Forecast line</b> is the run-rate ex-Sol-ti with the quiet-account rule active (Sol-ti's 913-case order on 01-Jun was their last — silent since). The dashed <b>W31</b> bar is hatched because its week isn't fully reported yet; the incomplete-week rule fix (separate change) decides exactly when a week flips to complete.
+  </div>
+
+</div>
+
+<script>
+const CUST = [
+  {id:'wfm',   name:'Whole Foods Market',    color:'#2f7d5b'},
+  {id:'solti', name:'Sol-ti',                color:'#c98a2b'},
+  {id:'cr',    name:'Christopher Ranch',     color:'#b5563f'},
+  {id:'alb',   name:"Albert's Organics",     color:'#4a6b8a'},
+  {id:'earl',  name:"Earl's Organic Produce",color:'#7d5a8c'},
+  {id:'oth',   name:'Other',                 color:'#9aa5ad'},
+];
+const CMAP = Object.fromEntries(CUST.map(c=>[c.id,c]));
+const cname = id => (CMAP[id]||{}).name || id;
+const ccol  = id => (CMAP[id]||{}).color || '#9aa5ad';
+
+// Realized weeks (real ginger data, cases). W31 is the incomplete trailing week.
+const REALIZED = [
+  {wk:'W23', v:{wfm:432, solti:913, cr:0, alb:205, earl:46, oth:184}},
+  {wk:'W24', v:{wfm:216, solti:0,   cr:0, alb:252, earl:45, oth:160}},
+  {wk:'W25', v:{wfm:432, solti:0,   cr:0, alb:170, earl:42, oth:10}},
+  {wk:'W26', v:{wfm:336, solti:0,   cr:0, alb:160, earl:49, oth:0}},
+  {wk:'W27', v:{wfm:318, solti:0,   cr:0, alb:109, earl:102,oth:20}},
+  {wk:'W28', v:{wfm:144, solti:0,   cr:0, alb:206, earl:46, oth:272}},
+  {wk:'W29', v:{wfm:0,   solti:0,   cr:0, alb:162, earl:55, oth:148}},
+  {wk:'W30', v:{wfm:588, solti:0,   cr:0, alb:98,  earl:82, oth:76}},
+  {wk:'W31', v:{wfm:144, solti:0,   cr:0, alb:30,  earl:0,  oth:0}, incomplete:true},
+];
+const FUTURE = ['W32','W33','W34','W35','W36','W37','W38'];
+const RUNRATE = 700;
+const CONTAINERS = [{id:'A', label:'Container A — arrives W37 (1,000 cs)', arriveWk:'W37', total:1000}];
+
+let committed = [
+  {cust:'alb',   wk:'W34', cases:250, type:'inv'},
+  {cust:'wfm',   wk:'W35', cases:900, type:'inv'},
+  {cust:'solti', wk:'W37', cases:120, type:'direct', container:'A'},
+  {cust:'wfm',   wk:'W37', cases:80,  type:'direct', container:'A'},
+];
+
+// ---- chart geometry ----
+const W=960,H=470, mL=52,mR=18,mT=16,mB=54;
+const weeks = REALIZED.map(r=>r.wk).concat(FUTURE);
+const yMax=2000;
+const px=x=>mL + x*( (W-mL-mR)/weeks.length );
+const slotW=(W-mL-mR)/weeks.length, barW=slotW*0.62, barOff=(slotW-barW)/2;
+const py=v=> (H-mB) - v*((H-mB-mT)/yMax);
+const SVGNS='http://www.w3.org/2000/svg';
+function el(t,a){const e=document.createElementNS(SVGNS,t);for(const k in a)e.setAttribute(k,a[k]);return e;}
+
+function stackSegs(g, wkIdx, vals, mode){
+  // mode: 'solid' | 'incomplete' | 'committed' | 'direct'
+  let base=0;
+  const x=px(wkIdx)+barOff;
+  CUST.forEach(c=>{
+    const val=vals[c.id]||0; if(val<=0) return;
+    const y=py(base+val), h=py(base)-py(base+val); base+=val;
+    if(mode==='solid'){
+      g.appendChild(el('rect',{x,y,width:barW,height:h,fill:c.color,rx:1}));
+    }else if(mode==='incomplete'){
+      g.appendChild(el('rect',{x,y,width:barW,height:h,fill:c.color,opacity:.32,rx:1}));
+      g.appendChild(el('rect',{x,y,width:barW,height:h,fill:'url(#hatch)',rx:1}));
+    }else{ // committed / direct = outlined
+      g.appendChild(el('rect',{x,y,width:barW,height:h,fill:c.color,'fill-opacity':.18,
+        stroke:c.color,'stroke-width':1.8,rx:1}));
+      if(mode==='direct')
+        g.appendChild(el('rect',{x,y,width:barW,height:h,fill:'url(#stripe)',rx:1}));
+    }
+  });
+  return base;
+}
+
+function render(){
+  const svg=document.getElementById('chart'); svg.innerHTML='';
+  // defs: hatch + stripe patterns
+  const defs=el('defs',{});
+  const hp=el('pattern',{id:'hatch',width:6,height:6,patternUnits:'userSpaceOnUse',patternTransform:'rotate(45)'});
+  hp.appendChild(el('rect',{width:6,height:6,fill:'#eef1f3',opacity:.0}));
+  hp.appendChild(el('line',{x1:0,y1:0,x2:0,y2:6,stroke:'#8f9aa2','stroke-width':3}));
+  defs.appendChild(hp);
+  const sp=el('pattern',{id:'stripe',width:4,height:4,patternUnits:'userSpaceOnUse',patternTransform:'rotate(45)'});
+  sp.appendChild(el('line',{x1:0,y1:0,x2:0,y2:4,stroke:'#1b2733','stroke-width':1.4,opacity:.42}));
+  defs.appendChild(sp);
+  svg.appendChild(defs);
+
+  // gridlines + y labels
+  for(let v=0; v<=yMax; v+=500){
+    svg.appendChild(el('line',{x1:mL,y1:py(v),x2:W-mR,y2:py(v),stroke:'#eef1f3','stroke-width':1}));
+    const t=el('text',{x:mL-8,y:py(v)+4,'text-anchor':'end',fill:'#9aa5ad','font-size':11}); t.textContent=v.toLocaleString();
+    svg.appendChild(t);
+  }
+  // divider between realized & future
+  const divX=px(REALIZED.length);
+  svg.appendChild(el('line',{x1:divX,y1:mT,x2:divX,y2:H-mB,stroke:'#cfd8dd','stroke-width':1,'stroke-dasharray':'2 3'}));
+  const flab=el('text',{x:divX+6,y:mT+12,fill:'#9aa5ad','font-size':10.5}); flab.textContent='forecast horizon →'; svg.appendChild(flab);
+
+  // run-rate dashed line over future
+  const rrY=py(RUNRATE);
+  svg.appendChild(el('line',{x1:divX,y1:rrY,x2:W-mR,y2:rrY,stroke:'#0f766e','stroke-width':1.6,'stroke-dasharray':'5 4'}));
+  const rl=el('text',{x:W-mR,y:rrY-6,'text-anchor':'end',fill:'#0f766e','font-size':11,'font-weight':600});
+  rl.textContent='run-rate '+RUNRATE+' (ex-Sol-ti)'; svg.appendChild(rl);
+
+  // realized bars
+  const g=el('g',{}); svg.appendChild(g);
+  REALIZED.forEach((r,i)=> stackSegs(g,i,r.v, r.incomplete?'incomplete':'solid'));
+
+  // future committed bars (inv stacked, then direct stacked on top), per week
+  FUTURE.forEach((wk,fi)=>{
+    const idx=REALIZED.length+fi;
+    const inv={}, dir={};
+    committed.filter(c=>c.wk===wk).forEach(c=>{
+      const tgt = c.type==='direct'?dir:inv; tgt[c.cust]=(tgt[c.cust]||0)+c.cases;
+    });
+    const topInv=stackSegs(g,idx,inv,'committed');
+    // direct stacked above inv
+    if(Object.values(dir).some(v=>v>0)){
+      let base=topInv; const x=px(idx)+barOff;
+      CUST.forEach(c=>{const val=dir[c.id]||0; if(val<=0)return;
+        const y=py(base+val),h=py(base)-py(base+val);base+=val;
+        g.appendChild(el('rect',{x,y,width:barW,height:h,fill:c.color,'fill-opacity':.18,stroke:c.color,'stroke-width':1.8,rx:1}));
+        g.appendChild(el('rect',{x,y,width:barW,height:h,fill:'url(#stripe)',rx:1}));
+      });
+    }
+  });
+
+  // container arrival marker
+  CONTAINERS.forEach(ct=>{
+    const idx=weeks.indexOf(ct.arriveWk); if(idx<0)return;
+    const x=px(idx)+slotW/2;
+    svg.appendChild(el('line',{x1:x,y1:mT+4,x2:x,y2:H-mB,stroke:'#b5563f','stroke-width':1,'stroke-dasharray':'1 3',opacity:.5}));
+    const chip=el('g',{});
+    chip.appendChild(el('rect',{x:x-40,y:mT+2,width:80,height:16,rx:8,fill:'#fff',stroke:'#b5563f','stroke-width':1}));
+    const ct1=el('text',{x:x,y:mT+13,'text-anchor':'middle',fill:'#b5563f','font-size':10,'font-weight':700});
+    ct1.textContent='▣ '+ct.id+' arrives'; chip.appendChild(ct1);
+    svg.appendChild(chip);
+  });
+
+  // x labels
+  weeks.forEach((wk,i)=>{
+    const x=px(i)+slotW/2;
+    const t=el('text',{x,y:H-mB+16,'text-anchor':'middle',fill:'#6b7a86','font-size':11}); t.textContent=wk;
+    svg.appendChild(t);
+  });
+  // "today" tick
+  const todayX=px(REALIZED.length)+slotW*0.0;
+  const td=el('text',{x:divX,y:H-mB+34,'text-anchor':'middle',fill:'#9aa5ad','font-size':10}); td.textContent='today'; svg.appendChild(td);
+
+  renderTable(); renderChips();
+}
+
+function weekReq(wk){
+  const inv = committed.filter(c=>c.wk===wk && c.type==='inv').reduce((s,c)=>s+c.cases,0);
+  return {inv, plan:Math.max(inv, wk==='W32'?0:RUNRATE)};
+}
+function renderTable(){
+  const tb=document.querySelector('#nettbl tbody'); tb.innerHTML='';
+  FUTURE.forEach(wk=>{
+    const {inv,plan}=weekReq(wk);
+    const isNow = wk==='W32';
+    const tr=document.createElement('tr'); if(inv>RUNRATE) tr.className='hl';
+    tr.innerHTML=`<td>${wk}${isNow?' <span style="color:#9aa5ad">(now)</span>':''}</td>`+
+      `<td class="num">${isNow?'—':RUNRATE.toLocaleString()}</td>`+
+      `<td class="num">${inv?inv.toLocaleString():'—'}</td>`+
+      `<td class="num plan">${isNow?'—':plan.toLocaleString()}</td>`;
+    tb.appendChild(tr);
+  });
+  // direct-ship callout
+  const dir=committed.filter(c=>c.type==='direct');
+  const co=document.getElementById('dscallout');
+  if(dir.length){
+    const byC={}; dir.forEach(c=>byC[c.cust]=(byC[c.cust]||0)+c.cases);
+    const tot=dir.reduce((s,c)=>s+c.cases,0);
+    const ct=CONTAINERS[0];
+    const parts=Object.entries(byC).map(([id,v])=>`${cname(id)} ${v}`).join(', ');
+    co.style.display='block';
+    co.innerHTML=`<b>Direct-ship — ${ct.id} (arrives ${ct.arriveWk}):</b> ${parts} = ${tot} cs pre-sold, port → customer. `+
+      `Container is ${ct.total.toLocaleString()} cs → <b>${(ct.total-tot).toLocaleString()} cs</b> enter free stock; the ${tot} are already sold and <b>not added to the buy</b>.`;
+  }else{ co.style.display='none'; }
+}
+function renderChips(){
+  const box=document.getElementById('chips'); box.innerHTML='';
+  committed.forEach((c,i)=>{
+    const d=document.createElement('div'); d.className='chip';
+    const tag = c.type==='direct' ? `direct-ship · ${c.container}` : 'from warehouse';
+    d.innerHTML=`<span><span class="dot" style="background:${ccol(c.cust)}"></span>`+
+      `<b>${cname(c.cust)}</b> · ${c.wk} · ${c.cases} cs <span style="color:#9aa5ad">· ${tag}</span></span>`+
+      `<button class="rm" data-i="${i}" title="Remove">×</button>`;
+    box.appendChild(d);
+  });
+  box.querySelectorAll('.rm').forEach(b=>b.onclick=()=>{committed.splice(+b.dataset.i,1);render();});
+}
+
+// ---- form wiring ----
+let formType='inv';
+function initForm(){
+  const fc=document.getElementById('fCust');
+  CUST.filter(c=>c.id!=='oth').forEach(c=>{const o=document.createElement('option');o.value=c.id;o.textContent=c.name;fc.appendChild(o);});
+  const fw=document.getElementById('fWeek');
+  FUTURE.filter(w=>w!=='W32').forEach(w=>{const o=document.createElement('option');o.value=w;o.textContent=w;fw.appendChild(o);});
+  const fk=document.getElementById('fContainer');
+  CONTAINERS.forEach(ct=>{const o=document.createElement('option');o.value=ct.id;o.textContent=ct.label;fk.appendChild(o);});
+  document.getElementById('tInv').onclick=()=>setType('inv');
+  document.getElementById('tDir').onclick=()=>setType('direct');
+  document.getElementById('addBtn').onclick=addOrder;
+}
+function setType(t){
+  formType=t;
+  document.getElementById('tInv').classList.toggle('on',t==='inv');
+  document.getElementById('tDir').classList.toggle('on',t==='direct');
+  document.getElementById('containerWrap').style.display = t==='direct'?'block':'none';
+  if(t==='direct'){ // snap week to the container's arrival week
+    const ct=CONTAINERS[0]; document.getElementById('fWeek').value=ct.arriveWk;
+  }
+}
+function addOrder(){
+  const cust=document.getElementById('fCust').value;
+  const wk=document.getElementById('fWeek').value;
+  const cases=parseInt(document.getElementById('fCases').value,10);
+  if(!cases||cases<1) return;
+  const o={cust,wk,cases,type:formType};
+  if(formType==='direct'){ o.container=document.getElementById('fContainer').value;
+    o.wk=CONTAINERS.find(c=>c.id===o.container).arriveWk; }
+  committed.push(o); render();
+}
+
+initForm(); render();
+</script>
+</body>
+</html>
