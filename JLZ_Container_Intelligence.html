@@ -13849,7 +13849,12 @@ function bpInvLot(id,st,hist){
   var transport=bpInvRate('transportLb',hist,st); transport=(transport!=null)?transport:0;
   var landed=cif+transport;
   var perCase=o?bpOrderPerCaseLb(o):(typeof DM_CASE_LB!=='undefined'?DM_CASE_LB:30);
-  var cases=(rs.cases!=null)?rs.cases:(o?(parseFloat(o.cases)||0):0);
+  // Frente B: direct-ship cases cross-dock port -> customer and never enter the warehouse.
+  // A receiving sheet (rs.cases) is a hand-curated physical count that already excludes them,
+  // so only net the order-total fallback. (ASSUMPTION: rs.cases excludes cross-dock — confirm
+  // with Juan; if a receiving sheet ever counts them, also subtract _ds from the rs.cases branch.)
+  var _ds=(typeof directShipTotal==='function' && o)?directShipTotal(o.jlzPo):0;
+  var cases=(rs.cases!=null)?rs.cases:Math.max(0,(o?(parseFloat(o.cases)||0):0)-_ds);
   var lbs=cases*perCase;
   var stored=bpDaysSince(o?bpEtaOf(o):'');
   var defDays=(st.defDays!=null)?st.defDays:14;
@@ -13863,7 +13868,7 @@ function bpInvLot(id,st,hist){
   var cln=clnBase*(1+(clnDet/100)*totW);
   var delivered=landed+cln, sf=(shrPct>0&&shrPct<100)?(1-shrPct/100):1, net=delivered/sf;
   var mode=rs.mode||(o&&o.mode==='air'?'air':'sea');
-  return {o:o,rs:rs,cif:cif,landed:landed,cases:cases,lbs:lbs,stored:stored,addD:addD,totD:totD,shrPct:shrPct,cln:cln,delivered:delivered,net:net,val:delivered*lbs,mode:mode};
+  return {o:o,rs:rs,cif:cif,landed:landed,cases:cases,directShip:_ds,lbs:lbs,stored:stored,addD:addD,totD:totD,shrPct:shrPct,cln:cln,delivered:delivered,net:net,val:delivered*lbs,mode:mode};
 }
 
 
@@ -13895,7 +13900,7 @@ function invmCompute(){
   var lots=Object.keys(st.rows||{}).map(function(id){
     var L=bpInvLot(id,st,hist); if(!L.o || L.cases<=0) return null;
     return { id:id, po:String(L.o.jlzPo||id), sup:L.o.supplier||'?', mode:L.mode,
-      stored:L.stored, cases:L.cases, lbs:L.lbs, landed:L.landed,
+      stored:L.stored, cases:L.cases, directShip:L.directShip||0, lbs:L.lbs, landed:L.landed,
       addManual:(st.rows[id] && st.rows[id].days!=null)?st.rows[id].days:null, expDays:shelf-L.stored,
       downgraded: !!(L.o.downgraded) };
   }).filter(Boolean);
@@ -14522,17 +14527,27 @@ function renderBuyPlanner() {
   let runningStock = stockCases - (weeksElapsed * weeklyDemand);
   const rows = futureWeeks.map(fw => {
     const arrivals = pipelineByWeek[fw.week] || [];
-    const arrivalCases = arrivals.reduce((s, a) => s + a.cases, 0);
+    // Frente B: direct-ship cases go port -> customer, never entering the warehouse,
+    // so they don't add to free stock. Net them out of each container's supply.
+    const arrivalCases = arrivals.reduce((s, a) => s + Math.max(0, (a.cases || 0)
+      - ((typeof directShipTotal === 'function' && a.order) ? directShipTotal(a.order.jlzPo) : 0)), 0);
+    // Committed-inv (already sold, ships from the warehouse) CONSUMES the forecast: the
+    // week's requirement is max(committed, run-rate), never the sum -- a commitment is the
+    // forecast coming true, so it only lifts the plan when it exceeds the run-rate.
+    const committedWk = (typeof committedInvForWeek === 'function' && typeof dmWeekKey === 'function' && fw.weekStartDate)
+      ? committedInvForWeek(dmWeekKey(fw.weekStartDate)) : 0;
+    const wkDemand = Math.max(committedWk, weeklyDemand);
     const startingStock = runningStock;
-    runningStock = runningStock + arrivalCases - weeklyDemand;
+    runningStock = runningStock + arrivalCases - wkDemand;
     return {
       ...fw,
       startingStock: startingStock,
       arrivalCases: arrivalCases,
       arrivalOrders: arrivals,
-      demand: weeklyDemand,
+      demand: wkDemand,
+      committed: committedWk,
       endingStock: runningStock,
-      weeksOfCoverage: weeklyDemand > 0 ? runningStock / weeklyDemand : 0,
+      weeksOfCoverage: wkDemand > 0 ? runningStock / wkDemand : 0,
     };
   });
 
@@ -14638,7 +14653,9 @@ function renderBuyPlanner() {
       (r.arrivalOrders||[]).forEach(function(a){
         lots.push({
           name: 'PO ' + (a.order && a.order.jlzPo != null ? a.order.jlzPo : '?'),
-          cases: a.cases || 0, cur:false,
+          // Frente B: cross-dock direct-ship cases never age in the warehouse — exclude
+          // them from the FIFO aging denominator (they'd dilute the ~0.44%/day rate).
+          cases: Math.max(0, (a.cases || 0) - ((typeof directShipTotal === 'function' && a.order) ? directShipTotal(a.order.jlzPo) : 0)), cur:false,
           arrWk: wkFromNow(r.weekStartDate), arrLabel: r.weekStartDate
         });
       });
