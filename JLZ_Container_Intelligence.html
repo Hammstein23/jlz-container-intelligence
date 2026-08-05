@@ -13983,7 +13983,7 @@ function invmLots(m,t){
     var addCell=(INVM_DAYSMODE==='auto')?('<span class="invm-cin lock" style="display:inline-block">'+l.add.toFixed(1)+'</span>'):('<input class="invm-cin" type="number" value="'+(l.addManual!=null?l.addManual:l.addAuto.toFixed(0))+'" onchange="invmSetManual(\''+l.id+'\',this.value)">');
     var zl=l.zone==='under'?'UNDERWATER':l.zone;
     h+='<tr>'+
-      '<td class="l"><span class="invm-po">'+l.po+'</span></td>'+
+      '<td class="l"><span class="invm-po">'+l.po+'</span>'+(l.directShip>0?'<br><span style="font-size:9px;font-family:var(--fm);color:#6d28d9;background:#ede9fe;padding:1px 5px;border-radius:99px;white-space:nowrap" title="Sold port → customer, never entered the warehouse — not counted as stock or shrink">'+invmF(l.directShip)+' cs direct-shipped</span>':'')+'</td>'+
       '<td class="l"><span class="invm-supn">'+l.sup+'</span></td>'+
       '<td class="l"><span class="invm-mc '+l.mode+'">'+(l.mode==='air'?'AIR':'SEA')+'</span></td>'+
       '<td>'+l.stored+'d</td><td class="invm-muted">in '+l.expDays+'d</td>'+
