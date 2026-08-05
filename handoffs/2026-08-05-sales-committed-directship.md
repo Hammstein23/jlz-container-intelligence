@@ -5,10 +5,18 @@
 
 ## Status
 - **Frente A — DONE & PUSHED (live).** `5af824a`.
-- **Frente B0–B3 — DONE, committed, NOT yet pushed** (3 commits: `4e0985e` B0, `4fb98d6` B1,
-  `5022842` B2+B3). Push via GitHub Desktop.
-- **B4** (Code.gs columns for cross-device sync of committed/directShip) — optional, deferred
-  (needs the backend redeploy; local-first works today, like `pnlFinal`).
+- **Frente B0–B3 — DONE & PUSHED.** `4e0985e` B0, `4fb98d6` B1, `5022842` B2+B3.
+- **Inventory "direct-shipped" badge** — DONE (`git log`), unpushed at time of writing.
+- **Frente B0.5 (open-orders import) — DONE, verified end-to-end, unpushed.** `4750dca`.
+  WholesaleWare "Order vs Picked Quantity" .xlsx → `committed[]` via `parseOpenOrders`
+  (keeps `OG-GIN-30Lbs-PR` only; anti-double-count vs fulfilled `dataMax`; dedupe Order No+SKU;
+  `source:'import'` so re-import never touches manual/direct-ship). UI: import input in the
+  Committed panel, parsed in-browser via SheetJS. **Confirmed against the real 2026-08-05 sample:**
+  33 rows → 12 committed ginger; **Sol-ti 1,400 cs caught**; direct-ship marker absent (stays
+  manual). **PLACEHOLDER still open:** Item Status only ever `PICKED` in samples — full vocabulary
+  unconfirmed; every future-fulfillment row is ingested + flagged. Refine when a fuller export shows
+  OPEN/ALLOCATED/SHIPPED.
+- **B4** (Code.gs columns for cross-device sync) — optional, deferred.
 - **Frente C** (QC Document Audit) — untouched, still needs sample PDFs.
 
 ## Frente A — incomplete-week rule (`5af824a`)
