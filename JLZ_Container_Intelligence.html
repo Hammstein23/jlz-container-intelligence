@@ -11432,7 +11432,7 @@ function addCommitted(customer, wk, cases) {
   var n = Math.round(Number(cases) || 0);
   if(!customer || !wk || n <= 0) return getCommitted();
   var all = getCommitted();
-  all.push({ customer: String(customer), wk: String(wk), cases: n, type: 'inv' });
+  all.push({ customer: String(customer), wk: String(wk), cases: n, type: 'inv', source: 'manual' });
   saveCommitted(all);
   return all;
 }
@@ -11470,6 +11470,50 @@ function removeDirectShip(po, idx) {
 // Σ direct-ship cases for a container (Buy Planner / Inventory free-stock use this).
 function directShipTotal(po) {
   return getDirectShip(po).reduce(function(s, d){ return s + (d.cases || 0); }, 0);
+}
+
+// ── OPEN-ORDERS IMPORT — auto-populate committed[] (Frente B0.5) ────────
+// WholesaleWare "Order vs Picked Quantity" report → committed-inv orders.
+// Primary feed (decision #7); manual entry stays as override + the only way to
+// mark direct-ship (this report carries NO route/ship-type column — confirmed
+// against the 2026-08-05 sample). Re-import replaces only source:'import' rows,
+// never manual ones. STATUS PLACEHOLDER: sample shows only Item Status=PICKED, so
+// the full vocabulary (OPEN/ALLOCATED/SHIPPED…) is unconfirmed — we ingest every
+// row with a future Fulfillment Date and flag it; refine when a fuller export exists.
+function ooDateToISO(s) {
+  var m = String(s == null ? '' : s).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);   // MM/DD/YYYY
+  return m ? (m[3] + '-' + ('0' + m[1]).slice(-2) + '-' + ('0' + m[2]).slice(-2)) : '';
+}
+// Pure parser (rows = SheetJS sheet_to_json objects). fulfilledMax = the demand
+// model's dataMax (YYYY-MM-DD) for anti-double-count with the fulfilled feed.
+function parseOpenOrders(rows, fulfilledMax) {
+  var out = [], seen = {}, st = { total: (rows || []).length, kept: 0, nonGinger: 0, alreadyFulfilled: 0, dup: 0, badRow: 0 };
+  (rows || []).forEach(function(r) {
+    var sku = String(r['SKU'] == null ? '' : r['SKU']).trim();
+    // Peru ginger, standard 30-lb case only. Excludes -HI (Hawaiian), 5/10-lb ginger,
+    // garlic, turmeric. (Non-30lb ginger would need caseLb->30 conversion; out of scope v1.)
+    if(sku !== 'OG-GIN-30Lbs-PR') { st.nonGinger++; return; }
+    var iso = ooDateToISO(r['Fulfillment Date']);
+    if(!iso) { st.badRow++; return; }
+    if(fulfilledMax && iso <= fulfilledMax) { st.alreadyFulfilled++; return; }   // in the fulfilled feed already
+    var key = String(r['Order No'] || '') + '|' + sku;                            // dedupe (a line can repeat across exports)
+    if(seen[key]) { st.dup++; return; }
+    seen[key] = 1;
+    var qty = Math.round(parseFloat(r['Order qty']) || 0);
+    if(qty <= 0) { st.badRow++; return; }
+    var cust = String(r['Customer Name'] == null ? '' : r['Customer Name']).trim() || '—';
+    var wk = (typeof dmWeekKey === 'function') ? dmWeekKey(new Date(iso + 'T12:00:00')) : iso;   // noon-local → stable Monday
+    out.push({ customer: cust, wk: wk, cases: qty, type: 'inv', source: 'import', orderNo: String(r['Order No'] || ''), sku: sku });
+    st.kept++;
+  });
+  return { entries: out, stats: st };
+}
+// Replace the import-sourced committed rows with a fresh set; manual rows untouched.
+function importCommittedOpenOrders(entries) {
+  var kept = getCommitted().filter(function(c){ return c.source !== 'import'; });
+  var all = kept.concat(entries || []);
+  saveCommitted(all);
+  return all;
 }
 
 // ── DOCUMENT LIBRARY — data layer ──────────────────────────────────────
@@ -21966,6 +22010,11 @@ function renderCommittedPanel(model) {
   }
   var opt = function(v, lab, extra) { return '<option value="' + libEsc(v) + '"' + (extra || '') + '>' + libEsc(lab) + '</option>'; };
   var html = '<div class="dmc-cols"><div class="dmc-col">'
+    + '<div class="dmc-h">Import open orders</div>'
+    + '<div class="dmc-hint">WholesaleWare "Order vs Picked Quantity" (.xlsx). Auto-fills committed ginger orders; your manual entries and direct-ship stay.</div>'
+    + '<input type="file" id="dmc-import-file" accept=".xlsx,.xls" onchange="dmcImportFile(this)" style="font-size:12px;width:100%"/>'
+    + (window._dmcImportMsg ? '<div style="font-size:11px;color:var(--jlz);background:var(--jlz-light);border-radius:var(--r);padding:6px 9px;margin-top:6px;line-height:1.5">' + window._dmcImportMsg + '</div>' : '')
+    + '<div style="height:1px;background:var(--gray-200);margin:14px 0"></div>'
     + '<div class="dmc-h">Add a committed order</div>'
     + '<div class="dmc-hint">An order you\u2019ve already sold but not shipped.</div>'
     + '<label class="dmc-l">Customer</label><select class="dmc-in" id="dmc-cust">' + custs.map(function(c){ return opt(c, c); }).join('') + '</select>'
@@ -22036,6 +22085,28 @@ function dmcRenderChips() {
 }
 function dmcRemoveInv(i) { removeCommitted(i); renderCommittedPanel(); }
 function dmcRemoveDirect(po, i) { removeDirectShip(po, i); renderCommittedPanel(); }
+function dmcImportFile(input) {
+  var f = input && input.files && input.files[0]; if(!f) return;
+  if(typeof XLSX === 'undefined') { alert('Spreadsheet reader not ready — reload and try again.'); return; }
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      var wb = XLSX.read(e.target.result, { type: 'array' });
+      var ws = wb.Sheets[wb.SheetNames[0]];
+      var rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      var fulfilledMax = (typeof _dmModel !== 'undefined' && _dmModel && _dmModel.dataMax) ? _dmModel.dataMax : '';
+      var res = parseOpenOrders(rows, fulfilledMax);
+      importCommittedOpenOrders(res.entries);
+      var s = res.stats;
+      window._dmcImportMsg = 'Imported <b>' + s.kept + '</b> committed ginger order' + (s.kept === 1 ? '' : 's') +
+        '. Skipped ' + s.nonGinger + ' non-ginger, ' + s.alreadyFulfilled + ' already fulfilled, ' + s.dup + ' duplicate' +
+        (s.badRow ? ', ' + s.badRow + ' unreadable' : '') + '. All rows treated as committed (status vocabulary unconfirmed).';
+      renderCommittedPanel();
+    } catch(err) { alert('Import failed: ' + err.message); }
+  };
+  reader.readAsArrayBuffer(f);
+  input.value = '';
+}
 
 function cxKpis(m){
   const active = m.customers.filter(c=>c.status==='active').length;
