@@ -21937,6 +21937,7 @@ function renderDemand(){
     host.innerHTML = dmZoneStyles() + dmEmptyStateHTML();
     dmRenderPulse();
     renderDemandAccuracy();
+    if (typeof renderCommittedPanel === 'function') renderCommittedPanel(m);   // keep the Committed panel visible (empty-state hint) even before Sales data loads
     return;
   }
   host.innerHTML = cxStyles() + dmZoneStyles()
