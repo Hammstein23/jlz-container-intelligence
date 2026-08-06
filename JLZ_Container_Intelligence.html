@@ -19001,7 +19001,7 @@ function simRenderProjection(realOrders, hypoOrders) {
     const wk = isoWeek(arrival);
     const yr = (new Date(arrival + 'T00:00:00Z')).getUTCFullYear();
     const wkKey = yr + '-W' + String(wk).padStart(2, '0');
-    addArrival(wkKey, { label: 'PO ' + (o.jlzPo || '—'), cases: o.cases || 0, isReal: true, isDowngraded: downgradedSetProj.has(String(o.jlzPo || '—')) });
+    addArrival(wkKey, { label: 'PO ' + (o.jlzPo || '—'), po: o.jlzPo, cases: o.cases || 0, isReal: true, isDowngraded: downgradedSetProj.has(String(o.jlzPo || '—')) });
   });
   hypoOrders.forEach(o => {
     const eta = simComputeEta(o);
@@ -19040,10 +19040,16 @@ function simRenderProjection(realOrders, hypoOrders) {
     const arrivals = arrivalsByWeek[fw.week] || [];
     const activeArrivals = arrivals.filter(a => !a.isDowngraded);
     const downgradedArrivals = arrivals.filter(a => a.isDowngraded);
-    const arrivalCases = activeArrivals.reduce((s,a) => s + a.cases, 0);
+    // Frente B (match the Buy Planner projection): net direct-ship out of real arrivals
+    // (cross-dock never enters the warehouse) and lift the week's demand with committed-inv
+    // via max(committed, run-rate) — never summed.
+    const arrivalCases = activeArrivals.reduce((s,a) => s + Math.max(0, a.cases - ((a.po && typeof directShipTotal === 'function') ? directShipTotal(a.po) : 0)), 0);
+    const committedWk = (typeof committedInvForWeek === 'function' && typeof dmWeekKey === 'function' && fw.weekStartDate)
+      ? committedInvForWeek(dmWeekKey(fw.weekStartDate)) : 0;
+    const wkDemand = Math.max(committedWk, weeklyDemand);
     const startStock = running;
-    running = running + arrivalCases - weeklyDemand;
-    const cover = weeklyDemand > 0 ? running / weeklyDemand : 0;
+    running = running + arrivalCases - wkDemand;
+    const cover = wkDemand > 0 ? running / wkDemand : 0;
     const monthDay = fw.weekStartDate.toLocaleDateString('en-US', { month:'short', day:'numeric' });
 
     let statusBadge, rowBg = '';
@@ -19076,7 +19082,7 @@ function simRenderProjection(realOrders, hypoOrders) {
         + (arrivalCases > 0 ? '<div style="font-size:9px;color:var(--gray-400);font-weight:400">' + arrivalText + '</div>' : '')
         + (downgradedArrivals.length ? '<div style="font-size:9px;color:var(--amber-700);font-weight:600;text-decoration:line-through;text-decoration-color:var(--amber-300)">' + downgradedText + '</div>' : '')
       + '</td>'
-      + '<td style="padding:8px 12px;text-align:right;color:var(--red-600)">−' + Math.round(weeklyDemand).toLocaleString() + '</td>'
+      + '<td style="padding:8px 12px;text-align:right;color:var(--red-600)">−' + Math.round(wkDemand).toLocaleString() + '</td>'
       + '<td style="padding:8px 12px;text-align:right;font-weight:700;color:' + (running <= 0 ? 'var(--red-600)' : 'var(--gray-800)') + '">' + Math.round(running).toLocaleString() + '</td>'
       + '<td style="padding:8px 12px;text-align:right;font-weight:600;color:' + coverColor + '">' + cover.toFixed(1) + 'w</td>'
       + '<td style="padding:8px 12px">' + statusBadge + '</td>'
