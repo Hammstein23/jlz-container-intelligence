@@ -11445,23 +11445,28 @@ function removeCommitted(idx) {
 function committedInvForWeek(wk) {
   return getCommitted().reduce(function(s, c){ return s + ((c.wk === wk && c.type === 'inv') ? (c.cases || 0) : 0); }, 0);
 }
-// Split a week's committed by whether each account sits in the run-rate baseline (per-customer
-// anti-double-count). Accounts flagged fcQuiet in the model — held OUT of the run-rate — or unknown
-// to the model, are NOT in the baseline: their committed is EXTRA demand (a returning account adds on
-// top). Active accounts' committed is the forecast coming true → taken as max vs run-rate, never summed.
-// No model / no customers → falls back to legacy behavior (everything 'active', so max(total, run-rate)).
-function committedSplitForWeek(wk, model) {
+// Hybrid weekly sales demand (raw cases, pre-shrink). Starts from the run-rate baseline (salesDemand)
+// and adjusts per account:
+//  · STEADY accounts (order most weeks): keep their run-rate; add only committed EXCESS over it — a
+//    commitment above their average lifts the plan; within it, nothing changes (no double-count).
+//  · ORDER-DRIVEN / sporadic accounts (lumpy, e.g. Sol-ti): REMOVE their smeared run-rate and use ONLY
+//    their committed for this specific week — its average is not projected in the weeks it didn't order.
+//  · Accounts committed but unknown to the model: add their full committed (they're not in the baseline).
+// The caller applies the shrink inflation (weeklyDemand = salesDemand × 1/(1-shrink)) to the result.
+function hybridSalesForWeek(wk, salesDemand, model) {
   var custs = (model && model.customers) || null;
-  var known = {};
-  if (custs) custs.forEach(function(c){ if (c && c.c) known[c.c] = c.fcQuiet ? 'quiet' : 'active'; });
-  var active = 0, extra = 0;
-  getCommitted().forEach(function(c){
-    if (!c || c.wk !== wk || c.type !== 'inv') return;
-    var cs = (+c.cases || 0);
-    if (!custs || known[c.customer] === 'active') active += cs;   // in baseline (or unknown model) → max
-    else extra += cs;                                             // quiet / not-in-baseline → additive
+  if (!custs) return null;   // no model → caller falls back to legacy max()
+  var com = {};
+  getCommitted().forEach(function(c){ if (c && c.wk === wk && c.type === 'inv') com[c.customer] = (com[c.customer] || 0) + (+c.cases || 0); });
+  var adj = 0, seen = {};
+  custs.forEach(function(c){
+    if (!c || !c.c) return;
+    seen[c.c] = 1;
+    var rr = c.rrCases || 0, cm = com[c.c] || 0;
+    adj += c.sporadic ? (cm - rr) : Math.max(0, cm - rr);   // sporadic: drop avg, use committed · steady: excess only
   });
-  return { active: active, extra: extra };
+  Object.keys(com).forEach(function(cust){ if (!seen[cust]) adj += com[cust]; });   // unknown accounts → full committed
+  return Math.max(0, salesDemand + adj);
 }
 // ── Direct-ship (per-container, on the order object) ──
 function getDirectShip(po) {
@@ -14593,17 +14598,17 @@ function renderBuyPlanner() {
     // so they don't add to free stock. Net them out of each container's supply.
     const arrivalCases = arrivals.reduce((s, a) => s + Math.max(0, (a.cases || 0)
       - ((typeof directShipTotal === 'function' && a.order) ? directShipTotal(a.order.jlzPo) : 0)), 0);
-    // Hybrid netting. Committed splits by whether the account sits in the run-rate baseline:
-    //  · Active accounts (in the baseline): committed is the forecast coming true → max(committed,
-    //    run-rate), never summed (no double-count).
-    //  · Returning/quiet accounts (held out of the run-rate by fcQuiet) — or unknown to the model —
-    //    are NOT in the baseline, so their committed is EXTRA demand and ADDS on top. Stops a
-    //    Sol-ti-type future order from being absorbed by the max. (Total committed kept for display.)
+    // Hybrid netting (per-account). weeklyDemand is the shrink-inflated run-rate baseline. hybridSalesForWeek
+    // rebuilds the week's RAW sales demand: steady accounts keep run-rate + committed excess; order-driven
+    // (sporadic) accounts drop their smeared average and count ONLY their committed this week; unknown
+    // committed adds on top. We then apply the same shrink inflation. No model → legacy max().
     const _wkKey = (typeof dmWeekKey === 'function' && fw.weekStartDate) ? dmWeekKey(fw.weekStartDate) : null;
     const committedWk = (_wkKey && typeof committedInvForWeek === 'function') ? committedInvForWeek(_wkKey) : 0;
-    const _cSplit = (_wkKey && typeof committedSplitForWeek === 'function')
-      ? committedSplitForWeek(_wkKey, (typeof _dmModelG !== 'undefined' ? _dmModelG : ((typeof window!=='undefined' && window._dmModelG) || null))) : { active: committedWk, extra: 0 };
-    const wkDemand = Math.max(_cSplit.active, weeklyDemand) + _cSplit.extra;
+    const _bpMdl = (typeof _dmModelG !== 'undefined' ? _dmModelG : ((typeof window!=='undefined' && window._dmModelG) || null));
+    const _hybridSales = (_wkKey && _bpMdl && _bpMdl.customers && typeof hybridSalesForWeek === 'function')
+      ? hybridSalesForWeek(_wkKey, salesDemand, _bpMdl) : null;
+    const _infl = (salesDemand > 0) ? (weeklyDemand / salesDemand) : 1;
+    const wkDemand = (_hybridSales != null) ? (_hybridSales * _infl) : Math.max(committedWk, weeklyDemand);
     const startingStock = runningStock;
     runningStock = runningStock + arrivalCases - wkDemand;
     return {
@@ -19067,13 +19072,15 @@ function simRenderProjection(realOrders, hypoOrders) {
     // (cross-dock never enters the warehouse) and lift the week's demand with committed-inv
     // via max(committed, run-rate) — never summed.
     const arrivalCases = activeArrivals.reduce((s,a) => s + Math.max(0, a.cases - ((a.po && typeof directShipTotal === 'function') ? directShipTotal(a.po) : 0)), 0);
-    // Hybrid netting (match the Buy Planner): active accounts' committed → max(committed, run-rate);
-    // returning/quiet accounts (held out of the run-rate) add their committed ON TOP. See committedSplitForWeek.
+    // Hybrid netting (match the Buy Planner): per-account hybrid demand — steady keep run-rate + excess,
+    // order-driven (sporadic) count only committed this week — then apply shrink inflation. No model → legacy max.
     const _wkKey = (typeof dmWeekKey === 'function' && fw.weekStartDate) ? dmWeekKey(fw.weekStartDate) : null;
     const committedWk = (_wkKey && typeof committedInvForWeek === 'function') ? committedInvForWeek(_wkKey) : 0;
-    const _cSplit = (_wkKey && typeof committedSplitForWeek === 'function')
-      ? committedSplitForWeek(_wkKey, (typeof _dmModelG !== 'undefined' ? _dmModelG : ((typeof window!=='undefined' && window._dmModelG) || null))) : { active: committedWk, extra: 0 };
-    const wkDemand = Math.max(_cSplit.active, weeklyDemand) + _cSplit.extra;
+    const _simMdl = (typeof _dmModelG !== 'undefined' ? _dmModelG : ((typeof window!=='undefined' && window._dmModelG) || null));
+    const _hybridSales = (_wkKey && _simMdl && _simMdl.customers && typeof hybridSalesForWeek === 'function')
+      ? hybridSalesForWeek(_wkKey, salesDemand, _simMdl) : null;
+    const _infl = (salesDemand > 0) ? (weeklyDemand / salesDemand) : 1;
+    const wkDemand = (_hybridSales != null) ? (_hybridSales * _infl) : Math.max(committedWk, weeklyDemand);
     const startStock = running;
     running = running + arrivalCases - wkDemand;
     const cover = wkDemand > 0 ? running / wkDemand : 0;
@@ -21462,6 +21469,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
   // list to who's genuinely buying now; clients tapering off (7+ weeks quiet) drop
   // to the "en fuga" list when their lifetime volume is material.
   const DM_ACTIVE_DAYS = 42, DM_MIN_RATE = 100;
+  const DM_SPORADIC_FRAC = 0.35;   // ordered in < this fraction of reliable weeks → "order-driven" (lumpy)
   const DM_QUIET_X = 2, DM_QUIET_MIN = 14;   // quiet-for-forecast: silent > max(2× cadence, 14d)
   const activeCusts = {};
   Object.keys(custLifetime).forEach(c => { if (daysSinceEff(c) <= DM_ACTIVE_DAYS) activeCusts[c] = true; });
@@ -21525,6 +21533,12 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
   const customers = Object.keys(_meaningful).map(c => {
     const cd = custDetail ? custDetail[c] : null;
     const rrLbs = _avgW(c, rateWeeks);
+    // Order-driven (sporadic) classification: ordered in only a small fraction of the reliable weeks →
+    // buys lumpily, so its average must NOT be smeared across every week (would over-project the weeks
+    // it doesn't order). Drive it by committed instead. Conservative threshold so steady buyers are
+    // never held out (mis-holding a steady account would risk a stockout).
+    const _owks = rateWeeks.filter(w => wkCust[w] && wkCust[w][c] > 0).length;
+    const sporadic = (rateWeeks.length >= 6 && rrLbs > 0 && (_owks / rateWeeks.length) < DM_SPORADIC_FRAC);
     const a4 = _avgW(c, _rel4), p4 = _avgW(c, _relP4);
     let trend = 'fl'; if (a4 > p4*1.15) trend = 'up'; else if (a4 < p4*0.85) trend = 'dn';
     const ds = daysSince(c);
@@ -21538,7 +21552,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
       fcQuiet: (cadv != null && isFinite(ds) && rrLbs > 0 && ds > Math.max(DM_QUIET_X * cadv, DM_QUIET_MIN)),
       days: isFinite(dsEff) ? dsEff : null, last: lastOrder(c), cad: cadv,
       spark: _r10.map(w => Math.round((wkCust[w] && wkCust[w][c]) || 0)), trend,
-      rrLbs: Math.round(rrLbs), rrCases: rrLbs / caseLb,
+      rrLbs: Math.round(rrLbs), rrCases: rrLbs / caseLb, sporadic,
       life: Math.round(custLifetime[c] || 0),
       vol: (custLifetime[c] || 0) / totalLifeAll * 100,
       gs: cd ? cd.gs : null, gp: cd ? cd.gp : null,
