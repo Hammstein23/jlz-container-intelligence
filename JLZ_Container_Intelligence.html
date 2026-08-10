@@ -21400,6 +21400,28 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
   const md = 86400000;
   const lastOrder = (c) => { const ds = custDates[c]; return (ds&&ds.length) ? ds.reduce((a,b)=>a>b?a:b) : ''; };
   const daysSince = (c) => { const lo = lastOrder(c); return lo ? Math.round((anchor - new Date(lo))/md) : Infinity; };
+  // Committed-aware activity for DISPLAY/status only — the fcQuiet plan hold-out below stays
+  // invoiced-based, so buy quantities don't shift. A placed-but-not-yet-invoiced order counts as
+  // recent activity, so returning accounts (e.g. Sol-ti's committed ginger) don't misreport as
+  // "quiet". Ginger-only (committed store is ginger); future committed weeks capped at today so
+  // daysSinceEff stays >= 0.
+  const _todayISO = anchor.toISOString().slice(0,10);
+  const _committedCust = {}, _committedLast = {};
+  try {
+    if ((typeof productFocus !== 'function' || productFocus() === 'ginger') && typeof getCommitted === 'function') {
+      getCommitted().forEach(function(x){
+        if (!x || !x.customer || !x.wk) return;
+        _committedCust[x.customer] = true;
+        const d = x.wk > _todayISO ? _todayISO : x.wk;
+        if (!_committedLast[x.customer] || d > _committedLast[x.customer]) _committedLast[x.customer] = d;
+      });
+    }
+  } catch(e){}
+  const daysSinceEff = (c) => {
+    const cl = _committedLast[c], inv = lastOrder(c);
+    const lo = (cl && cl > inv) ? cl : inv;
+    return lo ? Math.round((anchor - new Date(lo))/md) : Infinity;
+  };
   const cadence = (c) => {
     if (weeklyOnly) return null;
     const cutoff = new Date(anchor - 26*7*md).toISOString().slice(0,10);
@@ -21415,7 +21437,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
   const DM_ACTIVE_DAYS = 42, DM_MIN_RATE = 100;
   const DM_QUIET_X = 2, DM_QUIET_MIN = 14;   // quiet-for-forecast: silent > max(2× cadence, 14d)
   const activeCusts = {};
-  Object.keys(custLifetime).forEach(c => { if (daysSince(c) <= DM_ACTIVE_DAYS) activeCusts[c] = true; });
+  Object.keys(custLifetime).forEach(c => { if (daysSinceEff(c) <= DM_ACTIVE_DAYS) activeCusts[c] = true; });
 
   const active = Object.keys(activeCusts).map(c => {
     const r13 = custSumWeeks(c,w13)/(w13.length||1);
@@ -21424,12 +21446,12 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
     const spark = lastN(10).map(w => Math.round((wkCust[w]&&wkCust[w][c])||0));
     let trend = 'fl'; if (r4 > rp4*1.15) trend='up'; else if (r4 < rp4*0.85) trend='dn';
     const cad = cadence(c);
-    return { c, r13:Math.round(r13), r4:Math.round(r4), spark, trend, days:daysSince(c), cad, t13:custSumWeeks(c,w13) };
-  }).filter(x => x.r13 >= DM_MIN_RATE).sort((a,b)=>b.r13-a.r13);
+    return { c, r13:Math.round(r13), r4:Math.round(r4), spark, trend, days:daysSinceEff(c), cad, t13:custSumWeeks(c,w13) };
+  }).filter(x => x.r13 >= DM_MIN_RATE || _committedCust[x.c]).sort((a,b)=>b.r13-a.r13);
 
   const dormant = Object.keys(custLifetime)
-    .filter(c => !activeCusts[c] && daysSince(c) > 28 && custLifetime[c] > 15000)
-    .map(c => ({ c, days:daysSince(c), life:Math.round(custLifetime[c]), last:lastOrder(c) }))
+    .filter(c => !activeCusts[c] && daysSinceEff(c) > 28 && custLifetime[c] > 15000)
+    .map(c => ({ c, days:daysSinceEff(c), life:Math.round(custLifetime[c]), last:lastOrder(c) }))
     .sort((a,b)=>a.days-b.days).slice(0,6);
 
   const demandRows = [];
@@ -21479,14 +21501,15 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
     const a4 = _avgW(c, _rel4), p4 = _avgW(c, _relP4);
     let trend = 'fl'; if (a4 > p4*1.15) trend = 'up'; else if (a4 < p4*0.85) trend = 'dn';
     const ds = daysSince(c);
+    const dsEff = daysSinceEff(c);
     const gpR = cd ? _sumWinF(cd,_winR,'gp') : null;
     const gsR = cd ? _sumWinF(cd,_winR,'gs') : null;
     const gpP = cd ? _sumWinF(cd,_winP,'gp') : null;
     const cadv = cadence(c);
     return {
-      c, status: (ds <= DM_ACTIVE_DAYS ? 'active' : 'quiet'),
+      c, status: (dsEff <= DM_ACTIVE_DAYS ? 'active' : 'quiet'),
       fcQuiet: (cadv != null && isFinite(ds) && rrLbs > 0 && ds > Math.max(DM_QUIET_X * cadv, DM_QUIET_MIN)),
-      days: isFinite(ds) ? ds : null, last: lastOrder(c), cad: cadv,
+      days: isFinite(dsEff) ? dsEff : null, last: lastOrder(c), cad: cadv,
       spark: _r10.map(w => Math.round((wkCust[w] && wkCust[w][c]) || 0)), trend,
       rrLbs: Math.round(rrLbs), rrCases: rrLbs / caseLb,
       life: Math.round(custLifetime[c] || 0),
