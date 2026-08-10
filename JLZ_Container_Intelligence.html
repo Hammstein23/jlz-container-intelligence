@@ -22515,6 +22515,19 @@ function renderDemandAccuracy(){
   const gpCase = (costLb!=null && sellLb) ? (sellLb-costLb)*cl : null;
   const landedCase = (costLb!=null) ? costLb*cl : null;
 
+  // Allocated/committed orders on the books (ginger only — committed store is ginger). Feeds the
+  // "how much to buy" side (section B); the reliability/margin metrics above stay on invoiced actuals.
+  let committedCs = 0, committedWks = 0, committedNearWk = 0;
+  if (fp === 'ginger' && typeof getCommitted === 'function' && typeof dmWeekKey === 'function') {
+    const _monNow = dmWeekKey(new Date());
+    const _byWk = {};
+    getCommitted().forEach(function(x){ if (x && x.wk && x.wk >= _monNow) _byWk[x.wk] = (_byWk[x.wk] || 0) + (+x.cases || 0); });
+    const _wks = Object.keys(_byWk).sort();
+    committedWks = _wks.length;
+    committedCs = _wks.reduce(function(s,w){ return s + _byWk[w]; }, 0);
+    if (_wks.length) committedNearWk = _byWk[_wks[0]];
+  }
+
   let viz='';
   if (bt && bt.points.length){
     const pts=bt.points.slice(-26), mx=Math.max(1,...pts.map(p=>Math.max(p.forecast,p.actual)));
@@ -22546,7 +22559,8 @@ function renderDemandAccuracy(){
       + viz
       + '<div class="dm-sub" style="margin-top:14px">B \u00b7 How much should I buy?</div>'
       + '<div class="dm-grid2">'
-        + '<div class="dm-cell"><div class="ck">Demand-confident / wk'+_ii('Run-rate trimmed for the forecast bias \u2014 the quantity most likely to actually sell each week.')+'</div><div class="cv">'+f0(confWeekly)+' <small>cs</small></div></div>'
+        + '<div class="dm-cell"><div class="ck">Demand-confident / wk'+_ii('Run-rate trimmed for the forecast bias \u2014 the quantity most likely to actually sell each week.')+'</div><div class="cv">'+f0(confWeekly)+' <small>cs</small></div>'+((committedNearWk>confWeekly)?'<div class="cn">nearest wk with orders: buy \u2265 '+f0(committedNearWk)+' cs (committed)</div>':'')+'</div>'
+        + (committedCs>0 ? '<div class="dm-cell"><div class="ck">Committed on the books'+_ii('Allocated orders already placed but not yet invoiced (from the committed feed). For weeks that have orders, buy the greater of committed vs the demand-confident run-rate \u2014 the Buy Planner nets this.')+'</div><div class="cv">'+f0(committedCs)+' <small>cs</small></div><div class="cn">'+committedWks+' wk'+(committedWks===1?'':'s')+' with orders \u00b7 nearest '+f0(committedNearWk)+' cs</div></div>' : '')
         + '<div class="dm-cell amber"><div class="ck">Perishability ceiling / order'+_ii('Most you should hold at once = run-rate \u00d7 shelf life ('+shelfW+' wks). Buy past this and the extra ages out before you sell it.')+'</div><div class="cv">'+f0(ceilCases)+' <small>cs</small></div><div class="cn">'+cxEsc(meta.label)+' keeps ~'+shelfW+' wks in cold storage</div></div>'
       + '</div>'
       + '<div class="dm-costrow">'
@@ -22554,7 +22568,7 @@ function renderDemandAccuracy(){
         + '<div class="dc warn"><span class="t">Under-buy \u00b7 1-week stockout (est.)'+_ii('Forward estimate: one week of lost sales valued at your gross profit per case.')+'</span><span class="v">'+(gpCase!=null?money0(rr*gpCase):'\u2014')+'</span><span class="n">\u2248'+f0(rr)+' cs lost sales \u00d7 margin</span></div>'
       + '</div>'
       + ((scan.dispCases>0)?'<div class="dm-foot" style="margin-top:6px">Also donated / written off (52 wks): '+f0(scan.dispCases)+' cs ('+money0(scan.dispCost)+' at cost) \u2014 tracked separately from clearance.</div>':'')
-      + '<div class="dm-foot" style="margin-top:10px">Buy target comes from the <b>Buy Planner</b> (lead time + service level); this panel sizes the <b>confidence band</b> around it and the <b>ceiling</b> shelf life imposes. Capital cost excluded. The over-buy figure is <b>realized</b> \u2014 below-cost clearance to real customers, not a hypothetical.</div>'
+      + '<div class="dm-foot" style="margin-top:10px">Buy target comes from the <b>Buy Planner</b> (lead time + service level); this panel sizes the <b>confidence band</b> around it and the <b>ceiling</b> shelf life imposes. <b>Committed (allocated) orders</b> size the buy for weeks that have them; the reliability and real-margin figures above stay on <b>invoiced</b> sales \u2014 committed orders have no realized shrink or forecast error yet. The over-buy figure is <b>realized</b> \u2014 below-cost clearance, not a hypothetical.</div>'
       + '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--gray-100)">'
         + '<button class="btn" id="dm-snap-btn" onclick="dmSaveForecast()">Save this week\u2019s forecast</button>'
         + '<span style="font-size:11px;color:var(--gray-500);font-family:var(--fm)" id="dm-accuracy-live">\u2026</span>'
