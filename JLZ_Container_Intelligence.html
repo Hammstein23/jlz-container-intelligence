@@ -11456,16 +11456,30 @@ function committedInvForWeek(wk) {
 function hybridSalesForWeek(wk, salesDemand, model) {
   var custs = (model && model.customers) || null;
   if (!custs) return null;   // no model → caller falls back to legacy max()
-  var com = {};
-  getCommitted().forEach(function(c){ if (c && c.wk === wk && c.type === 'inv') com[c.customer] = (com[c.customer] || 0) + (+c.cases || 0); });
+  // committed for THIS week per customer, and each customer's LAST committed week (its "known horizon")
+  var comThis = {}, comLast = {};
+  getCommitted().forEach(function(c){
+    if (!c || c.type !== 'inv' || !c.wk) return;
+    if (c.wk === wk) comThis[c.customer] = (comThis[c.customer] || 0) + (+c.cases || 0);
+    if (!comLast[c.customer] || c.wk > comLast[c.customer]) comLast[c.customer] = c.wk;
+  });
   var adj = 0, seen = {};
   custs.forEach(function(c){
     if (!c || !c.c) return;
     seen[c.c] = 1;
-    var rr = c.rrCases || 0, cm = com[c.c] || 0;
-    adj += c.sporadic ? (cm - rr) : Math.max(0, cm - rr);   // sporadic: drop avg, use committed · steady: excess only
+    var rr = c.rrCases || 0, cm = comThis[c.c] || 0, last = comLast[c.c];
+    if (c.sporadic) {
+      // Order-driven. WITHIN its committed horizon (week ≤ its last committed week) the committed IS the
+      // known demand → use it, drop the smeared average (0 in the weeks it didn't order). BEYOND the
+      // horizon (no more orders on file) the average RESUMES — it will order again, so we keep the
+      // run-rate (conservative: avoids under-buying for its eventual return).
+      if (last && wk <= last) adj += (cm - rr);   // known: committed replaces the average
+      // else: beyond horizon → keep baseline run-rate (adj += 0)
+    } else {
+      adj += Math.max(0, cm - rr);                 // steady: excess over run-rate only
+    }
   });
-  Object.keys(com).forEach(function(cust){ if (!seen[cust]) adj += com[cust]; });   // unknown accounts → full committed
+  Object.keys(comThis).forEach(function(cust){ if (!seen[cust]) adj += comThis[cust]; });   // unknown accounts → full committed
   return Math.max(0, salesDemand + adj);
 }
 // ── Direct-ship (per-container, on the order object) ──
