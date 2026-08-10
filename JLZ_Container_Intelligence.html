@@ -11445,6 +11445,24 @@ function removeCommitted(idx) {
 function committedInvForWeek(wk) {
   return getCommitted().reduce(function(s, c){ return s + ((c.wk === wk && c.type === 'inv') ? (c.cases || 0) : 0); }, 0);
 }
+// Split a week's committed by whether each account sits in the run-rate baseline (per-customer
+// anti-double-count). Accounts flagged fcQuiet in the model — held OUT of the run-rate — or unknown
+// to the model, are NOT in the baseline: their committed is EXTRA demand (a returning account adds on
+// top). Active accounts' committed is the forecast coming true → taken as max vs run-rate, never summed.
+// No model / no customers → falls back to legacy behavior (everything 'active', so max(total, run-rate)).
+function committedSplitForWeek(wk, model) {
+  var custs = (model && model.customers) || null;
+  var known = {};
+  if (custs) custs.forEach(function(c){ if (c && c.c) known[c.c] = c.fcQuiet ? 'quiet' : 'active'; });
+  var active = 0, extra = 0;
+  getCommitted().forEach(function(c){
+    if (!c || c.wk !== wk || c.type !== 'inv') return;
+    var cs = (+c.cases || 0);
+    if (!custs || known[c.customer] === 'active') active += cs;   // in baseline (or unknown model) → max
+    else extra += cs;                                             // quiet / not-in-baseline → additive
+  });
+  return { active: active, extra: extra };
+}
 // ── Direct-ship (per-container, on the order object) ──
 function getDirectShip(po) {
   var o = (typeof findOrderForPo === 'function') ? findOrderForPo(po) : null;
@@ -14575,12 +14593,17 @@ function renderBuyPlanner() {
     // so they don't add to free stock. Net them out of each container's supply.
     const arrivalCases = arrivals.reduce((s, a) => s + Math.max(0, (a.cases || 0)
       - ((typeof directShipTotal === 'function' && a.order) ? directShipTotal(a.order.jlzPo) : 0)), 0);
-    // Committed-inv (already sold, ships from the warehouse) CONSUMES the forecast: the
-    // week's requirement is max(committed, run-rate), never the sum -- a commitment is the
-    // forecast coming true, so it only lifts the plan when it exceeds the run-rate.
-    const committedWk = (typeof committedInvForWeek === 'function' && typeof dmWeekKey === 'function' && fw.weekStartDate)
-      ? committedInvForWeek(dmWeekKey(fw.weekStartDate)) : 0;
-    const wkDemand = Math.max(committedWk, weeklyDemand);
+    // Hybrid netting. Committed splits by whether the account sits in the run-rate baseline:
+    //  · Active accounts (in the baseline): committed is the forecast coming true → max(committed,
+    //    run-rate), never summed (no double-count).
+    //  · Returning/quiet accounts (held out of the run-rate by fcQuiet) — or unknown to the model —
+    //    are NOT in the baseline, so their committed is EXTRA demand and ADDS on top. Stops a
+    //    Sol-ti-type future order from being absorbed by the max. (Total committed kept for display.)
+    const _wkKey = (typeof dmWeekKey === 'function' && fw.weekStartDate) ? dmWeekKey(fw.weekStartDate) : null;
+    const committedWk = (_wkKey && typeof committedInvForWeek === 'function') ? committedInvForWeek(_wkKey) : 0;
+    const _cSplit = (_wkKey && typeof committedSplitForWeek === 'function')
+      ? committedSplitForWeek(_wkKey, (typeof _dmModelG !== 'undefined' ? _dmModelG : ((typeof window!=='undefined' && window._dmModelG) || null))) : { active: committedWk, extra: 0 };
+    const wkDemand = Math.max(_cSplit.active, weeklyDemand) + _cSplit.extra;
     const startingStock = runningStock;
     runningStock = runningStock + arrivalCases - wkDemand;
     return {
@@ -19044,9 +19067,13 @@ function simRenderProjection(realOrders, hypoOrders) {
     // (cross-dock never enters the warehouse) and lift the week's demand with committed-inv
     // via max(committed, run-rate) — never summed.
     const arrivalCases = activeArrivals.reduce((s,a) => s + Math.max(0, a.cases - ((a.po && typeof directShipTotal === 'function') ? directShipTotal(a.po) : 0)), 0);
-    const committedWk = (typeof committedInvForWeek === 'function' && typeof dmWeekKey === 'function' && fw.weekStartDate)
-      ? committedInvForWeek(dmWeekKey(fw.weekStartDate)) : 0;
-    const wkDemand = Math.max(committedWk, weeklyDemand);
+    // Hybrid netting (match the Buy Planner): active accounts' committed → max(committed, run-rate);
+    // returning/quiet accounts (held out of the run-rate) add their committed ON TOP. See committedSplitForWeek.
+    const _wkKey = (typeof dmWeekKey === 'function' && fw.weekStartDate) ? dmWeekKey(fw.weekStartDate) : null;
+    const committedWk = (_wkKey && typeof committedInvForWeek === 'function') ? committedInvForWeek(_wkKey) : 0;
+    const _cSplit = (_wkKey && typeof committedSplitForWeek === 'function')
+      ? committedSplitForWeek(_wkKey, (typeof _dmModelG !== 'undefined' ? _dmModelG : ((typeof window!=='undefined' && window._dmModelG) || null))) : { active: committedWk, extra: 0 };
+    const wkDemand = Math.max(_cSplit.active, weeklyDemand) + _cSplit.extra;
     const startStock = running;
     running = running + arrivalCases - wkDemand;
     const cover = wkDemand > 0 ? running / wkDemand : 0;
