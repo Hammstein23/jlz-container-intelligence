@@ -14940,16 +14940,18 @@ function renderBuyPlanner() {
         const half = Math.round(rawCases/2);
         const days = (x.days!=null) ? x.days : '—';
         const cad = (x.cad!=null) ? x.cad : '—';
-        const pillTxt = pct===0 ? 'HELD OUT OF PLAN' : (pct===50 ? 'IN PLAN — HALF' : 'IN PLAN — FULL');
+        const pillTxt = pct===0 ? 'REMOVED FROM PLAN' : (pct===50 ? 'IN PLAN — HALF' : 'IN PLAN — FULL');
         const pillBg = pct===0 ? 'var(--amber-50)' : 'var(--green-50,#ecfdf3)';
         const pillFg = pct===0 ? 'var(--amber-700)' : 'var(--green-700,#027a48)';
         const sentence = pct===0
-          ? (cases.toLocaleString()+' cs/wk excluded from the buying plan.')
+          ? (cases.toLocaleString()+' cs/wk removed from the buying plan.')
           : (pct===50
-              ? (half.toLocaleString()+' of '+cases.toLocaleString()+' cs/wk added back to the buying plan.')
-              : ('All '+cases.toLocaleString()+' cs/wk added back to the buying plan.'));
+              ? ('Half of '+cases.toLocaleString()+' cs/wk kept in the buying plan ('+half.toLocaleString()+').')
+              : ('All '+cases.toLocaleString()+' cs/wk kept in the buying plan.'));
+        const _rBd = pct===0 ? 'var(--amber-500)' : 'var(--green-500,#12b76a)';
+        const _rBg = pct===0 ? 'var(--amber-50)' : 'var(--green-50,#ecfdf3)';
         return '<div style="display:flex;align-items:center;gap:10px;justify-content:space-between;'
-          + 'border-left:3px solid var(--amber-500);background:var(--amber-50);border-radius:var(--radius-sm);padding:9px 12px;margin-top:8px">'
+          + 'border-left:3px solid '+_rBd+';background:'+_rBg+';border-radius:var(--radius-sm);padding:9px 12px;margin-top:8px">'
           + '<div style="min-width:0">'
           +   '<div style="font-family:var(--fm);font-size:12px"><b>'+esc(x.c)+'</b>'
           +     '<span style="margin-left:8px;font-size:9px;font-weight:700;padding:1px 6px;border-radius:3px;background:'+pillBg+';color:'+pillFg+'">'+pillTxt+'</span></div>'
@@ -14958,12 +14960,11 @@ function renderBuyPlanner() {
           + seg(x.c, pct)
           + '</div>';
       }).join('');
-      if (panel) panel.innerHTML = '<div style="font-family:var(--fm);font-size:11px;color:var(--gray-400)">Quiet accounts — held out of the buying plan until they order again. Add them back only with a committed PO.</div>' + rows;
+      if (panel) panel.innerHTML = '<div style="font-family:var(--fm);font-size:11px;color:var(--gray-400)">Quiet accounts — no recent orders, but kept in the buying plan by default so you never run short if they return. Remove one only if you are sure it will not reorder.</div>' + rows;
       if (sumEl) {
-        const nOut = ql.filter(x=>((typeof qaPct==='function')?qaPct(x.c):0)===0).length;
-        const nOn = ql.length - nOut;
-        sumEl.textContent = nOn>0 ? (ql.length+' quiet · scenario on · ')
-                                  : (nOut+' quiet account'+(nOut!==1?'s':'')+' held out · ');
+        const nOut = ql.filter(x=>((typeof qaPct==='function')?qaPct(x.c):100)===0).length;
+        sumEl.textContent = nOut>0 ? (nOut+' of '+ql.length+' quiet removed from plan · ')
+                                   : (ql.length+' quiet · all kept in plan · ');
       }
     } catch(e){ console.warn('bp-quiet-panel:', e); }
   })();
@@ -19175,10 +19176,11 @@ function renderSimulator() {
     let _qNote = '';
     try {
       const ql = (typeof qaQuietList === 'function') ? qaQuietList() : [];
-      if (ql.length) {
+      const _adj = ql.filter(x => ((typeof qaPct==='function')?qaPct(x.c):100) !== 100);
+      if (_adj.length) {
         const _e = s => String(s==null?'':s).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-        const _lbl = p => p===50 ? 'Half' : (p===100 ? 'Full' : 'Out');
-        _qNote = ' · ' + ql.map(x => _e(x.c) + ' ' + _lbl((typeof qaPct==='function')?qaPct(x.c):0)).join(', ') + ' — change in Buy Planner';
+        const _lbl = p => p===50 ? 'Half' : (p===0 ? 'Removed' : 'Full');
+        _qNote = ' · ' + _adj.map(x => _e(x.c) + ' ' + _lbl((typeof qaPct==='function')?qaPct(x.c):100)).join(', ') + ' — change in Buy Planner';
       }
     } catch(e){}
     demEl.innerHTML = Math.round(warehouseDemand).toLocaleString() + ' cases/wk'
@@ -21598,7 +21600,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
 // Per-account scenario (Out 0% / Half 50% / Full 100%) persists per device.
 const QA_LS_KEY = 'jlz_quiet_scenario';
 function qaScenario(){ try { return JSON.parse(localStorage.getItem(QA_LS_KEY) || '{}') || {}; } catch(e){ return {}; } }
-function qaPct(c){ const v = qaScenario()[c]; return (v === 50 || v === 100) ? v : 0; }
+function qaPct(c){ const v = qaScenario()[c]; return (v === 0 || v === 50) ? v : 100; }   // default 100: a quiet account stays FULLY in the buying plan (anti-stockout). Removing it (Out=0) or halving it (50) is a manual choice.
 function qaModelG(){ return window._dmModelG || (typeof _dmModelG !== 'undefined' ? _dmModelG : null); }
 function qaQuietList(){
   const m = qaModelG();
@@ -22203,8 +22205,8 @@ function cxKpis(m){
   const conc = (m.concTop2!=null) ? m.concTop2 : 0;
   const bm = (m.blendMg!=null) ? m.blendMg.toFixed(0)+'%' : '\u2014';
   const _feedsPlan = (typeof _dmModelG !== 'undefined' && _dmModel === _dmModelG);
-  const _quietCs = _feedsPlan ? m.customers.filter(c=>c.fcQuiet).reduce((s,c)=>s+((c.rrLbs||0)/(m.caseLb||DM_CASE_LB)),0) : 0;
-  const _qkNote = _quietCs>0 ? ' \u00b7 '+cxFmtN(_quietCs)+' cs/wk quiet \u2014 out of buying plan' : '';
+  const _quietCs = _feedsPlan ? m.customers.filter(c=>c.fcQuiet && ((typeof qaPct==='function')?qaPct(c.c)===0:false)).reduce((s,c)=>s+((c.rrLbs||0)/(m.caseLb||DM_CASE_LB)),0) : 0;
+  const _qkNote = _quietCs>0 ? ' \u00b7 '+cxFmtN(_quietCs)+' cs/wk removed from plan' : '';
   return '<div class="cx-kpis">'
     + '<div class="cx-kpi"><div class="v">'+cxFmtN(m.runRate13/(m.caseLb||DM_CASE_LB))+' '+dmRunRateDelta()+'</div><div class="l">Run-rate cases/wk'+cxInfo('Average cases sold per week over the most recent fully-reported weeks (~13). Your current demand speed \u2014 this is the number that feeds the Buy Planner. 1 case = '+(m.caseLb||DM_CASE_LB)+' lb, post-shrink.')+'</div><div class="x">'+cxFmtN(m.runRate13)+' lbs/wk \u00b7 post-shrink'+_qkNote+'</div></div>'
     + '<div class="cx-kpi"><div class="v">'+active+'</div><div class="l">Active clients</div><div class="x">'+quiet+' going quiet</div></div>'
@@ -22252,7 +22254,7 @@ function cxRenderList(){
   const r=cxFilteredSorted();
   if(!_cxState.sel || !r.some(c=>c.c===_cxState.sel)) _cxState.sel=(r[0]&&r[0].c)||(m.customers[0]&&m.customers[0].c);
   lb.innerHTML = r.map((c,i)=>{
-    const stb = c.fcQuiet ? '<span class="cx-st fq">OUT OF PLAN · '+(c.days!=null?c.days+'d':'')+'</span>' : (c.status==='active' ? '<span class="cx-st act">ACTIVE</span>' : '<span class="cx-st quiet">QUIET '+(c.days!=null?c.days+'d':'')+'</span>');
+    const stb = (c.fcQuiet && ((typeof qaPct==='function')?qaPct(c.c)===0:false)) ? '<span class="cx-st fq">REMOVED · '+(c.days!=null?c.days+'d':'')+'</span>' : (c.status==='active' ? '<span class="cx-st act">ACTIVE</span>' : '<span class="cx-st quiet">QUIET '+(c.days!=null?c.days+'d':'')+'</span>');
     const dcb = c.dcN>1 ? '<span class="cx-st dc">'+c.dcN+' DCs</span>' : '';
     const tr = cxTP[c.trend]||'\u2014';
     const dArrow = (c.gpD==null) ? '' : (c.gpD>=0
@@ -22401,7 +22403,7 @@ function cxRenderDetail(){
 
   const lenses=[['demand','Demand'],['profit','Profitability'],['dc','By DC'],['orders','Orders'],['trace','Traceability',true]];
   if(!lenses.some(l=>l[0]===_cxState.lens)) _cxState.lens='demand';
-  const stb = sel.fcQuiet ? '<span class="cx-st fq">OUT OF PLAN · '+(sel.days!=null?sel.days+'d':'')+'</span>' : (sel.status==='active'?'<span class="cx-st act">ACTIVE</span>':'<span class="cx-st quiet">QUIET '+(sel.days!=null?sel.days+'d':'')+'</span>');
+  const stb = (sel.fcQuiet && ((typeof qaPct==='function')?qaPct(sel.c)===0:false)) ? '<span class="cx-st fq">REMOVED · '+(sel.days!=null?sel.days+'d':'')+'</span>' : (sel.status==='active'?'<span class="cx-st act">ACTIVE</span>':'<span class="cx-st quiet">QUIET '+(sel.days!=null?sel.days+'d':'')+'</span>');
   const head='<div class="cx-dh"><div class="t">360 \u00b7 <span>'+cxEsc(sel.c)+'</span> '+stb+'</div><div class="cx-lens">'+lenses.map(l=>'<button data-l="'+l[0]+'" class="'+(_cxState.lens===l[0]?'on':'')+'">'+l[1]+(l[2]?'<span class="soon">soon</span>':'')+'</button>').join('')+'</div></div>';
   const body = _cxState.lens==='profit'?vProfit() : _cxState.lens==='dc'?vDC() : _cxState.lens==='orders'?vOrders() : _cxState.lens==='trace'?vTrace() : vDemand();
   host.innerHTML = head + '<div class="cx-pane">'+body+'</div>';
