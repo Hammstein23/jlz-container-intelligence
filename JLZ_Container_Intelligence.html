@@ -21666,6 +21666,7 @@ function coRerender(){
   } } catch(e){ console.warn('coRerender build:', e); }
   try { if (typeof dmRebuildView === 'function') dmRebuildView(); } catch(e){}
   try { if (typeof renderBuyPlanner === 'function') renderBuyPlanner(); } catch(e){}
+  try { if (typeof renderBuildupPanel === 'function') renderBuildupPanel(); } catch(e){}   // after Buy Planner: uses its fresh shrink factor
   try { if (typeof renderSimulator === 'function') renderSimulator(); } catch(e){}
   try { if (typeof cxRenderList === 'function') cxRenderList(); if (typeof cxRenderDetail === 'function') cxRenderDetail(); } catch(e){}
 }
@@ -22250,6 +22251,10 @@ function renderBuildupPanel(){
   if(!weeks.length){ host.innerHTML = ''; return; }
   var salesBase = (typeof dmEffectiveRunRateLbs === 'function' && dmEffectiveRunRateLbs() != null)
     ? (dmEffectiveRunRateLbs() / caseLb) : (m.runRate13 / caseLb);
+  // Warehouse-buy inflation = the Buy Planner's OWN factor (time-based shrink), so the
+  // "Buy" row matches the plan exactly. Falls back to a flat 14% only before the plan renders.
+  var _bpd = (typeof window !== 'undefined') ? window._bpDigest : null;
+  var infl = (_bpd && _bpd.salesDemand > 0 && _bpd.weeklyDemand > 0) ? (_bpd.weeklyDemand / _bpd.salesDemand) : (1 / 0.86);
   var com = {}, comLast = {};
   (typeof getCommitted === 'function' ? getCommitted() : []).forEach(function(c){
     if(!c || c.type !== 'inv' || !c.wk) return;
@@ -22296,9 +22301,9 @@ function renderBuildupPanel(){
   h += '<tr class="tot"><td class="c">TOTAL · sales cases</td>';
   total.forEach(function(t){ h += '<td>' + t.toLocaleString() + '</td>'; });
   h += '</tr><tr class="buy"><td class="c">Buy · with shrink</td>';
-  total.forEach(function(t){ h += '<td>' + Math.round(t / 0.86).toLocaleString() + '</td>'; });
+  total.forEach(function(t){ h += '<td>' + Math.round(t * infl).toLocaleString() + '</td>'; });
   h += '</tr></tbody></table></div>';
-  h += '<div class="dbu-note"><b>How to read.</b> Each cell is what the plan buys for that customer that week. <b>Order-driven (OD)</b> accounts show their committed order in the weeks they order and resume their run-rate past their last committed week; <b>steady (ST)</b> accounts show their run-rate every week, lifted only when a commitment exceeds it. <b>TOTAL</b> is the sales the plan targets (pre-shrink); <b>Buy</b> adds ~14% shrink for warehouse outflow.</div>';
+  h += '<div class="dbu-note"><b>How to read.</b> Each cell is what the plan buys for that customer that week. <b>Order-driven (OD)</b> accounts show their committed order in the weeks they order and resume their run-rate past their last committed week; <b>steady (ST)</b> accounts show their run-rate every week, lifted only when a commitment exceeds it. <b>TOTAL</b> is the sales the plan targets (pre-shrink); <b>Buy</b> adds shrink for warehouse outflow — the same time-based rate the Buy Planner uses, so the two match.</div>';
   h += '</div>';
   host.innerHTML = h;
 }
