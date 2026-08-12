@@ -2625,6 +2625,7 @@ function authInjectLogo() {
       .dmc-rm:hover{color:var(--red-600);}
     </style>
     <div id="dm-committed" style="margin-top:18px"></div>
+    <div id="dm-buildup" style="margin-top:18px"></div>
   </div>
 </div>
 
@@ -22080,6 +22081,7 @@ function renderDemand(){
     dmRenderPulse();
     renderDemandAccuracy();
     if (typeof renderCommittedPanel === 'function') renderCommittedPanel(m);   // keep the Committed panel visible (empty-state hint) even before Sales data loads
+    if (typeof renderBuildupPanel === 'function') renderBuildupPanel();
     return;
   }
   host.innerHTML = cxStyles() + dmZoneStyles()
@@ -22106,6 +22108,7 @@ function renderDemand(){
   if (cust) cust.innerHTML = dmZoneLabel(5,'Data coverage','captured vs dropped \u00b7 mixed-origin &amp; rolled-up rows listed here') + cxReconHTML(m) + cxNote(m);
   renderDemandAccuracy();
   if (typeof renderCommittedPanel === 'function') renderCommittedPanel(m);
+  if (typeof renderBuildupPanel === 'function') renderBuildupPanel();
 }
 
 // \u2500\u2500 COMMITTED ORDERS + DIRECT-SHIP \u2014 manual entry panel (Frente B0) \u2500\u2500\u2500\u2500
@@ -22209,6 +22212,7 @@ function dmcAdd() {
     addCommitted(cust, wk, cases);
   }
   renderCommittedPanel();
+  if(typeof renderBuildupPanel === 'function') renderBuildupPanel();
 }
 function dmcRenderChips() {
   var box = document.getElementById('dmc-chips'); if(!box) return;
@@ -22226,8 +22230,78 @@ function dmcRenderChips() {
   });
   box.innerHTML = html || '<div class="dmc-hint">Nothing committed yet.</div>';
 }
-function dmcRemoveInv(i) { removeCommitted(i); renderCommittedPanel(); }
-function dmcRemoveDirect(po, i) { removeDirectShip(po, i); renderCommittedPanel(); }
+function dmcRemoveInv(i) { removeCommitted(i); renderCommittedPanel(); if(typeof renderBuildupPanel==='function') renderBuildupPanel(); }
+function dmcRemoveDirect(po, i) { removeDirectShip(po, i); renderCommittedPanel(); if(typeof renderBuildupPanel==='function') renderBuildupPanel(); }
+
+// ── DEMAND BUILD-UP BY CUSTOMER ─────────────────────────────────────────
+// Transparency view (static host #dm-buildup): shows, per customer per future
+// week, what the buy plan uses — invoiced run-rate vs allocated (committed)
+// orders — mirroring hybridSalesForWeek per account. Column total = the exact
+// pre-shrink sales the plan targets. Ginger-only (committed store + plan are
+// ginger). Reads _dmModelG so it matches the Buy Planner, not the focused view.
+function renderBuildupPanel(){
+  var host = document.getElementById('dm-buildup'); if(!host) return;
+  var ap = (typeof getActiveProduct === 'function') ? getActiveProduct() : 'ginger';
+  var m = (typeof _dmModelG !== 'undefined' && _dmModelG) ? _dmModelG : null;
+  if ((ap !== 'ginger' && ap !== 'all') || !m || !Array.isArray(m.customers) || !m.customers.length
+      || typeof bpFutureWeeks !== 'function' || typeof hybridSalesForWeek !== 'function'){ host.innerHTML = ''; return; }
+  var caseLb = m.caseLb || DM_CASE_LB;
+  var weeks = bpFutureWeeks(8).slice(1, 8);   // next ~7 weeks, skip the current still-open week
+  if(!weeks.length){ host.innerHTML = ''; return; }
+  var salesBase = (typeof dmEffectiveRunRateLbs === 'function' && dmEffectiveRunRateLbs() != null)
+    ? (dmEffectiveRunRateLbs() / caseLb) : (m.runRate13 / caseLb);
+  var com = {}, comLast = {};
+  (typeof getCommitted === 'function' ? getCommitted() : []).forEach(function(c){
+    if(!c || c.type !== 'inv' || !c.wk) return;
+    (com[c.wk] = com[c.wk] || {})[c.customer] = (com[c.wk][c.customer] || 0) + (+c.cases || 0);
+    if(!comLast[c.customer] || c.wk > comLast[c.customer]) comLast[c.customer] = c.wk;
+  });
+  function cell(cust, wk){
+    var rr = Math.round(cust.rrCases || 0);
+    var cm = Math.round((com[wk] && com[wk][cust.c]) || 0);
+    var last = comLast[cust.c];
+    if(cust.sporadic){
+      if(last && wk <= last) return { v: cm, k: (cm > 0 ? 'a' : 'z') };
+      return { v: rr, k: 'r' };
+    }
+    return (cm > rr) ? { v: cm, k: 'a' } : { v: rr, k: 'r' };
+  }
+  var winSet = {};
+  weeks.forEach(function(w){ if(com[w.weekStartISO]) Object.keys(com[w.weekStartISO]).forEach(function(k){ winSet[k] = 1; }); });
+  var shown = m.customers.filter(function(c){ return c && c.c && ((c.rrCases >= 1) || winSet[c.c]); })
+                         .sort(function(a,b){ return (b.rrCases || 0) - (a.rrCases || 0); });
+  var esc = (typeof dmEsc === 'function') ? dmEsc : function(s){ return String(s); };
+  function shortD(iso){ try { return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(e){ return iso; } }
+  var planTot = weeks.map(function(w){ try { return Math.round(hybridSalesForWeek(w.weekStartISO, salesBase, m) || 0); } catch(e){ return 0; } });
+  var colTot = weeks.map(function(){ return 0; });
+  var body = '';
+  shown.forEach(function(c){
+    body += '<tr><td class="c"><span class="nm">' + esc(c.c) + '</span><span class="bd ' + (c.sporadic ? 'od' : 'st') + '">' + (c.sporadic ? 'OD' : 'ST') + '</span><div class="mt">rr ' + Math.round(c.rrCases || 0) + ' cs</div></td>';
+    weeks.forEach(function(w, i){ var cv = cell(c, w.weekStartISO); colTot[i] += cv.v; body += '<td class="' + cv.k + '">' + (cv.v > 0 ? cv.v.toLocaleString() : '0') + '</td>'; });
+    body += '</tr>';
+  });
+  var resid = weeks.map(function(w, i){ return Math.max(0, planTot[i] - colTot[i]); });
+  var total = weeks.map(function(w, i){ return colTot[i] + resid[i]; });
+  var h = '<div class="card dbu">';
+  h += '<div class="dbu-hd"><div class="dbu-t">Demand build-up by customer</div><div class="dbu-s">How the projected weekly demand is built — invoiced run-rate + allocated (committed) orders. The column total is what the Buy Planner uses.</div></div>';
+  h += '<div class="dbu-lg"><span><i class="sw a"></i>Allocated — real order placed</span><span><i class="sw r"></i>Run-rate — projected from history</span><span><b class="bd od">OD</b>order-driven <b class="bd st">ST</b>steady</span></div>';
+  h += '<div class="dbu-wrap"><table class="dbu-tbl"><thead><tr><th class="c">Customer · run-rate</th>';
+  weeks.forEach(function(w){ h += '<th>W' + w.weekNum + '<br><span>' + shortD(w.weekStartISO) + '</span></th>'; });
+  h += '</tr></thead><tbody>' + body;
+  if(resid.some(function(x){ return x >= 1; })){
+    h += '<tr class="oth"><td class="c"><span class="nm">Other small accounts</span></td>';
+    resid.forEach(function(x){ h += '<td class="r">' + (x >= 1 ? x.toLocaleString() : '0') + '</td>'; });
+    h += '</tr>';
+  }
+  h += '<tr class="tot"><td class="c">TOTAL · sales cases</td>';
+  total.forEach(function(t){ h += '<td>' + t.toLocaleString() + '</td>'; });
+  h += '</tr><tr class="buy"><td class="c">Buy · with shrink</td>';
+  total.forEach(function(t){ h += '<td>' + Math.round(t / 0.86).toLocaleString() + '</td>'; });
+  h += '</tr></tbody></table></div>';
+  h += '<div class="dbu-note"><b>How to read.</b> Each cell is what the plan buys for that customer that week. <b>Order-driven (OD)</b> accounts show their committed order in the weeks they order and resume their run-rate past their last committed week; <b>steady (ST)</b> accounts show their run-rate every week, lifted only when a commitment exceeds it. <b>TOTAL</b> is the sales the plan targets (pre-shrink); <b>Buy</b> adds ~14% shrink for warehouse outflow.</div>';
+  h += '</div>';
+  host.innerHTML = h;
+}
 function dmcImportFile(input) {
   var f = input && input.files && input.files[0]; if(!f) return;
   if(typeof XLSX === 'undefined') { alert('Spreadsheet reader not ready — reload and try again.'); return; }
@@ -22601,6 +22675,32 @@ function cxStyles(){ return '<style>'
   + '.cxo-eff{font-family:var(--fb);font-size:11px;color:var(--gray-500);line-height:1.5;padding:0 0 3px;border-bottom:1px solid var(--gray-100)}'
   + '.cxo-eff.last{border-bottom:0}'
   + '.cxo-eff b{color:var(--gray-800);font-family:var(--fm)}'
+  + '.dbu-hd{margin-bottom:10px}'
+  + '.dbu-t{font-family:var(--fb);font-size:15px;font-weight:700;color:var(--gray-900)}'
+  + '.dbu-s{font-size:12px;color:var(--gray-500);margin-top:2px;line-height:1.5}'
+  + '.dbu-lg{display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--gray-500);margin-bottom:10px;align-items:center}'
+  + '.dbu-lg .sw{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:-1px;margin-right:4px}'
+  + '.dbu-lg .sw.a{background:var(--green-100);border:1px solid #4ade80}'
+  + '.dbu-lg .sw.r{background:var(--gray-100);border:1px solid var(--gray-300)}'
+  + '.dbu .bd{font-family:var(--fm);font-size:8px;font-weight:700;padding:1px 4px;border-radius:3px;margin:0 2px}'
+  + '.dbu .bd.od{background:#EDE9FE;color:#6D28D9}.dbu .bd.st{background:var(--gray-100);color:var(--gray-500)}'
+  + '.dbu-wrap{overflow-x:auto;border:1px solid var(--gray-200);border-radius:8px}'
+  + '.dbu-tbl{border-collapse:collapse;width:100%;min-width:560px;font-family:var(--fm);font-size:12px}'
+  + '.dbu-tbl th,.dbu-tbl td{padding:7px 10px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}'
+  + '.dbu-tbl th{font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.03em;border-bottom:1px solid var(--gray-200);background:var(--gray-50)}'
+  + '.dbu-tbl th span{font-weight:400;font-size:9px}'
+  + '.dbu-tbl th.c,.dbu-tbl td.c{text-align:left;position:sticky;left:0;background:var(--white)}'
+  + '.dbu-tbl th.c{background:var(--gray-50)}'
+  + '.dbu-tbl td{border-bottom:1px solid var(--gray-100)}'
+  + '.dbu-tbl .nm{font-family:var(--fb);font-weight:600;color:var(--gray-800)}'
+  + '.dbu-tbl .mt{font-size:9px;color:var(--gray-400)}'
+  + '.dbu-tbl td.a{background:var(--green-50);color:var(--green-700);font-weight:700}'
+  + '.dbu-tbl td.r{color:var(--gray-500)}.dbu-tbl td.z{color:var(--gray-300)}'
+  + '.dbu-tbl tr.oth td{color:var(--gray-400)}'
+  + '.dbu-tbl tr.tot td{border-top:2px solid var(--gray-300);font-weight:700;color:var(--gray-900);background:var(--gray-50)}'
+  + '.dbu-tbl tr.buy td{font-weight:700;color:var(--jlz);background:var(--jlz-light)}'
+  + '.dbu-note{font-size:11px;color:var(--gray-500);line-height:1.6;margin-top:10px}'
+  + '.dbu-note b{color:var(--gray-800)}'
   + '.cx-up{color:var(--green-600)}.cx-dn{color:var(--red-600)}.cx-fl{color:var(--gray-400)}'
   + '.cx-mg{display:inline-block;font-family:var(--fm);font-size:11px;font-weight:600;padding:1px 7px;border-radius:3px}.cx-mg.hi{background:var(--green-100);color:var(--green-700)}.cx-mg.mid{background:var(--amber-100);color:var(--amber-800)}.cx-mg.lo{background:var(--red-100);color:var(--red-700)}'
   + '.cx-detail{padding:0;margin-bottom:8px}'
