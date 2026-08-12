@@ -13676,6 +13676,11 @@ function confirmImport() {
   if (!parsed || !parsed.orders.length) return;
   const replace = document.getElementById('ord-import-replace').checked;
   const existing = getOrders();
+  // Preserve direct-ship (local-only; the Sheet/paste never carries it) when an
+  // incoming PO replaces an existing order — otherwise re-import silently wipes it.
+  const _dsByPo = {};
+  existing.forEach(function(o){ if (o && o.jlzPo != null && Array.isArray(o.directShip) && o.directShip.length) _dsByPo[String(o.jlzPo).trim().toLowerCase()] = o.directShip; });
+  parsed.orders.forEach(function(o){ if (o && o.directShip === undefined) { const d = _dsByPo[String(o.jlzPo == null ? '' : o.jlzPo).trim().toLowerCase()]; if (d) o.directShip = d; } });
   let final;
   if (replace) {
     final = parsed.orders;
@@ -17399,7 +17404,7 @@ async function pullOrdersFromSheet(silent) {
     // Without this, values entered locally (like the FOB-conversion cost estimates)
     // would be silently wiped on every startup by the auto-pull.
     // TODO: when Code.gs adds columns for these fields, this preservation can be removed.
-    const LOCAL_ONLY_ORDER_FIELDS = ['insuranceUsd', 'customsUsd', 'destHandlingUsd'];
+    const LOCAL_ONLY_ORDER_FIELDS = ['insuranceUsd', 'customsUsd', 'destHandlingUsd', 'directShip'];
     const localByPo = {};
     (getOrders() || []).forEach(o => { if (o.jlzPo) localByPo[o.jlzPo] = o; });
     orders.forEach(o => {
@@ -21546,6 +21551,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
   const _meaningful = {};
   active.forEach(a => _meaningful[a.c] = true);
   dormant.forEach(d => _meaningful[d.c] = true);
+  let _rrOvrDeltaLbs = 0;   // Σ(override run-rate − model run-rate) across accounts; keeps runRate13 aligned with per-account overrides.
   const customers = Object.keys(_meaningful).map(c => {
     const cd = custDetail ? custDetail[c] : null;
     const rrLbs = _avgW(c, rateWeeks);
@@ -21554,7 +21560,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
     // it doesn't order). Drive it by committed instead. Conservative threshold so steady buyers are
     // never held out (mis-holding a steady account would risk a stockout).
     const _owks = rateWeeks.filter(w => wkCust[w] && wkCust[w][c] > 0).length;
-    const sporadic = (rateWeeks.length >= 6 && rrLbs > 0 && (_owks / rateWeeks.length) < DM_SPORADIC_FRAC);
+    const sporadicModel = (rateWeeks.length >= 6 && rrLbs > 0 && (_owks / rateWeeks.length) < DM_SPORADIC_FRAC);
     const a4 = _avgW(c, _rel4), p4 = _avgW(c, _relP4);
     let trend = 'fl'; if (a4 > p4*1.15) trend = 'up'; else if (a4 < p4*0.85) trend = 'dn';
     const ds = daysSince(c);
@@ -21563,12 +21569,25 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
     const gsR = cd ? _sumWinF(cd,_winR,'gs') : null;
     const gpP = cd ? _sumWinF(cd,_winP,'gp') : null;
     const cadv = cadence(c);
+    const statusModel = (dsEff <= DM_ACTIVE_DAYS ? 'active' : 'quiet');
+    const fcQuietModel = (cadv != null && isFinite(ds) && rrLbs > 0 && ds > Math.max(DM_QUIET_X * cadv, DM_QUIET_MIN));
+    // Manual overrides (per-customer, localStorage) baked into the model so the Buy
+    // Planner / Simulator consume them; the run-rate delta feeds runRate13 below.
+    const _ov = (typeof coGet === 'function') ? coGet(c) : null;
+    let rrLbsEff = rrLbs, sporadic = sporadicModel, statusEff = statusModel, fcQuietEff = fcQuietModel;
+    const ovr = {};
+    if (_ov){
+      if (_ov.rrCases != null){ rrLbsEff = (+_ov.rrCases || 0) * caseLb; _rrOvrDeltaLbs += (rrLbsEff - rrLbs); ovr.rr = true; }
+      if (_ov.pattern === 'od' || _ov.pattern === 'steady'){ sporadic = (_ov.pattern === 'od'); ovr.pattern = true; }
+      if (_ov.status === 'active' || _ov.status === 'quiet'){ statusEff = _ov.status; fcQuietEff = (_ov.status === 'quiet'); ovr.status = true; }
+    }
     return {
-      c, status: (dsEff <= DM_ACTIVE_DAYS ? 'active' : 'quiet'),
-      fcQuiet: (cadv != null && isFinite(ds) && rrLbs > 0 && ds > Math.max(DM_QUIET_X * cadv, DM_QUIET_MIN)),
+      c, status: statusEff,
+      fcQuiet: fcQuietEff,
       days: isFinite(dsEff) ? dsEff : null, last: lastOrder(c), cad: cadv,
       spark: _r10.map(w => Math.round((wkCust[w] && wkCust[w][c]) || 0)), trend,
-      rrLbs: Math.round(rrLbs), rrCases: rrLbs / caseLb, sporadic,
+      rrLbs: Math.round(rrLbsEff), rrCases: rrLbsEff / caseLb, sporadic,
+      rrLbsModel: Math.round(rrLbs), rrCasesModel: rrLbs / caseLb, sporadicModel, statusModel, fcQuietModel, ovr,
       life: Math.round(custLifetime[c] || 0),
       vol: (custLifetime[c] || 0) / totalLifeAll * 100,
       gs: cd ? cd.gs : null, gp: cd ? cd.gp : null,
@@ -21587,7 +21606,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
   let _bgs = 0, _bgp = 0; if (custDetail) Object.values(custDetail).forEach(cd => { _bgs += _sumWinF(cd,_winR,'gs'); _bgp += _sumWinF(cd,_winR,'gp'); });
   const blendMg = _bgs ? _bgp / _bgs * 100 : null;
 
-  return { runRate13:Math.round(runRate13), activeCount:active.length, dormantCount:dormant.length,
+  return { runRate13:Math.round(runRate13 + _rrOvrDeltaLbs), runRate13Model:Math.round(runRate13), activeCount:active.length, dormantCount:dormant.length,
            active, dormant, demandRows, custDetail, customers, concTop2, blendMg,
            weekly: allWeeks.map(w => ({ week:w, lbs:Math.round(weekTotal[w]||0) })),
            dataMax, weeksCovered:allWeeks.length, weeklyOnly:!!weeklyOnly };
@@ -21621,6 +21640,39 @@ window.qaSetPct = function(cust, pct){
   try { if (typeof renderSimulator === 'function') renderSimulator(); } catch(e){ console.warn('qaSetPct sim:', e); }
   try { const th = document.getElementById('tab-home'); if (typeof renderHome === 'function' && th && th.style.display !== 'none') renderHome(); } catch(e){}
 };
+
+// ── PER-CUSTOMER MANUAL OVERRIDES ───────────────────────────────────────
+// Override what the model computed for one account when you know something the
+// data does not show yet: its weekly run-rate, its order pattern (order-driven
+// vs steady), or its status (active vs quiet). Baked into dmBuildModel so the
+// Buy Planner / Simulator consume them; persists per device like the quiet
+// scenario. Store shape: { "<customer>": { rrCases?, pattern?('od'|'steady'), status?('active'|'quiet') } }
+const CO_LS_KEY = 'jlz_cust_overrides';
+function coStore(){ try { return JSON.parse(localStorage.getItem(CO_LS_KEY) || '{}') || {}; } catch(e){ return {}; } }
+function coGet(c){ if(!c) return null; const v = coStore()[c]; return (v && typeof v === 'object') ? v : null; }
+function coSet(c, patch){
+  if(!c) return;
+  const s = coStore();
+  const cur = Object.assign({}, s[c] || {}, patch);
+  Object.keys(cur).forEach(k => { if (cur[k] == null) delete cur[k]; });
+  if (Object.keys(cur).length) s[c] = cur; else delete s[c];
+  try { localStorage.setItem(CO_LS_KEY, JSON.stringify(s)); } catch(e){ console.error('coSet:', e); }
+}
+// Rebuild the ginger production model (bakes overrides) + refresh every consumer.
+function coRerender(){
+  try { if (typeof _dmRawAll !== 'undefined' && _dmRawAll && typeof dmBuild === 'function') {
+    _dmModelG = dmBuild(_dmRawAll.filter(r => (r.prod || 'ginger') === 'ginger'), false, 'ginger');
+  } } catch(e){ console.warn('coRerender build:', e); }
+  try { if (typeof dmRebuildView === 'function') dmRebuildView(); } catch(e){}
+  try { if (typeof renderBuyPlanner === 'function') renderBuyPlanner(); } catch(e){}
+  try { if (typeof renderSimulator === 'function') renderSimulator(); } catch(e){}
+  try { if (typeof cxRenderList === 'function') cxRenderList(); if (typeof cxRenderDetail === 'function') cxRenderDetail(); } catch(e){}
+}
+function coSetRr(c, val){ const n = Math.round(Number(val) || 0); coSet(c, { rrCases: (n >= 0 && String(val).trim() !== '') ? n : null }); coRerender(); }
+function coClearRr(c){ coSet(c, { rrCases: null }); coRerender(); }
+function coSetPattern(c, v){ coSet(c, { pattern: (v === 'od' || v === 'steady') ? v : null }); coRerender(); }
+function coSetStatus(c, v){ coSet(c, { status: (v === 'active' || v === 'quiet') ? v : null }); coRerender(); }
+function coReset(c){ if(c){ const s = coStore(); delete s[c]; try { localStorage.setItem(CO_LS_KEY, JSON.stringify(s)); } catch(e){} } coRerender(); }
 
 // ════════════════════════════════════════════════════════════════════════
 //  CUSTOMER 360 — one entity-centric customer view. Consolidates the former
@@ -22273,6 +22325,43 @@ function cxRenderList(){
   }).join('');
 }
 
+// Per-customer manual overrides card (Customer 360 -> Demand lens). Reads the
+// baked model fields (rrCasesModel/sporadicModel/statusModel + ovr flags) plus
+// the raw override store; controls call the co* handlers, which rebuild + refresh.
+function cxOverrideCard(sel){
+  if(!sel || !sel.c) return '';
+  const c = sel.c;
+  const ov = (typeof coGet === 'function') ? (coGet(c) || {}) : {};
+  const jc = s => String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+  const rrModel = Math.round(sel.rrCasesModel != null ? sel.rrCasesModel : (sel.rrCases || 0));
+  const rrEff = Math.round(sel.rrCases || 0);
+  const rrMan = !!(sel.ovr && sel.ovr.rr);
+  const patModel = sel.sporadicModel ? 'od' : 'steady';
+  const patSel = (ov.pattern === 'od' || ov.pattern === 'steady') ? ov.pattern : 'auto';
+  const stModel = (sel.statusModel === 'quiet') ? 'quiet' : 'active';
+  const stSel = (ov.status === 'active' || ov.status === 'quiet') ? ov.status : 'auto';
+  const anyOv = rrMan || patSel !== 'auto' || stSel !== 'auto';
+  const patEff = (patSel === 'auto') ? patModel : patSel;
+  const stEff = (stSel === 'auto') ? stModel : stSel;
+  const man = on => on ? ' <span class="cxo-man">MANUAL</span>' : '';
+  const rs = (on, fn) => on ? ' <button type="button" class="cxo-rs" onclick="'+fn+'">reset</button>' : '';
+  const seg = (fn, val, opts) => '<div class="cxo-seg">' + opts.map(function(o){
+      return '<button type="button"'+(o[1]===val?' class="on"':'')+' onclick="'+fn+'(\''+jc(c)+'\',\''+o[1]+'\')">'+o[0]+'</button>';
+    }).join('') + '</div>';
+  let h = '<div class="cxo">';
+  h += '<div class="cxo-h"><div class="cxo-t">Manual overrides</div>' + (anyOv ? '<button type="button" class="cxo-rsall" onclick="coReset(\''+jc(c)+'\')">Reset all</button>' : '') + '</div>';
+  h += '<div class="cxo-row"><div><div class="cxo-lab">Weekly run-rate'+man(rrMan)+'</div><div class="cxo-model">model '+rrModel+' cs/wk'+rs(rrMan,'coClearRr(\''+jc(c)+'\')')+'</div></div>'
+     + '<div class="cxo-rr'+(rrMan?' man':'')+'"><input type="number" min="0" step="1" value="'+rrEff+'" onchange="coSetRr(\''+jc(c)+'\',this.value)"><span>cs/wk</span></div></div>';
+  h += '<div class="cxo-eff">Plan buys <b>'+rrEff+'</b> cs/wk in weeks with no committed order (before shrink).</div>';
+  h += '<div class="cxo-row"><div><div class="cxo-lab">Order pattern'+man(patSel!=='auto')+'</div><div class="cxo-model">model '+(patModel==='od'?'Order-driven':'Steady')+rs(patSel!=='auto','coSetPattern(\''+jc(c)+'\',\'auto\')')+'</div></div>'
+     + seg('coSetPattern', patSel, [['Auto','auto'],['Order-driven','od'],['Steady','steady']]) + '</div>';
+  h += '<div class="cxo-eff">'+(patEff==='od' ? 'Committed orders drive the buy in the weeks it orders; run-rate resumes past its last committed week.' : 'Run-rate every week, plus any committed excess over it.')+'</div>';
+  h += '<div class="cxo-row"><div><div class="cxo-lab">Status'+man(stSel!=='auto')+'</div><div class="cxo-model">model '+(stModel==='quiet'?'Quiet':'Active')+rs(stSel!=='auto','coSetStatus(\''+jc(c)+'\',\'auto\')')+'</div></div>'
+     + seg('coSetStatus', stSel, [['Auto','auto'],['Active','active'],['Quiet','quiet']]) + '</div>';
+  h += '<div class="cxo-eff last">'+(stEff==='quiet' ? 'Shows in the Quiet-accounts panel - kept in the plan by default; remove there only if it is gone.' : 'Treated as a normal active account.')+'</div>';
+  h += '</div>';
+  return h;
+}
 function cxRenderDetail(){
   const host=document.getElementById('cx-detail'), m=_dmModel;
   if(!host||!m) return;
@@ -22328,6 +22417,7 @@ function cxRenderDetail(){
     else if(sel.cad!=null&&sel.days!=null&&sel.days>sel.cad*2.2&&sel.days>=6) out+='<div class="cx-call red"><span class="i">\u23F0</span><div><b>Reorder signal: overdue.</b> Typically orders every ~'+sel.cad+'d, but it has been '+sel.days+'d. Worth a nudge \u2014 and check the Buy Planner.</div></div>';
     else out+='<div class="cx-call blue"><span class="i">\u2713</span><div>On cadence'+(sel.cad!=null?' (~'+sel.cad+'d)':'')+'.'+(sel.days!=null?' Last order '+sel.days+'d ago.':'')+'</div></div>';
     out+='<div class="cx-kp" style="margin-top:10px"><div class="b"><div class="k">Run-rate</div><div class="v">'+(sel.rrCases>=1?cxFmtN(sel.rrCases):'\u2014')+' <small>cs/wk</small></div></div><div class="b"><div class="k">Cadence</div><div class="v">'+(sel.cad!=null?sel.cad+'d':'\u2014')+'</div></div><div class="b"><div class="k">Last order</div><div class="v" style="font-size:14px;font-family:var(--fb)">'+(sel.days!=null?sel.days+'d ago':'\u2014')+'</div></div></div>';
+    out+=cxOverrideCard(sel);
     if(cd){
       const custSeries = allWk.map(w=>{ const wk=cd.weekly[w]; const lbs=wk?wk.lbs:0, gs=wk?wk.gs:0; return {week:w,lbs:lbs,gs:gs,cases:wk?wk.cases:0,px:lbs?gs/lbs:0,inc:incomplete(w)}; });
       const ccmp=dmSeriesCompare(custSeries,13);
@@ -22489,6 +22579,28 @@ function cxStyles(){ return '<style>'
   + '.cx-st.act{background:var(--green-100);color:var(--green-700)}.cx-st.quiet{background:var(--red-100);color:var(--red-700)}.cx-st.fq{background:var(--amber-50);color:var(--amber-700)}'
   + '.cx-st.dc{background:var(--blue-50);border:1px solid var(--blue-200);color:var(--blue-700)}'
   + '.cx-st.od{background:#EDE9FE;color:#6D28D9}'
+  + '.cxo{border:1px solid var(--gray-200);border-radius:8px;margin-top:12px;padding:2px 14px 12px;background:var(--white)}'
+  + '.cxo-h{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:11px 0 5px;border-bottom:1px solid var(--gray-100)}'
+  + '.cxo-t{font-family:var(--fb);font-size:12px;font-weight:700;color:var(--gray-800)}'
+  + '.cxo-rsall{font-family:var(--fm);font-size:10px;font-weight:600;color:var(--gray-500);background:none;border:1px solid var(--gray-200);border-radius:5px;padding:3px 8px;cursor:pointer}'
+  + '.cxo-rsall:hover{color:var(--gray-800);border-color:var(--gray-400)}'
+  + '.cxo-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0 5px}'
+  + '.cxo-lab{font-family:var(--fb);font-size:12px;font-weight:600;color:var(--gray-800);display:flex;align-items:center;gap:6px}'
+  + '.cxo-model{font-family:var(--fm);font-size:10px;color:var(--gray-400);margin-top:2px;display:flex;align-items:center;gap:6px}'
+  + '.cxo-man{font-family:var(--fm);font-size:8px;font-weight:700;letter-spacing:.05em;color:var(--amber-700);background:var(--amber-50);border:1px solid var(--amber-200);border-radius:3px;padding:1px 4px}'
+  + '.cxo-rs{font-family:var(--fm);font-size:10px;color:var(--jlz);background:none;border:none;cursor:pointer;padding:0;text-decoration:underline}'
+  + '.cxo-rr{display:flex;align-items:center;border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;background:var(--gray-50)}'
+  + '.cxo-rr.man{border-color:var(--amber-200);background:var(--amber-50)}'
+  + '.cxo-rr input{width:74px;border:none;background:none;color:var(--gray-900);font-family:var(--fm);font-size:15px;font-weight:700;text-align:right;padding:6px 5px 6px 9px;outline:none;-moz-appearance:textfield}'
+  + '.cxo-rr input::-webkit-outer-spin-button,.cxo-rr input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}'
+  + '.cxo-rr span{font-family:var(--fm);font-size:10px;color:var(--gray-500);padding-right:9px}'
+  + '.cxo-seg{display:inline-flex;border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;font-family:var(--fm)}'
+  + '.cxo-seg button{border:0;border-left:1px solid var(--gray-200);padding:5px 10px;font-size:11px;font-weight:600;cursor:pointer;background:var(--white);color:var(--gray-600)}'
+  + '.cxo-seg button:first-child{border-left:0}'
+  + '.cxo-seg button.on{background:var(--jlz);color:#fff}'
+  + '.cxo-eff{font-family:var(--fb);font-size:11px;color:var(--gray-500);line-height:1.5;padding:0 0 3px;border-bottom:1px solid var(--gray-100)}'
+  + '.cxo-eff.last{border-bottom:0}'
+  + '.cxo-eff b{color:var(--gray-800);font-family:var(--fm)}'
   + '.cx-up{color:var(--green-600)}.cx-dn{color:var(--red-600)}.cx-fl{color:var(--gray-400)}'
   + '.cx-mg{display:inline-block;font-family:var(--fm);font-size:11px;font-weight:600;padding:1px 7px;border-radius:3px}.cx-mg.hi{background:var(--green-100);color:var(--green-700)}.cx-mg.mid{background:var(--amber-100);color:var(--amber-800)}.cx-mg.lo{background:var(--red-100);color:var(--red-700)}'
   + '.cx-detail{padding:0;margin-bottom:8px}'
