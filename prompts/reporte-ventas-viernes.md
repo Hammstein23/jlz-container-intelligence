@@ -91,17 +91,17 @@ H `Target Fullfillment Date` (MM/DD/YYYY) · V `Billable Units` · **W `Billable
   líneas "Freight/Uncategorized" dan 100% (inflan) → reportar por-producto para el número limpio.
 
 ### 4.9 · Alimentar Container Intelligence (committed orders) — el motivo original
-El objetivo de todo esto era mejorar la **proyección de compra del jengibre peruano**. El feed viejo del app
-(importar el reporte "Order vs Picked") está acotado por status → se pierde las futuras no-pickeadas (ej. Sol-ti
-700 cs Wk34). El **forward book live** (Pasos 1+3) SÍ las tiene. Entonces:
-- De TODAS las órdenes de **Ginger Perú 30Lb** abiertas/no-facturadas (semana en curso + forward), generar un **.xlsx**
-  con header EXACTO: `SKU | Fulfillment Date | Order No | Order qty | Customer Name`, con `SKU=OG-GIN-30Lbs-PR`,
-  Fulfillment Date en MM/DD/YYYY, Order qty = cajas. (Solo Perú 30Lb; el importador filtra el resto.)
-- Generar el xlsx con Python stdlib (`zipfile`, inline strings — sin openpyxl). Smoke-test simulando `parseOpenOrders`
-  (SKU filter · `iso<=fulfilledMax` anti-double-count · dedupe Order No|SKU · qty>0) antes de entregar.
-- Juan lo importa en **Demand tab → panel "Committed orders" → import**. El app filtra por su `_dmModel.dataMax`
-  (lo ya facturado sale solo → sin doble conteo). Referencia de código: `parseOpenOrders`/`dmcImportFile` (~L11489/L22097).
-- **No se toca el app** — es solo generar el archivo que el importador ya sabe leer.
+El objetivo de todo esto era mejorar la **proyección de compra del jengibre peruano**. Desde 2026-08-15 el app
+importa **directo el reporte nativo de WholesaleWare** — ya no hace falta generar un xlsx a mano ni drillear órdenes:
+- Juan (o vos) baja el **Unshipped Sales Order Report** de WholesaleWare (.xlsx/.csv) — el libro completo de
+  órdenes abiertas con detalle por línea (Fulfillment Date, Order #, Customer, Origin, **SKU**, Total Billable Qty).
+- Se sube **directo** en **Demand → panel "Committed orders" → import**. El app (`dmcNormalizeUnshipped`) detecta el
+  formato anidado, hace forward-fill de la cabecera de orden a sus líneas, convierte la fecha serial de Excel, y deja
+  que `parseOpenOrders` filtre `SKU=OG-GIN-30Lbs-PR` + `iso<=dataMax` (anti-doble-conteo; strays viejos salen solos).
+- Verificado end-to-end 2026-08-15 (Unshipped 08.17 + Excel 08.17 → dataMax 08-13 → 9 committed ginger, 1,168 cs).
+  Ref código: `dmcNormalizeUnshipped`/`dmcIsUnshippedFormat`/`parseOpenOrders`/`dmcImportFile`.
+- **Fallback** (si algún viernes el Unshipped no está a mano): el flat sheet viejo `SKU|Fulfillment Date|Order No|Order qty|Customer Name`
+  (SKU=`OG-GIN-30Lbs-PR`, MM/DD/YYYY) sigue funcionando — el importador auto-detecta cuál es.
 
 ### 5 · Scorecard + Bottom line (el veredicto)
 Con lo de arriba, armar los 5 semáforos y la frase de bottom line. Ser honesto: "revenue arriba pero margen abajo"

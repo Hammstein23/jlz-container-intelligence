@@ -16,9 +16,11 @@ Es lo que mantiene "lo facturado" y "lo committed" sin pisarse ni dejar semanas 
   (Ej.: Wk31 aparece completa recién cuando el Excel ya la tiene facturada.)
 
 ## Paso 2 — Re-importar el committed (SIEMPRE después del Paso 1)
-- Demand → panel **"Committed orders"** → **import** → subí el archivo de committed más reciente
-  (`committed_ginger_open_orders_*.xlsx` — el que genera el cierre de los viernes, ver `reporte-ventas-viernes.md` paso 4.9).
-- El importador **re-filtra contra el nuevo `dataMax`** y **saca solo lo que ya se facturó**.
+- Bajá de WholesaleWare el **Unshipped Sales Order Report** (.xlsx/.csv) — el libro de órdenes abiertas.
+- Demand → panel **"Committed orders"** → **import** → subilo **directo** (el app lo parsea nativo:
+  detecta el formato anidado, hace forward-fill de la cabecera a las líneas, y filtra `SKU=OG-GIN-30Lbs-PR`).
+  Ya no hace falta generar el `committed_ginger_open_orders_*.xlsx` a mano.
+- El importador **re-filtra contra el nuevo `dataMax`** y **saca solo lo que ya se facturó** (y los strays viejos).
 - **Efecto:** las órdenes abiertas/futuras quedan como committed; lo que cruzó a facturado se va solo → **sin doble conteo**.
 
 ---
@@ -31,5 +33,8 @@ Es lo que mantiene "lo facturado" y "lo committed" sin pisarse ni dejar semanas 
 
 ## Cómo se ve una semana en curso (ej. Wk32)
 No hace falta que esté todo facturado. La parte facturada entra por el Excel; el resto lo cubren los committed.
-El Buy Planner usa **`max(committed, run-rate)`** por semana → toma los committed (el total colocado) → la semana
-se muestra **completa**, no a medias.
+El Buy Planner usa un **modelo híbrido** por semana (reemplazó al viejo `max(committed, run-rate)`):
+cuentas **order-driven** (lumpy, ej. Sol-ti) → su committed en las semanas que pidieron, y retoman su run-rate
+más allá del último committed; cuentas **steady** → run-rate cada semana + solo el excedente committed por
+encima. Igual: los committed cubren la semana en curso → se muestra **completa**, no a medias.
+(Las cuentas quiet ahora se cubren por defecto; sacarlas es manual.)
