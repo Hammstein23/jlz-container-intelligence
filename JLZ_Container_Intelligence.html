@@ -2621,6 +2621,10 @@ function authInjectLogo() {
       .dmc-chip{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:var(--r);padding:6px 9px;}
       .dmc-tag{font-size:9px;font-weight:700;font-family:var(--fm);text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);background:var(--gray-100);padding:1px 6px;border-radius:99px;margin-left:2px;}
       .dmc-tag.direct{color:#6d28d9;background:#ede9fe;}
+      .dmc-tag.pending{color:#b45309;background:#fffbeb;}
+      .dmc-tag.stale{color:#b42318;background:#fef2f2;}
+      .dmc-chip.cpe{border-left:3px solid #f59e0b;}
+      .dmc-chip.cst{border-left:3px solid #ef4444;}
       .dmc-rm{border:none;background:none;color:var(--gray-400);cursor:pointer;font-size:16px;line-height:1;padding:2px 4px;}
       .dmc-rm:hover{color:var(--red-600);}
     </style>
@@ -11525,7 +11529,15 @@ function ooDateToISO(s) {
 // Pure parser (rows = SheetJS sheet_to_json objects). fulfilledMax = the demand
 // model's dataMax (YYYY-MM-DD) for anti-double-count with the fulfilled feed.
 function parseOpenOrders(rows, fulfilledMax) {
-  var out = [], seen = {}, st = { total: (rows || []).length, kept: 0, nonGinger: 0, alreadyFulfilled: 0, dup: 0, badRow: 0 };
+  var out = [], seen = {}, st = { total: (rows || []).length, kept: 0, nonGinger: 0, pending: 0, stale: 0, dup: 0, badRow: 0 };
+  // Open orders ship (and invoice) eventually, so they must STAY in the demand — never
+  // silently dropped for being at/under the Excel's invoice cutoff. The Unshipped report
+  // only ever contains un-shipped orders, so NONE can already be in the invoiced Excel:
+  // there is no double-count to guard against here. We only TAG status for the panel:
+  //  · pending = fulfillment already at/under the cutoff but still open (awaiting invoice).
+  //  · stale   = badly overdue (>3 wks before the cutoff) → a stray to review, still counted.
+  var staleISO = '';
+  if(fulfilledMax) { var _sd = new Date(fulfilledMax + 'T00:00:00'); _sd.setDate(_sd.getDate() - 21); staleISO = _sd.toISOString().slice(0, 10); }
   (rows || []).forEach(function(r) {
     var sku = String(r['SKU'] == null ? '' : r['SKU']).trim();
     // Peru ginger, standard 30-lb case only. Excludes -HI (Hawaiian), 5/10-lb ginger,
@@ -11533,7 +11545,6 @@ function parseOpenOrders(rows, fulfilledMax) {
     if(sku !== 'OG-GIN-30Lbs-PR') { st.nonGinger++; return; }
     var iso = ooDateToISO(r['Fulfillment Date']);
     if(!iso) { st.badRow++; return; }
-    if(fulfilledMax && iso <= fulfilledMax) { st.alreadyFulfilled++; return; }   // in the fulfilled feed already
     var key = String(r['Order No'] || '') + '|' + sku;                            // dedupe (a line can repeat across exports)
     if(seen[key]) { st.dup++; return; }
     seen[key] = 1;
@@ -11541,7 +11552,10 @@ function parseOpenOrders(rows, fulfilledMax) {
     if(qty <= 0) { st.badRow++; return; }
     var cust = String(r['Customer Name'] == null ? '' : r['Customer Name']).trim() || '—';
     var wk = (typeof dmWeekKey === 'function') ? dmWeekKey(new Date(iso + 'T12:00:00')) : iso;   // noon-local → stable Monday
-    out.push({ customer: cust, wk: wk, cases: qty, type: 'inv', source: 'import', orderNo: String(r['Order No'] || ''), sku: sku });
+    var stale = !!(staleISO && iso < staleISO);
+    var pending = !stale && !!(fulfilledMax && iso <= fulfilledMax);
+    if(stale) st.stale++; else if(pending) st.pending++;
+    out.push({ customer: cust, wk: wk, cases: qty, type: 'inv', source: 'import', orderNo: String(r['Order No'] || ''), sku: sku, pending: pending, stale: stale });
     st.kept++;
   });
   return { entries: out, stats: st };
@@ -22271,7 +22285,10 @@ function dmcRenderChips() {
   var box = document.getElementById('dmc-chips'); if(!box) return;
   var html = '';
   getCommitted().forEach(function(c, i) {
-    html += '<div class="dmc-chip"><span><b>' + libEsc(c.customer) + '</b> \u00b7 ' + dmcWeekLabel(c.wk) + ' \u00b7 ' + c.cases + ' cs <span class="dmc-tag">from warehouse</span></span>'
+    var tag = c.stale ? '<span class="dmc-tag stale" title="Badly overdue and still open \u2014 likely a stray. Still counted; remove with \u00d7 if it is dead.">stale \u00b7 review</span>'
+            : c.pending ? '<span class="dmc-tag pending" title="Fulfillment date has passed but no invoice yet \u2014 still counted in demand, just awaiting invoice.">pending invoice</span>'
+            : '<span class="dmc-tag">from warehouse</span>';
+    html += '<div class="dmc-chip' + (c.stale ? ' cst' : (c.pending ? ' cpe' : '')) + '"><span><b>' + libEsc(c.customer) + '</b> \u00b7 ' + dmcWeekLabel(c.wk) + ' \u00b7 ' + c.cases + ' cs ' + tag + '</span>'
       + '<button class="dmc-rm" onclick="dmcRemoveInv(' + i + ')" title="Remove">\u00d7</button></div>';
   });
   (typeof getOrders === 'function' ? getOrders() : []).forEach(function(o) {
@@ -22374,8 +22391,9 @@ function dmcImportFile(input) {
       importCommittedOpenOrders(res.entries);
       var s = res.stats;
       window._dmcImportMsg = 'Imported <b>' + s.kept + '</b> committed ginger order' + (s.kept === 1 ? '' : 's') +
-        '. Skipped ' + s.nonGinger + ' non-ginger, ' + s.alreadyFulfilled + ' already fulfilled, ' + s.dup + ' duplicate' +
-        (s.badRow ? ', ' + s.badRow + ' unreadable' : '') + '. All rows treated as committed (status vocabulary unconfirmed).';
+        (s.pending ? ' · ' + s.pending + ' pending invoice' : '') + (s.stale ? ' · <b>' + s.stale + ' stale (review)</b>' : '') +
+        '. Skipped ' + s.nonGinger + ' non-ginger, ' + s.dup + ' duplicate' +
+        (s.badRow ? ', ' + s.badRow + ' unreadable' : '') + '. Open orders stay counted — nothing dropped.';
       renderCommittedPanel();
     } catch(err) { alert('Import failed: ' + err.message); }
   };
