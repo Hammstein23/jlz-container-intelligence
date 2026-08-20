@@ -1183,7 +1183,7 @@ document.addEventListener('keydown', function(e) {
 });
 
 function switchTab(t) {
-  var ids = ['home','arrival','operations','results','quality','library','history','insights','orders','planner','simulator','pricing','market','demand','inventory'];
+  var ids = ['home','arrival','operations','results','quality','library','history','insights','orders','planner','simulator','pricing','market','demand','customers','inventory'];
   // 1) Isolate panes FIRST — for every tab, before any render runs. This way a
   //    render error can never abort the loop and leave another tab's pane
   //    visible underneath the active one (the "Buy Planner stacked under Orders" bug).
@@ -1204,6 +1204,7 @@ function switchTab(t) {
     if(t==='simulator' && typeof renderSimulator==='function')  renderSimulator();
     if(t==='pricing'   && typeof renderPricing==='function')    renderPricing();
     if(t==='demand'    && typeof renderDemand==='function')     renderDemand();
+    if(t==='customers' && typeof renderCustomers==='function')  renderCustomers();
     if(t==='quality'   && typeof renderQuality==='function')    renderQuality();
     if(t==='library'   && typeof renderLibrary==='function')    renderLibrary();
     if(t==='operations'&& typeof renderOpsDocs==='function')    renderOpsDocs();
@@ -2459,6 +2460,10 @@ function authInjectLogo() {
       <svg class="nav-icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
       Demand
     </button>
+    <button class="nav-item" id="tb-customers" onclick="switchTab('customers')">
+      <svg class="nav-icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      Customers
+    </button>
   </div>
 
   <!-- ── SECTION: MARKET INTEL ── -->
@@ -2568,8 +2573,8 @@ function authInjectLogo() {
     <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:16px;flex-wrap:wrap;gap:12px">
       <div>
         <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--jlz);font-family:var(--fb)">Sales &middot; Demand</div>
-        <h1 style="font-size:20px;font-weight:700;margin:2px 0 0;letter-spacing:-.01em">Customers</h1>
-        <div style="font-size:12px;color:var(--gray-500);margin-top:3px">Every account &mdash; demand, profitability, distribution centers &amp; orders, in one place</div>
+        <h1 style="font-size:20px;font-weight:700;margin:2px 0 0;letter-spacing:-.01em">Demand</h1>
+        <div style="font-size:12px;color:var(--gray-500);margin-top:3px">Run-rate, trend, forward build-up &amp; committed orders &mdash; how we size the buy</div>
       </div>
       <div>
         <label id="dm-dropzone" for="dm-file"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Upload Sales By Account (.xlsx)</label>
@@ -2598,8 +2603,6 @@ function authInjectLogo() {
     </div>
     <div id="dm-msg" style="font-size:11px;font-family:var(--fm);margin-bottom:12px;min-height:14px"></div>
     <div id="dm-body"></div>
-    <div id="dm-accuracy" style="margin-top:18px"></div>
-    <div id="dm-customers" style="margin-top:18px"></div>
     <style>
       .dmc-card{background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:16px 18px;}
       .dmc-empty{font-size:12.5px;color:var(--gray-500);}
@@ -2628,8 +2631,23 @@ function authInjectLogo() {
       .dmc-rm{border:none;background:none;color:var(--gray-400);cursor:pointer;font-size:16px;line-height:1;padding:2px 4px;}
       .dmc-rm:hover{color:var(--red-600);}
     </style>
-    <div id="dm-committed" style="margin-top:18px"></div>
     <div id="dm-buildup" style="margin-top:18px"></div>
+    <div id="dm-committed" style="margin-top:18px"></div>
+  </div>
+</div>
+
+<div id="tab-customers" class="page" style="display:none">
+  <div style="max-width:1000px;margin:0 auto">
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:16px;flex-wrap:wrap;gap:12px">
+      <div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--jlz);font-family:var(--fb)">Sales &middot; Customers</div>
+        <h1 style="font-size:20px;font-weight:700;margin:2px 0 0;letter-spacing:-.01em">Customers</h1>
+        <div style="font-size:12px;color:var(--gray-500);margin-top:3px">Every account &mdash; demand, profitability, distribution centers &amp; orders, in one place</div>
+      </div>
+    </div>
+    <div id="cx-root"></div>
+    <div id="dm-customers" style="margin-top:18px"></div>
+    <div id="dm-accuracy" style="margin-top:18px"></div>
   </div>
 </div>
 
@@ -4459,8 +4477,6 @@ function authInjectLogo() {
   </details>
 
   <!-- ── 5. DEMAND (collapsed; was KPI strip) ────────────────────── -->
-  <div id="bp-scenarios" class="mb-4"></div>
-
   <div class="bp-zone"><span class="bp-zone-tag">Tune</span><span class="bp-zone-desc">drivers &amp; setup · collapsed</span><span class="bp-zone-line"></span></div>
 
   <details class="card mb-4">
@@ -14617,7 +14633,6 @@ function renderBuyPlanner() {
   _setKpi('bp-demand-lbs', Math.round(demandLbsWk).toLocaleString());
   _setKpi('bp-demand-cs',  Math.round(salesDemand).toLocaleString());
   _setKpi('bp-demand-src', usingDemandModule ? 'Demand · Peru' : 'Manual fallback');
-  try { if (typeof renderBpScenarios === 'function') renderBpScenarios(); } catch(e){ console.warn('bp-scenarios:', e); }
   const coverage = salesDemand > 0 ? stockCases / salesDemand : 0;
   const covEl = document.getElementById('bp-coverage');
   if (covEl) {
@@ -21629,6 +21644,8 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
   const customers = Object.keys(_meaningful).map(c => {
     const cd = custDetail ? custDetail[c] : null;
     const rrLbs = _avgW(c, rateWeeks);
+    const rr6Lbs = _avgW(c, (reliableWeeks.length ? reliableWeeks : allWeeks).slice(-6));   // per-customer reaction windows
+    const rr3Lbs = _avgW(c, (reliableWeeks.length ? reliableWeeks : allWeeks).slice(-3));
     // Order-driven (sporadic) classification: ordered in only a small fraction of the reliable weeks →
     // buys lumpily, so its average must NOT be smeared across every week (would over-project the weeks
     // it doesn't order). Drive it by committed instead. Conservative threshold so steady buyers are
@@ -21660,7 +21677,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
       fcQuiet: fcQuietEff,
       days: isFinite(dsEff) ? dsEff : null, last: lastOrder(c), cad: cadv,
       spark: _r10.map(w => Math.round((wkCust[w] && wkCust[w][c]) || 0)), trend,
-      rrLbs: Math.round(rrLbsEff), rrCases: rrLbsEff / caseLb, sporadic,
+      rrLbs: Math.round(rrLbsEff), rrCases: rrLbsEff / caseLb, rr6Cases: rr6Lbs / caseLb, rr3Cases: rr3Lbs / caseLb, sporadic,
       rrLbsModel: Math.round(rrLbs), rrCasesModel: rrLbs / caseLb, sporadicModel, statusModel, fcQuietModel, ovr,
       life: Math.round(custLifetime[c] || 0),
       vol: (custLifetime[c] || 0) / totalLifeAll * 100,
@@ -21683,6 +21700,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
   return { runRate13:Math.round(runRate13 + _rrOvrDeltaLbs), runRate13Model:Math.round(runRate13), runRate6:Math.round(runRate6 + _rrOvrDeltaLbs), runRate3:Math.round(runRate3 + _rrOvrDeltaLbs), activeCount:active.length, dormantCount:dormant.length,
            active, dormant, demandRows, custDetail, customers, concTop2, blendMg,
            weekly: allWeeks.map(w => ({ week:w, lbs:Math.round(weekTotal[w]||0) })),
+           weeklyReliable: (reliableWeeks.length ? reliableWeeks : allWeeks).map(w => ({ week:w, lbs:Math.round(weekTotal[w]||0) })),
            dataMax, weeksCovered:allWeeks.length, weeklyOnly:!!weeklyOnly };
 }
 
@@ -21738,6 +21756,56 @@ function dmEffectiveRunRateLbs(){
   qaQuietList().forEach(x => { ex += (x.rrLbs || 0) * (1 - qaPct(x.c) / 100); });
   return Math.max(0, base - ex);
 }
+function renderDmRunRate(){
+  var host = document.getElementById('dm-runrate'); if(!host) return;
+  var ap = (typeof getActiveProduct === 'function') ? getActiveProduct() : 'ginger';
+  var m = (typeof _dmModel !== 'undefined' && _dmModel) ? _dmModel : null;
+  if((ap !== 'ginger' && ap !== 'all') || !m || !(m.runRate13 > 0) || !Array.isArray(m.weeklyReliable)){ host.innerHTML = ''; return; }
+  var cl = m.caseLb || DM_CASE_LB;
+  var win = (typeof dmWindow === 'function') ? dmWindow() : 13;
+  var mode = (typeof dmWindowMode === 'function') ? dmWindowMode() : 'auto';
+  var rrLbs = { 3:(m.runRate3||m.runRate13), 6:(m.runRate6||m.runRate13), 13:m.runRate13 };
+  var rr = { 3:Math.round(rrLbs[3]/cl), 6:Math.round(rrLbs[6]/cl), 13:Math.round(rrLbs[13]/cl) };
+  var s = (typeof dmShiftState === 'function') ? dmShiftState(m) : null;
+  var esc = (typeof dmEsc === 'function') ? dmEsc : function(x){ return String(x); };
+  var fp = function(x){ return (x>=0?'+':'') + Math.round(x*100) + '%'; };
+  var wkNo = function(w){ return (typeof cxWeekNo === 'function') ? ('W'+cxWeekNo(w)) : String(w).slice(5); };
+  var modes = [['auto','Auto'],['3','3 wk'],['6','6 wk'],['13','13 wk']];
+  var seg = '<div class="dmrr-seg">' + modes.map(function(mm){ var on=(mode===mm[0]); return '<button type="button" onclick="dmSetWindow(\''+mm[0]+'\')" class="'+(on?'on':'')+'">'+mm[1]+(mm[0]==='auto'&&on?(' →'+win):'')+'</button>'; }).join('') + '</div>';
+  var rk = s ? s.k : 'steady', rc, rt;
+  if(rk==='accel'){ rc='amb'; rt='<b>Accelerating — confirmed.</b> 3-wk and 6-wk agree ('+fp(s.d3)+' / '+fp(s.d6)+'). Recommend planning on <b>6 wk</b> ('+rr[6].toLocaleString()+' cs). '+(win===6?'<b>✓ applied</b>':'<button type="button" class="dmrr-apply" onclick="dmSetWindow(\'6\')">Apply 6 wk</button>'); }
+  else if(rk==='cool'){ rc='grn'; rt='<b>Cooling — confirmed.</b> 3-wk and 6-wk agree ('+fp(s.d3)+' / '+fp(s.d6)+'). Safe direction — '+(mode==='auto'?('<b>auto-applied 6 wk</b> ('+rr[6].toLocaleString()+' cs).'):('consider 6 wk ('+rr[6].toLocaleString()+' cs).')); }
+  else if(rk==='watch'){ rc='amb'; rt='<b>Watch — not confirmed.</b> 3-wk moved '+fp(s.d3)+' but 6-wk has not followed. Likely one big order (e.g. Sol-ti), not a shift. No action.'; }
+  else if(rk==='mixed'){ rc='amb'; rt='<b>Mixed signal.</b> The short windows disagree — 3w '+fp(s.d3)+', 6w '+fp(s.d6)+' — typical of lumpy weeks. No clear trend; plan on 13 wk.'; }
+  else { rc='grn'; rt='<b>Steady.</b> The three windows agree — demand firm on the quarter. Plan on 13 wk.'; }
+  var wk = m.weeklyReliable.slice(-win);
+  var wc = wk.map(function(w){ return { l:wkNo(w.week), v:Math.round((w.lbs||0)/cl) }; });
+  var mx = Math.max.apply(null, wc.map(function(x){ return x.v; })) || 1;
+  var wksHtml = wc.map(function(x){ return '<div class="dmrr-wk"><div class="v">'+x.v.toLocaleString()+'</div><div class="bar" style="height:'+Math.round(x.v/mx*54+5)+'px"></div><div class="l">'+x.l+'</div></div>'; }).join('');
+  var sumC = wc.reduce(function(a,b){ return a+b.v; }, 0);
+  var avgC = wc.length ? Math.round(sumC / wc.length) : 0;      // exact average of the weeks SHOWN — the on-screen math always reconciles
+  var adj = rr[win] - avgC;                                     // gap to the plan number = manual run-rate override (0 in the common case; <=1 is rounding)
+  var bigRR = (Math.abs(adj) <= 1) ? avgC : rr[win];           // headline = the traceable number unless a real override moves it
+  var ovr = (Math.abs(adj) >= 2) ? (' <span style="color:#b45309;font-weight:600">'+(adj>0?'+':'')+adj.toLocaleString()+' manual override → <b>'+rr[win].toLocaleString()+'</b></span>') : '';
+  var mathHtml = (win<=6 ? ('( '+wc.map(function(x){ return x.v.toLocaleString(); }).join(' + ')+' ) ÷ '+wc.length+' = <b>'+avgC.toLocaleString()+' cs/wk</b>') : ('mean of these '+wc.length+' weekly totals = <b>'+avgC.toLocaleString()+' cs/wk</b>')) + ovr;
+  var key = win===3 ? 'rr3Cases' : win===6 ? 'rr6Cases' : 'rrCases';
+  var custs = (m.customers||[]).filter(function(c){ return c && c.c && ((c[key]||0) >= 1); }).sort(function(a,b){ return (b[key]||0)-(a[key]||0); });
+  var cmax = custs.length ? Math.max.apply(null, custs.map(function(c){ return c[key]||0; })) : 1;
+  var shown = custs.slice(0,8), tot=0; custs.forEach(function(c){ tot += Math.round(c[key]||0); });
+  var rows = shown.map(function(c){ var v=Math.round(c[key]||0); return '<tr><td class="l">'+esc(c.c)+(c.sporadic?'<span class="dmrr-od">ORDER-DRIVEN</span>':'')+'</td><td>'+v.toLocaleString()+'</td><td><span class="dmrr-barc" style="width:'+Math.round(v/cmax*100)+'px"></span></td></tr>'; }).join('');
+  var rest = custs.length - shown.length;
+  if(rest > 0){ var rv=0; custs.slice(8).forEach(function(c){ rv += Math.round(c[key]||0); }); rows += '<tr><td class="l" style="color:var(--gray-400)">+ '+rest+' smaller</td><td style="color:var(--gray-400)">'+rv.toLocaleString()+'</td><td></td></tr>'; }
+  rows += '<tr class="tot"><td class="l">Total</td><td>'+tot.toLocaleString()+'</td><td></td></tr>';
+  host.innerHTML = '<div class="card dmrr">'
+    + '<div class="dmrr-top"><div class="dmrr-k">Run-rate · what they buy per week</div>'+seg+'</div>'
+    + '<div class="dmrr-bigrow"><div class="dmrr-big">'+bigRR.toLocaleString()+'</div><div class="dmrr-u">cs/wk</div><div class="dmrr-role">'+(win===13?'13-week base':win===6?'6-week momentum':'3-week spot')+'</div></div>'
+    + '<div class="dmrr-rib '+rc+'">'+rt+'</div>'
+    + '<div class="dmrr-step"><div class="dmrr-h">Average of the '+win+' weeks it uses</div><div class="dmrr-wks">'+wksHtml+'</div><div class="dmrr-math">'+mathHtml+'</div></div>'
+    + '<div class="dmrr-step"><div class="dmrr-h">Built from these customers <span class="dmrr-hs">— each account’s run-rate in the window</span></div><table class="dmrr-tbl"><tbody>'+rows+'</tbody></table>'
+    + '<div class="dmrr-link" onclick="if(typeof switchTab===\'function\')switchTab(\'customers\')">See customer detail → <span class="dmrr-hs">margin, cadence, chart, overrides</span></div></div>'
+    + '</div>';
+}
+
 function renderBpScenarios(){
   var host = document.getElementById('bp-scenarios'); if(!host) return;
   var m = (typeof _dmModelG !== 'undefined' && _dmModelG) ? _dmModelG : null;
@@ -22212,26 +22280,47 @@ function renderDemand(){
   const host = document.getElementById('dm-body');
   if (!host) return;
   const m = _dmModel;
-  const cust = document.getElementById('dm-customers'); if (cust) cust.innerHTML = '';
   if (!m || !m.customers || !m.customers.length){
     host.innerHTML = dmZoneStyles() + dmEmptyStateHTML();
     dmRenderPulse();
-    renderDemandAccuracy();
-    if (typeof renderCommittedPanel === 'function') renderCommittedPanel(m);   // keep the Committed panel visible (empty-state hint) even before Sales data loads
+    if (typeof renderCommittedPanel === 'function') renderCommittedPanel(m);
     if (typeof renderBuildupPanel === 'function') renderBuildupPanel();
+    if (typeof renderCustomers === 'function') renderCustomers();
     return;
   }
   host.innerHTML = cxStyles() + dmZoneStyles()
-    + dmZoneLabel(3,'Overview','run-rate, clients, concentration &amp; margin')
-    + cxKpis(m)
+    + dmZoneLabel(3,'Run-rate','what they buy per week — traceable to weeks &amp; customers')
+    + '<div id="dm-runrate"></div>'
     + dmZoneLabel(4,'Trend &amp; Price','does price explain the move?')
-    + dmTrendPriceShell()
-    + dmZoneLabel(5,'Accounts','who\u2019s driving the focused product')
+    + dmTrendPriceShell();
+  dmRenderPulse();
+  dmRenderTrendPrice();
+  try { if (typeof renderDmRunRate === 'function') renderDmRunRate(); } catch(e){ console.warn('dm-runrate:', e); }
+  const dmws = host.querySelector('#dm-winsel');
+  if (dmws) dmws.addEventListener('click', e=>{ const b=e.target.closest('button'); if(!b) return; _dmWin=+b.dataset.w; dmws.querySelectorAll('button').forEach(x=>x.classList.toggle('on', x===b)); dmRenderTrendPrice(); });
+  if (typeof renderCommittedPanel === 'function') renderCommittedPanel(m);
+  if (typeof renderBuildupPanel === 'function') renderBuildupPanel();
+  if (typeof renderCustomers === 'function') renderCustomers();
+}
+
+function renderCustomers(){
+  const host = document.getElementById('cx-root');
+  if (!host) return;
+  const m = _dmModel;
+  const cov = document.getElementById('dm-customers');
+  if (!m || !m.customers || !m.customers.length){
+    host.innerHTML = cxStyles() + dmZoneStyles() + '<div class="card" style="padding:20px;color:var(--gray-500);font-size:13px">Load a <b>Sales By Account</b> report in the <b>Demand</b> tab to populate customer analytics.</div>';
+    if (cov) cov.innerHTML = '';
+    renderDemandAccuracy();
+    return;
+  }
+  host.innerHTML = cxStyles() + dmZoneStyles()
+    + dmZoneLabel(1,'Overview','clients, concentration &amp; margin')
+    + cxKpis(m)
+    + dmZoneLabel(2,'Accounts','every account — click a row for the 360')
     + '<div class="card" style="margin-bottom:14px;overflow:hidden">' + cxControls()
       + '<table class="cx-lst"><thead><tr id="cx-lh"></tr></thead><tbody id="cx-lb"></tbody></table></div>'
     + '<div class="card cx-detail" id="cx-detail"></div>';
-  dmRenderPulse();
-  dmRenderTrendPrice();
   cxRenderList();
   cxRenderDetail();
   const sortSeg = host.querySelector('#cx-sort');
@@ -22240,12 +22329,8 @@ function renderDemand(){
   if (fil) fil.addEventListener('click', e=>{ const b=e.target.closest('[data-f]'); if(!b) return; _cxState.filter=b.dataset.f; fil.querySelectorAll('[data-f]').forEach(x=>x.classList.toggle('on',x===b)); cxRenderList(); });
   const lb = host.querySelector('#cx-lb');
   if (lb) lb.addEventListener('click', e=>{ const tr=e.target.closest('tr'); if(!tr||!tr.dataset.c) return; _cxState.sel=tr.dataset.c; cxRenderList(); cxRenderDetail(); });
-  const dmws = host.querySelector('#dm-winsel');
-  if (dmws) dmws.addEventListener('click', e=>{ const b=e.target.closest('button'); if(!b) return; _dmWin=+b.dataset.w; dmws.querySelectorAll('button').forEach(x=>x.classList.toggle('on', x===b)); dmRenderTrendPrice(); });
-  if (cust) cust.innerHTML = dmZoneLabel(5,'Data coverage','captured vs dropped \u00b7 mixed-origin &amp; rolled-up rows listed here') + cxReconHTML(m) + cxNote(m);
+  if (cov) cov.innerHTML = dmZoneLabel(3,'Data coverage','captured vs dropped · mixed-origin &amp; rolled-up rows listed here') + cxReconHTML(m) + cxNote(m);
   renderDemandAccuracy();
-  if (typeof renderCommittedPanel === 'function') renderCommittedPanel(m);
-  if (typeof renderBuildupPanel === 'function') renderBuildupPanel();
 }
 
 // \u2500\u2500 COMMITTED ORDERS + DIRECT-SHIP \u2014 manual entry panel (Frente B0) \u2500\u2500\u2500\u2500
@@ -22426,7 +22511,7 @@ function renderBuildupPanel(){
   });
   var resid = weeks.map(function(w, i){ return Math.max(0, planTot[i] - colTot[i]); });
   var total = weeks.map(function(w, i){ return colTot[i] + resid[i]; });
-  var h = '<div class="card dbu">';
+  var h = dmZoneLabel(5,'Forward build-up','next 7 weeks \u2014 run-rate + committed, per customer') + '<div class="card dbu">';
   h += '<div class="dbu-hd"><div class="dbu-t">Demand build-up by customer</div><div class="dbu-s">How the projected weekly demand is built — invoiced run-rate + allocated (committed) orders. The column total is what the Buy Planner uses.</div></div>';
   h += '<div class="dbu-lg"><span><i class="sw a"></i>Allocated — real order placed</span><span><i class="sw r"></i>Run-rate — projected from history</span><span><b class="bd od">OD</b>order-driven <b class="bd st">ST</b>steady</span></div>';
   h += '<div class="dbu-wrap"><table class="dbu-tbl"><thead><tr><th class="c">Customer · run-rate</th>';
@@ -22847,6 +22932,33 @@ function cxStyles(){ return '<style>'
   + '.dbu-tbl tr.buy td{font-weight:700;color:var(--jlz);background:var(--jlz-light)}'
   + '.dbu-note{font-size:11px;color:var(--gray-500);line-height:1.6;margin-top:10px}'
   + '.dbu-note b{color:var(--gray-800)}'
+  + '.dmrr{padding:16px 18px}'
+  + '.dmrr-top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px}'
+  + '.dmrr-k{font-family:var(--fm);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--gray-500)}'
+  + '.dmrr-seg{display:inline-flex;border:1px solid var(--gray-200);border-radius:7px;overflow:hidden;font-family:var(--fm);font-size:11px}'
+  + '.dmrr-seg button{border:0;border-left:1px solid var(--gray-200);background:var(--white);color:var(--gray-600);padding:5px 12px;font-weight:600;cursor:pointer}'
+  + '.dmrr-seg button:first-child{border-left:0}.dmrr-seg button.on{background:var(--jlz);color:#fff}'
+  + '.dmrr-bigrow{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;margin-top:2px}'
+  + '.dmrr-big{font-family:Georgia,\'Times New Roman\',serif;font-size:38px;font-weight:700;color:var(--jlz);line-height:1;letter-spacing:-.02em}'
+  + '.dmrr-u{font-size:12px;color:var(--gray-500)}.dmrr-role{font-family:var(--fm);font-size:10px;color:var(--gray-400);margin-left:auto;text-transform:uppercase;letter-spacing:.05em}'
+  + '.dmrr-rib{border:1px solid;border-radius:7px;padding:8px 12px;font-size:12px;line-height:1.5;color:var(--gray-800);margin-top:11px}'
+  + '.dmrr-rib.amb{background:var(--amber-50);border-color:var(--amber-200)}.dmrr-rib.grn{background:var(--green-50);border-color:var(--green-100)}'
+  + '.dmrr-apply{border:0;border-radius:5px;background:var(--jlz);color:#fff;font:600 11px var(--fb);padding:3px 10px;cursor:pointer;margin-left:4px}'
+  + '.dmrr-step{margin-top:14px}'
+  + '.dmrr-h{font-family:var(--fm);font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--gray-400);margin-bottom:8px}'
+  + '.dmrr-hs{font-weight:400;text-transform:none;letter-spacing:0;color:var(--gray-400)}'
+  + '.dmrr-wks{display:flex;align-items:flex-end;gap:6px}'
+  + '.dmrr-wk{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px}'
+  + '.dmrr-wk .bar{width:100%;background:var(--jlz-light);border-radius:2px 2px 0 0;min-height:3px}'
+  + '.dmrr-wk .v{font-family:var(--fm);font-size:9px;font-weight:700;color:var(--gray-800)}.dmrr-wk .l{font-family:var(--fm);font-size:8px;color:var(--gray-400)}'
+  + '.dmrr-math{font-family:var(--fm);font-size:11.5px;color:var(--gray-500);margin-top:8px;padding-top:8px;border-top:1px dashed var(--gray-200)}.dmrr-math b{color:var(--gray-800)}'
+  + '.dmrr-tbl{width:100%;border-collapse:collapse;font-size:11.5px}'
+  + '.dmrr-tbl td{padding:5px 7px;border-bottom:1px solid var(--gray-100);text-align:right;font-family:var(--fm);color:var(--gray-800)}'
+  + '.dmrr-tbl td.l{text-align:left;font-family:var(--fb);font-weight:600;color:var(--gray-800)}'
+  + '.dmrr-tbl tr.tot td{border-top:1.5px solid var(--gray-200);font-weight:700;background:var(--gray-50);border-bottom:0}'
+  + '.dmrr-barc{display:inline-block;height:6px;border-radius:3px;background:var(--jlz);vertical-align:middle}'
+  + '.dmrr-od{font-family:var(--fm);font-size:7.5px;font-weight:700;color:#6d28d9;background:#ede9fe;border-radius:3px;padding:1px 4px;margin-left:5px}'
+  + '.dmrr-link{margin-top:9px;font-size:11px;color:var(--jlz);font-weight:600;cursor:pointer}'
   + '.cx-up{color:var(--green-600)}.cx-dn{color:var(--red-600)}.cx-fl{color:var(--gray-400)}'
   + '.cx-mg{display:inline-block;font-family:var(--fm);font-size:11px;font-weight:600;padding:1px 7px;border-radius:3px}.cx-mg.hi{background:var(--green-100);color:var(--green-700)}.cx-mg.mid{background:var(--amber-100);color:var(--amber-800)}.cx-mg.lo{background:var(--red-100);color:var(--red-700)}'
   + '.cx-detail{padding:0;margin-bottom:8px}'
