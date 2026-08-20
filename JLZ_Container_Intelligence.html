@@ -2633,6 +2633,7 @@ function authInjectLogo() {
     </style>
     <div id="dm-buildup" style="margin-top:18px"></div>
     <div id="dm-committed" style="margin-top:18px"></div>
+    <div id="dm-accuracy" style="margin-top:18px"></div>
   </div>
 </div>
 
@@ -2647,7 +2648,6 @@ function authInjectLogo() {
     </div>
     <div id="cx-root"></div>
     <div id="dm-customers" style="margin-top:18px"></div>
-    <div id="dm-accuracy" style="margin-top:18px"></div>
   </div>
 </div>
 
@@ -22275,6 +22275,7 @@ function renderDemand(){
     dmRenderPulse();
     if (typeof renderCommittedPanel === 'function') renderCommittedPanel(m);
     if (typeof renderBuildupPanel === 'function') renderBuildupPanel();
+    if (typeof renderDemandAccuracy === 'function') renderDemandAccuracy();
     if (typeof renderCustomers === 'function') renderCustomers();
     return;
   }
@@ -22290,6 +22291,7 @@ function renderDemand(){
   if (dmws) dmws.addEventListener('click', e=>{ const b=e.target.closest('button'); if(!b) return; _dmWin=+b.dataset.w; dmws.querySelectorAll('button').forEach(x=>x.classList.toggle('on', x===b)); dmRenderTrendPrice(); });
   if (typeof renderCommittedPanel === 'function') renderCommittedPanel(m);
   if (typeof renderBuildupPanel === 'function') renderBuildupPanel();
+  if (typeof renderDemandAccuracy === 'function') renderDemandAccuracy();
   if (typeof renderCustomers === 'function') renderCustomers();
 }
 
@@ -22301,7 +22303,6 @@ function renderCustomers(){
   if (!m || !m.customers || !m.customers.length){
     host.innerHTML = cxStyles() + dmZoneStyles() + '<div class="card" style="padding:20px;color:var(--gray-500);font-size:13px">Load a <b>Sales By Account</b> report in the <b>Demand</b> tab to populate customer analytics.</div>';
     if (cov) cov.innerHTML = '';
-    renderDemandAccuracy();
     return;
   }
   host.innerHTML = cxStyles() + dmZoneStyles()
@@ -22320,7 +22321,6 @@ function renderCustomers(){
   const lb = host.querySelector('#cx-lb');
   if (lb) lb.addEventListener('click', e=>{ const tr=e.target.closest('tr'); if(!tr||!tr.dataset.c) return; _cxState.sel=tr.dataset.c; cxRenderList(); cxRenderDetail(); });
   if (cov) cov.innerHTML = dmZoneLabel(3,'Data coverage','captured vs dropped · mixed-origin &amp; rolled-up rows listed here') + cxReconHTML(m) + cxNote(m);
-  renderDemandAccuracy();
 }
 
 // \u2500\u2500 COMMITTED ORDERS + DIRECT-SHIP \u2014 manual entry panel (Frente B0) \u2500\u2500\u2500\u2500
@@ -23069,13 +23069,13 @@ function renderDemandAccuracy(){
   const gpCase = (costLb!=null && sellLb) ? (sellLb-costLb)*cl : null;
   const landedCase = (costLb!=null) ? costLb*cl : null;
 
-  // Allocated/committed orders on the books (ginger only — committed store is ginger). Feeds the
-  // "how much to buy" side (section B); the reliability/margin metrics above stay on invoiced actuals.
+  // Allocated/committed orders on the books, for the focused product (committed store is product-keyed).
+  // Feeds the "how much to buy" side (section B); the reliability/margin metrics above stay on invoiced actuals.
   let committedCs = 0, committedWks = 0, committedNearWk = 0;
-  if (fp === 'ginger' && typeof getCommitted === 'function' && typeof dmWeekKey === 'function') {
+  if (typeof getCommitted === 'function' && typeof dmWeekKey === 'function') {
     const _monNow = dmWeekKey(new Date());
     const _byWk = {};
-    getCommitted().forEach(function(x){ if (x && x.wk && x.wk >= _monNow && _cmProd(x) === 'ginger') _byWk[x.wk] = (_byWk[x.wk] || 0) + (+x.cases || 0); });
+    getCommitted().forEach(function(x){ if (x && x.wk && x.wk >= _monNow && _cmProd(x) === fp) _byWk[x.wk] = (_byWk[x.wk] || 0) + (+x.cases || 0); });
     const _wks = Object.keys(_byWk).sort();
     committedWks = _wks.length;
     committedCs = _wks.reduce(function(s,w){ return s + _byWk[w]; }, 0);
@@ -23098,7 +23098,7 @@ function renderDemandAccuracy(){
   const realMgBadge = (realMg==null) ? '<span class="dm-bd soon">needs upload</span>'
     : '<span class="dm-bd '+(realMg>=10?'good':realMg>=4?'warn':'bad')+'">'+realMg.toFixed(1)+'%</span>';
 
-  host.innerHTML = dmZoneLabel(6,'Buy confidence','demand reliability \u2192 how much to buy \u2192 real margin \u00b7 '+cxEsc(meta.label)) +
+  host.innerHTML = dmZoneLabel(7,'Buy confidence','demand reliability \u2192 how much to buy \u2192 real margin \u00b7 '+cxEsc(meta.label)) +
     '<div class="dm-card">'
     + '<div class="dm-ch"><span class="dm-accent" style="background:'+meta.accent+'"></span><span class="ttl">'+cxEsc(meta.label)+' \u2014 buy confidence</span></div>'
     + '<div class="dm-cb">'
@@ -23123,11 +23123,13 @@ function renderDemandAccuracy(){
       + '</div>'
       + ((scan.dispCases>0)?'<div class="dm-foot" style="margin-top:6px">Also donated / written off (52 wks): '+f0(scan.dispCases)+' cs ('+money0(scan.dispCost)+' at cost) \u2014 tracked separately from clearance.</div>':'')
       + '<div class="dm-foot" style="margin-top:10px">Buy target comes from the <b>Buy Planner</b> (lead time + service level); this panel sizes the <b>confidence band</b> around it and the <b>ceiling</b> shelf life imposes. <b>Committed (allocated) orders</b> size the buy for weeks that have them; the reliability and real-margin figures above stay on <b>invoiced</b> sales \u2014 committed orders have no realized shrink or forecast error yet. The over-buy figure is <b>realized</b> \u2014 below-cost clearance, not a hypothetical.</div>'
-      + '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--gray-100)">'
-        + '<button class="btn" id="dm-snap-btn" onclick="dmSaveForecast()">Save this week\u2019s forecast</button>'
-        + '<span style="font-size:11px;color:var(--gray-500);font-family:var(--fm)" id="dm-accuracy-live">\u2026</span>'
-        + '<span style="font-size:10px;color:var(--gray-400);font-family:var(--fm)">Log each Monday to score real accuracy over time (append-only).</span>'
-      + '</div>'
+      + (fp === 'ginger'
+          ? ('<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--gray-100)">'
+             + '<button class="btn" id="dm-snap-btn" onclick="dmSaveForecast()">Save this week\u2019s forecast</button>'
+             + '<span style="font-size:11px;color:var(--gray-500);font-family:var(--fm)" id="dm-accuracy-live">\u2026</span>'
+             + '<span style="font-size:10px;color:var(--gray-400);font-family:var(--fm)">Log each Monday to score real accuracy over time (append-only).</span>'
+             + '</div>')
+          : ('<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--gray-100);font-size:10px;color:var(--gray-400);font-family:var(--fm)">Real-accuracy logging is ginger-only for now \u2014 the forecast log needs a product column. The backtest above is live for ' + cxEsc(meta.label) + '.</div>'))
     + '</div></div>';
   dmPullAccuracy();
 }
@@ -23135,11 +23137,19 @@ function renderDemandAccuracy(){
 async function dmSaveForecast(){
   const gasUrl = (typeof getGasUrl === 'function') ? getGasUrl() : null;
   if (!gasUrl){ alert('No backend configured.'); return; }
-  if (!_dmModelG || !_dmModelG.runRate13){ alert('Load Demand data first.'); return; }
-  const horizonWk = (typeof bpGetLeadTimes === 'function') ? Math.round((bpGetLeadTimes().sea_total||37)/7) : 5;
+  const fp = (typeof productFocus === 'function') ? productFocus() : 'ginger';
+  const _m = (fp === 'ginger') ? (typeof _dmModelG !== 'undefined' ? _dmModelG : null) : (typeof _dmModel !== 'undefined' ? _dmModel : null);
+  if (!_m || !_m.runRate13){ alert('Load Demand data first.'); return; }
+  let horizonWk;
+  if (fp === 'ginger') {
+    horizonWk = (typeof bpGetLeadTimes === 'function') ? Math.round((bpGetLeadTimes().sea_total||37)/7) : 5;
+  } else {
+    let _lead = 0; if (typeof PRODUCTS === 'object' && PRODUCTS[fp] && PRODUCTS[fp].suppliers) PRODUCTS[fp].suppliers.forEach(function(sp){ if ((sp.leadDays||0) > _lead) _lead = sp.leadDays; });
+    horizonWk = Math.max(1, Math.round(_lead / 7));
+  }
   const sl = parseInt(document.getElementById('bp-service-level')?.value || '95');
   const today = new Date().toISOString().slice(0,10);
-  const row = [ today, horizonWk, Math.round(_dmModelG.runRate13), sl, 'recency-runrate-13', 'auto' ];
+  const row = [ today, horizonWk, Math.round(_m.runRate13), sl, 'recency-runrate-13', 'auto', fp ];   // product = LAST column (add it to the sheet)
   const btn = document.getElementById('dm-snap-btn');
   if (btn) btn.textContent = 'Saving\u2026';
   if (typeof markSyncStart === 'function') markSyncStart();
@@ -23159,7 +23169,9 @@ async function dmPullAccuracy(){
   if (!gasUrl || typeof jsonpGet !== 'function'){ host.textContent = ''; return; }
   try {
     const data = await jsonpGet(gasUrl, { action:'listForecasts' });
-    const fc = (data && Array.isArray(data.forecasts)) ? data.forecasts : [];
+    const fpp = (typeof productFocus === 'function') ? productFocus() : 'ginger';
+    const fcAll = (data && Array.isArray(data.forecasts)) ? data.forecasts : [];
+    const fc = fcAll.filter(function(f){ return ((f.product || 'ginger') === fpp); });   // this product's forecasts only (legacy rows = ginger)
     const weekly = (_dmModel && Array.isArray(_dmModel.weekly)) ? _dmModel.weekly : [];
     const actualByWeek = {}; weekly.forEach(w => { actualByWeek[w.week] = w.lbs; });
     const matured = [];
