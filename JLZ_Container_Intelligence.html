@@ -11450,12 +11450,16 @@ function saveCommitted(arr) {
   try { localStorage.setItem('jlz_committed_v1', JSON.stringify(arr || [])); }
   catch(e) { console.error('saveCommitted failed:', e); }
 }
+// Product of a committed entry. Rows written before multi-product support have no
+// `product` field → they are ginger (the store was ginger-only). NEVER change this
+// default: the ginger buy plan depends on legacy rows still counting as ginger.
+function _cmProd(c) { return (c && c.product) || 'ginger'; }
 // Add a warehouse-committed order. cases coerced to a positive integer.
-function addCommitted(customer, wk, cases) {
+function addCommitted(customer, wk, cases, product) {
   var n = Math.round(Number(cases) || 0);
   if(!customer || !wk || n <= 0) return getCommitted();
   var all = getCommitted();
-  all.push({ customer: String(customer), wk: String(wk), cases: n, type: 'inv', source: 'manual' });
+  all.push({ customer: String(customer), wk: String(wk), cases: n, type: 'inv', source: 'manual', product: product || 'ginger' });
   saveCommitted(all);
   return all;
 }
@@ -11465,8 +11469,9 @@ function removeCommitted(idx) {
   return all;
 }
 // Σ warehouse-committed cases for a week key (per-customer entries summed).
-function committedInvForWeek(wk) {
-  return getCommitted().reduce(function(s, c){ return s + ((c.wk === wk && c.type === 'inv') ? (c.cases || 0) : 0); }, 0);
+function committedInvForWeek(wk, product) {
+  var p = product || 'ginger';
+  return getCommitted().reduce(function(s, c){ return s + ((c.wk === wk && c.type === 'inv' && _cmProd(c) === p) ? (c.cases || 0) : 0); }, 0);
 }
 // Hybrid weekly sales demand (raw cases, pre-shrink). Starts from the run-rate baseline (salesDemand)
 // and adjusts per account:
@@ -11476,13 +11481,14 @@ function committedInvForWeek(wk) {
 //    their committed for this specific week — its average is not projected in the weeks it didn't order.
 //  · Accounts committed but unknown to the model: add their full committed (they're not in the baseline).
 // The caller applies the shrink inflation (weeklyDemand = salesDemand × 1/(1-shrink)) to the result.
-function hybridSalesForWeek(wk, salesDemand, model) {
+function hybridSalesForWeek(wk, salesDemand, model, product) {
   var custs = (model && model.customers) || null;
   if (!custs) return null;   // no model → caller falls back to legacy max()
   // committed for THIS week per customer, and each customer's LAST committed week (its "known horizon")
   var comThis = {}, comLast = {};
+  var _hp = product || 'ginger';
   getCommitted().forEach(function(c){
-    if (!c || c.type !== 'inv' || !c.wk) return;
+    if (!c || c.type !== 'inv' || !c.wk || _cmProd(c) !== _hp) return;
     if (c.wk === wk) comThis[c.customer] = (comThis[c.customer] || 0) + (+c.cases || 0);
     if (!comLast[c.customer] || c.wk > comLast[c.customer]) comLast[c.customer] = c.wk;
   });
@@ -11573,7 +11579,7 @@ function parseOpenOrders(rows, fulfilledMax) {
     var stale = !!(staleISO && iso < staleISO);
     var pending = !stale && !!(fulfilledMax && iso <= fulfilledMax);
     if(stale) st.stale++; else if(pending) st.pending++;
-    out.push({ customer: cust, wk: wk, cases: qty, type: 'inv', source: 'import', orderNo: String(r['Order No'] || ''), sku: sku, pending: pending, stale: stale });
+    out.push({ customer: cust, wk: wk, cases: qty, type: 'inv', source: 'import', orderNo: String(r['Order No'] || ''), sku: sku, pending: pending, stale: stale, product: 'ginger' });
     st.kept++;
   });
   return { entries: out, stats: st };
@@ -21554,7 +21560,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
   try {
     if ((typeof productFocus !== 'function' || productFocus() === 'ginger') && typeof getCommitted === 'function') {
       getCommitted().forEach(function(x){
-        if (!x || !x.customer || !x.wk) return;
+        if (!x || !x.customer || !x.wk || _cmProd(x) !== 'ginger') return;
         _committedCust[x.customer] = true;
         const d = x.wk > _todayISO ? _todayISO : x.wk;
         if (!_committedLast[x.customer] || d > _committedLast[x.customer]) _committedLast[x.customer] = d;
@@ -22037,7 +22043,7 @@ function dmMondayISO(ds) {
 function dmForwardWeeks(afterWk) {
   var byWk = {};
   (typeof getCommitted === 'function' ? getCommitted() : []).forEach(function(c) {
-    if(!c || c.type !== 'inv' || !c.wk) return;
+    if(!c || c.type !== 'inv' || !c.wk || _cmProd(c) !== 'ginger') return;
     (byWk[c.wk] = byWk[c.wk] || { committed:0, direct:0 }).committed += (c.cases || 0);
   });
   (typeof getOrders === 'function' ? getOrders() : []).forEach(function(o) {
@@ -22351,46 +22357,57 @@ function dmcWeekLabel(wk) {
 }
 function renderCommittedPanel(model) {
   var host = document.getElementById('dm-committed'); if(!host) return;
-  if(typeof productFocus === 'function' && productFocus() !== 'ginger'){ host.innerHTML = ''; return; }   // committed orders mirror the ginger buy plan — ginger only for now
+  var prod = (typeof productFocus === 'function') ? productFocus() : 'ginger';
+  var isG = (prod === 'ginger');
+  if(_dmcType === 'direct' && !isG) _dmcType = 'inv';   // direct-ship (from a port container) is ginger-only
+  var pl = (typeof productLabel === 'function') ? productLabel(prod) : prod;
   var m = model || (typeof _dmModel !== 'undefined' ? _dmModel : null);
   var custs = dmcCustomers(m);
   var futures = (typeof bpFutureWeeks === 'function') ? bpFutureWeeks(11).slice(1) : [];  // next 10 weeks (skip the current, still-open week)
-  var arriving = dmcArrivingOrders();
-  var zone = '<div class="dm-zl"><span class="n">6</span><span class="t">Committed orders</span><span class="h">sold, not yet shipped \u00b7 feeds the buying plan</span></div>';
+  var arriving = isG ? dmcArrivingOrders() : [];
+  var zone = '<div class="dm-zl"><span class="n">6</span><span class="t">Committed orders</span><span class="h">sold, not yet shipped · feeds the ' + (isG ? 'buying plan' : libEsc(pl) + ' build-up') + '</span></div>';
   if(!custs.length) {
     host.innerHTML = zone + '<div class="dmc-card"><div class="dmc-empty">Load a <b>Sales</b> report at the top of this tab to pick customers, then add committed orders here.</div></div>';
     return;
   }
   var opt = function(v, lab, extra) { return '<option value="' + libEsc(v) + '"' + (extra || '') + '>' + libEsc(lab) + '</option>'; };
+  var importBlock = isG
+    ? ('<div class="dmc-h">Import open orders</div>'
+       + '<div class="dmc-hint">Upload WholesaleWare’s <b>Unshipped Sales Order Report</b> (.xlsx/.csv) — or the SKU sheet. Auto-fills committed Peru ginger 30LB; strays before the data cutoff and your manual entries stay clean.</div>'
+       + '<input type="file" id="dmc-import-file" accept=".xlsx,.xls" onchange="dmcImportFile(this)" style="font-size:12px;width:100%"/>'
+       + (window._dmcImportMsg ? '<div style="font-size:11px;color:var(--jlz);background:var(--jlz-light);border-radius:var(--r);padding:6px 9px;margin-top:6px;line-height:1.5">' + window._dmcImportMsg + '</div>' : '')
+       + '<div style="height:1px;background:var(--gray-200);margin:14px 0"></div>')
+    : ('<div class="dmc-hint" style="margin-bottom:12px">Auto-import is ginger-only for now. Add ' + libEsc(pl) + ' committed orders manually below.</div>');
+  var shipBlock = isG
+    ? ('<label class="dmc-l">How does it ship?</label><div class="dmc-seg">'
+       + '<button type="button" class="dmc-segb' + (_dmcType === 'inv' ? ' on' : '') + '" data-t="inv">From warehouse</button>'
+       + '<button type="button" class="dmc-segb' + (_dmcType === 'direct' ? ' on' : '') + '" data-t="direct">Direct-ship from port</button></div>'
+       + '<div id="dmc-cwrap" style="display:' + (_dmcType === 'direct' ? 'block' : 'none') + '"><label class="dmc-l">From which container?</label>'
+       + (arriving.length
+           ? '<select class="dmc-in" id="dmc-cont">' + arriving.map(function(o){ var wk = dmcOrderEtaWk(o); return opt(o.jlzPo, 'PO ' + o.jlzPo + ' — arrives ' + dmcWeekLabel(wk) + (o.supplier ? ' · ' + o.supplier : ''), ' data-wk="' + wk + '"'); }).join('') + '</select>'
+              + '<div class="dmc-hint">The week is set by the container’s arrival.</div>'
+           : '<div class="dmc-hint">No in-transit containers in the Orders pipeline yet.</div>') + '</div>')
+    : '';
   var html = '<div class="dmc-cols"><div class="dmc-col">'
-    + '<div class="dmc-h">Import open orders</div>'
-    + '<div class="dmc-hint">Upload WholesaleWare’s <b>Unshipped Sales Order Report</b> (.xlsx/.csv) — or the SKU sheet. Auto-fills committed Peru ginger 30LB; strays before the data cutoff and your manual entries stay clean.</div>'
-    + '<input type="file" id="dmc-import-file" accept=".xlsx,.xls" onchange="dmcImportFile(this)" style="font-size:12px;width:100%"/>'
-    + (window._dmcImportMsg ? '<div style="font-size:11px;color:var(--jlz);background:var(--jlz-light);border-radius:var(--r);padding:6px 9px;margin-top:6px;line-height:1.5">' + window._dmcImportMsg + '</div>' : '')
-    + '<div style="height:1px;background:var(--gray-200);margin:14px 0"></div>'
+    + importBlock
     + '<div class="dmc-h">Add a committed order</div>'
-    + '<div class="dmc-hint">An order you\u2019ve already sold but not shipped.</div>'
+    + '<div class="dmc-hint">An order you’ve already sold but not shipped.</div>'
     + '<label class="dmc-l">Customer</label><select class="dmc-in" id="dmc-cust">' + custs.map(function(c){ return opt(c, c); }).join('') + '</select>'
     + '<div class="dmc-row2"><div><label class="dmc-l">Week</label><select class="dmc-in" id="dmc-week">'
-      + futures.map(function(f){ return opt(f.weekStartISO, dmcWeekLabel(f.weekStartISO) + ' \u00b7 ' + f.week); }).join('') + '</select></div>'
+      + futures.map(function(f){ return opt(f.weekStartISO, dmcWeekLabel(f.weekStartISO) + ' · ' + f.week); }).join('') + '</select></div>'
       + '<div><label class="dmc-l">Cases</label><input class="dmc-in" id="dmc-cases" type="number" min="1" step="1" value="300"/></div></div>'
-    + '<label class="dmc-l">How does it ship?</label><div class="dmc-seg">'
-      + '<button type="button" class="dmc-segb' + (_dmcType === 'inv' ? ' on' : '') + '" data-t="inv">From warehouse</button>'
-      + '<button type="button" class="dmc-segb' + (_dmcType === 'direct' ? ' on' : '') + '" data-t="direct">Direct-ship from port</button></div>'
-    + '<div id="dmc-cwrap" style="display:' + (_dmcType === 'direct' ? 'block' : 'none') + '"><label class="dmc-l">From which container?</label>'
-      + (arriving.length
-          ? '<select class="dmc-in" id="dmc-cont">' + arriving.map(function(o){ var wk = dmcOrderEtaWk(o); return opt(o.jlzPo, 'PO ' + o.jlzPo + ' \u2014 arrives ' + dmcWeekLabel(wk) + (o.supplier ? ' \u00b7 ' + o.supplier : ''), ' data-wk="' + wk + '"'); }).join('') + '</select>'
-             + '<div class="dmc-hint">The week is set by the container\u2019s arrival.</div>'
-          : '<div class="dmc-hint">No in-transit containers in the Orders pipeline yet.</div>') + '</div>'
-    + '<button type="button" class="dmc-add" id="dmc-add"' + ((_dmcType === 'direct' && !arriving.length) ? ' disabled' : '') + '>Add committed order</button>'
+    + shipBlock
+    + '<button type="button" class="dmc-add" id="dmc-add"' + ((isG && _dmcType === 'direct' && !arriving.length) ? ' disabled' : '') + '>Add committed order</button>'
     + '</div><div class="dmc-col"><div class="dmc-h">On file</div><div id="dmc-chips" class="dmc-chips"></div></div></div>';
   host.innerHTML = zone + '<div class="dmc-card">' + html + '</div>';
-  dmcApplyType();
+  if(isG) dmcApplyType();
   dmcRenderChips();
-  var seg = host.querySelector('.dmc-seg');
-  if(seg) seg.addEventListener('click', function(e){ var b = e.target.closest('button'); if(b) dmcSetType(b.dataset.t); });
+  if(isG){
+    var seg = host.querySelector('.dmc-seg');
+    if(seg) seg.addEventListener('click', function(e){ var b = e.target.closest('button'); if(b) dmcSetType(b.dataset.t); });
+    var cont = host.querySelector('#dmc-cont'); if(cont) cont.addEventListener('change', dmcApplyType);
+  }
   var add = host.querySelector('#dmc-add'); if(add) add.addEventListener('click', dmcAdd);
-  var cont = host.querySelector('#dmc-cont'); if(cont) cont.addEventListener('change', dmcApplyType);
 }
 function dmcSetType(t) { _dmcType = (t === 'direct') ? 'direct' : 'inv'; dmcApplyType(); }
 function dmcApplyType() {
@@ -22408,36 +22425,41 @@ function dmcApplyType() {
 }
 function dmcAdd() {
   var host = document.getElementById('dm-committed'); if(!host) return;
+  var prod = (typeof productFocus === 'function') ? productFocus() : 'ginger';
   var cust = (host.querySelector('#dmc-cust') || {}).value;
   var cases = parseInt((host.querySelector('#dmc-cases') || {}).value, 10);
   if(!cust || !cases || cases < 1) return;
-  if(_dmcType === 'direct') {
+  if(_dmcType === 'direct' && prod === 'ginger') {
     var cont = host.querySelector('#dmc-cont'); if(!cont || !cont.value) return;
     addDirectShip(cont.value, cust, cases);      // week derived from the container's ETA
   } else {
     var wk = (host.querySelector('#dmc-week') || {}).value; if(!wk) return;
-    addCommitted(cust, wk, cases);
+    addCommitted(cust, wk, cases, prod);
   }
   renderCommittedPanel();
   if(typeof renderBuildupPanel === 'function') renderBuildupPanel();
 }
 function dmcRenderChips() {
   var box = document.getElementById('dmc-chips'); if(!box) return;
+  var prod = (typeof productFocus === 'function') ? productFocus() : 'ginger';
   var html = '';
   getCommitted().forEach(function(c, i) {
-    var tag = c.stale ? '<span class="dmc-tag stale" title="Badly overdue and still open \u2014 likely a stray. Still counted; remove with \u00d7 if it is dead.">stale \u00b7 review</span>'
-            : c.pending ? '<span class="dmc-tag pending" title="Fulfillment date has passed but no invoice yet \u2014 still counted in demand, just awaiting invoice.">pending invoice</span>'
+    if(_cmProd(c) !== prod) return;                 // this product only; i stays the true array index for removal
+    var tag = c.stale ? '<span class="dmc-tag stale" title="Badly overdue and still open — likely a stray. Still counted; remove with × if it is dead.">stale · review</span>'
+            : c.pending ? '<span class="dmc-tag pending" title="Fulfillment date has passed but no invoice yet — still counted in demand, just awaiting invoice.">pending invoice</span>'
             : '<span class="dmc-tag">from warehouse</span>';
-    html += '<div class="dmc-chip' + (c.stale ? ' cst' : (c.pending ? ' cpe' : '')) + '"><span><b>' + libEsc(c.customer) + '</b> \u00b7 ' + dmcWeekLabel(c.wk) + ' \u00b7 ' + c.cases + ' cs ' + tag + '</span>'
-      + '<button class="dmc-rm" onclick="dmcRemoveInv(' + i + ')" title="Remove">\u00d7</button></div>';
+    html += '<div class="dmc-chip' + (c.stale ? ' cst' : (c.pending ? ' cpe' : '')) + '"><span><b>' + libEsc(c.customer) + '</b> · ' + dmcWeekLabel(c.wk) + ' · ' + c.cases + ' cs ' + tag + '</span>'
+      + '<button class="dmc-rm" onclick="dmcRemoveInv(' + i + ')" title="Remove">×</button></div>';
   });
-  (typeof getOrders === 'function' ? getOrders() : []).forEach(function(o) {
-    if(!o || !Array.isArray(o.directShip)) return;
-    o.directShip.forEach(function(d, i) {
-      html += '<div class="dmc-chip"><span><b>' + libEsc(d.customer) + '</b> \u00b7 ' + libEsc(o.jlzPo) + ' \u00b7 ' + d.cases + ' cs <span class="dmc-tag direct">direct-ship</span></span>'
-        + '<button class="dmc-rm" onclick="dmcRemoveDirect(\'' + docJs(o.jlzPo) + '\',' + i + ')" title="Remove">\u00d7</button></div>';
+  if(prod === 'ginger'){
+    (typeof getOrders === 'function' ? getOrders() : []).forEach(function(o) {
+      if(!o || !Array.isArray(o.directShip)) return;
+      o.directShip.forEach(function(d, i) {
+        html += '<div class="dmc-chip"><span><b>' + libEsc(d.customer) + '</b> · ' + libEsc(o.jlzPo) + ' · ' + d.cases + ' cs <span class="dmc-tag direct">direct-ship</span></span>'
+          + '<button class="dmc-rm" onclick="dmcRemoveDirect(\'' + docJs(o.jlzPo) + '\',' + i + ')" title="Remove">×</button></div>';
+      });
     });
-  });
+  }
   box.innerHTML = html || '<div class="dmc-hint">Nothing committed yet.</div>';
 }
 function dmcRemoveInv(i) { removeCommitted(i); renderCommittedPanel(); if(typeof renderBuildupPanel==='function') renderBuildupPanel(); }
@@ -22451,22 +22473,34 @@ function dmcRemoveDirect(po, i) { removeDirectShip(po, i); renderCommittedPanel(
 // ginger). Reads _dmModelG so it matches the Buy Planner, not the focused view.
 function renderBuildupPanel(){
   var host = document.getElementById('dm-buildup'); if(!host) return;
-  var ap = (typeof getActiveProduct === 'function') ? getActiveProduct() : 'ginger';
-  var m = (typeof _dmModelG !== 'undefined' && _dmModelG) ? _dmModelG : null;
-  if ((ap !== 'ginger' && ap !== 'all') || !m || !Array.isArray(m.customers) || !m.customers.length
+  var prod = (typeof productFocus === 'function') ? productFocus() : 'ginger';
+  var isG = (prod === 'ginger');
+  var m = isG ? ((typeof _dmModelG !== 'undefined' && _dmModelG) ? _dmModelG : null)
+             : ((typeof _dmModel !== 'undefined' && _dmModel) ? _dmModel : null);
+  if (!m || !Array.isArray(m.customers) || !m.customers.length
       || typeof bpFutureWeeks !== 'function' || typeof hybridSalesForWeek !== 'function'){ host.innerHTML = ''; return; }
   var caseLb = m.caseLb || DM_CASE_LB;
   var weeks = bpFutureWeeks(8).slice(1, 8);   // next ~7 weeks, skip the current still-open week
   if(!weeks.length){ host.innerHTML = ''; return; }
-  var salesBase = (typeof dmEffectiveRunRateLbs === 'function' && dmEffectiveRunRateLbs() != null)
-    ? (dmEffectiveRunRateLbs() / caseLb) : (m.runRate13 / caseLb);
-  // Warehouse-buy inflation = the Buy Planner's OWN factor (time-based shrink), so the
-  // "Buy" row matches the plan exactly. Falls back to a flat 14% only before the plan renders.
+  var _win = (typeof dmWindow === 'function') ? dmWindow(prod) : 13;
+  var salesBase;
+  if (isG) {
+    salesBase = (typeof dmEffectiveRunRateLbs === 'function' && dmEffectiveRunRateLbs() != null)
+      ? (dmEffectiveRunRateLbs() / caseLb) : (m.runRate13 / caseLb);
+  } else {
+    var _rrW = (_win === 3 ? (m.runRate3 || m.runRate13) : _win === 6 ? (m.runRate6 || m.runRate13) : m.runRate13);
+    salesBase = _rrW / caseLb;
+  }
+  // Buy-inflation. Ginger uses the Buy Planner's OWN time-based shrink so the "Buy" row
+  // matches the plan exactly. Other products use their (placeholder) shrink %, clearly flagged.
   var _bpd = (typeof window !== 'undefined') ? window._bpDigest : null;
-  var infl = (_bpd && _bpd.salesDemand > 0 && _bpd.weeklyDemand > 0) ? (_bpd.weeklyDemand / _bpd.salesDemand) : (1 / 0.86);
+  var _shrinkPct = ((typeof PRODUCTS === 'object' && PRODUCTS[prod] && PRODUCTS[prod].shrinkPct) || 0);
+  var infl = isG
+    ? ((_bpd && _bpd.salesDemand > 0 && _bpd.weeklyDemand > 0) ? (_bpd.weeklyDemand / _bpd.salesDemand) : (1 / 0.86))
+    : (1 / (1 - _shrinkPct / 100));
   var com = {}, comLast = {};
   (typeof getCommitted === 'function' ? getCommitted() : []).forEach(function(c){
-    if(!c || c.type !== 'inv' || !c.wk) return;
+    if(!c || c.type !== 'inv' || !c.wk || _cmProd(c) !== prod) return;
     (com[c.wk] = com[c.wk] || {})[c.customer] = (com[c.wk][c.customer] || 0) + (+c.cases || 0);
     if(!comLast[c.customer] || c.wk > comLast[c.customer]) comLast[c.customer] = c.wk;
   });
@@ -22486,7 +22520,7 @@ function renderBuildupPanel(){
                          .sort(function(a,b){ return (b.rrCases || 0) - (a.rrCases || 0); });
   var esc = (typeof dmEsc === 'function') ? dmEsc : function(s){ return String(s); };
   function shortD(iso){ try { return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(e){ return iso; } }
-  var planTot = weeks.map(function(w){ try { return Math.round(hybridSalesForWeek(w.weekStartISO, salesBase, m) || 0); } catch(e){ return 0; } });
+  var planTot = weeks.map(function(w){ try { return Math.round(hybridSalesForWeek(w.weekStartISO, salesBase, m, prod) || 0); } catch(e){ return 0; } });
   var colTot = weeks.map(function(){ return 0; });
   var body = '';
   shown.forEach(function(c){
@@ -22496,8 +22530,10 @@ function renderBuildupPanel(){
   });
   var resid = weeks.map(function(w, i){ return Math.max(0, planTot[i] - colTot[i]); });
   var total = weeks.map(function(w, i){ return colTot[i] + resid[i]; });
-  var h = dmZoneLabel(5,'Forward build-up','next 7 weeks \u2014 run-rate + committed, per customer') + '<div class="card dbu">';
-  h += '<div class="dbu-hd"><div class="dbu-t">Demand build-up by customer</div><div class="dbu-s">How the projected weekly demand is built — invoiced run-rate + allocated (committed) orders. The column total is what the Buy Planner uses.</div></div>';
+  var pl = (typeof productLabel === 'function') ? productLabel(prod) : prod;
+  var usesLine = isG ? 'The column total is what the Buy Planner uses.' : ('The column total is your weekly ' + esc(pl) + ' demand — buy to it.');
+  var h = dmZoneLabel(5,'Forward build-up','next 7 weeks — run-rate + committed, per customer') + '<div class="card dbu">';
+  h += '<div class="dbu-hd"><div class="dbu-t">Demand build-up by customer</div><div class="dbu-s">How the projected weekly demand is built — invoiced run-rate + allocated (committed) orders. ' + usesLine + '</div></div>';
   h += '<div class="dbu-lg"><span><i class="sw a"></i>Allocated — real order placed</span><span><i class="sw r"></i>Run-rate — projected from history</span><span><b class="bd od">OD</b>order-driven <b class="bd st">ST</b>steady</span></div>';
   h += '<div class="dbu-wrap"><table class="dbu-tbl"><thead><tr><th class="c">Customer · run-rate</th>';
   weeks.forEach(function(w){ h += '<th>W' + w.weekNum + '<br><span>' + shortD(w.weekStartISO) + '</span></th>'; });
@@ -22509,10 +22545,13 @@ function renderBuildupPanel(){
   }
   h += '<tr class="tot"><td class="c">TOTAL · sales cases</td>';
   total.forEach(function(t){ h += '<td>' + t.toLocaleString() + '</td>'; });
-  h += '</tr><tr class="buy"><td class="c">Buy · with shrink</td>';
+  h += '</tr><tr class="buy"><td class="c">Buy · with shrink' + (isG ? '' : '*') + '</td>';
   total.forEach(function(t){ h += '<td>' + Math.round(t * infl).toLocaleString() + '</td>'; });
   h += '</tr></tbody></table></div>';
-  h += '<div class="dbu-note"><b>How to read.</b> Each cell is what the plan buys for that customer that week. <b>Order-driven (OD)</b> accounts show their committed order in the weeks they order and resume their run-rate past their last committed week; <b>steady (ST)</b> accounts show their run-rate every week, lifted only when a commitment exceeds it. <b>TOTAL</b> is the sales the plan targets (pre-shrink); <b>Buy</b> adds shrink for warehouse outflow — the same time-based rate the Buy Planner uses, so the two match.</div>';
+  var buyNote = isG
+    ? '<b>TOTAL</b> is the sales the plan targets (pre-shrink); <b>Buy</b> adds shrink for warehouse outflow — the same time-based rate the Buy Planner uses, so the two match.'
+    : '<b>TOTAL</b> is the sales you target (pre-shrink); <b>Buy*</b> adds a <b>placeholder</b> shrink of ' + _shrinkPct + '% for ' + esc(pl) + ' — to be confirmed with warehouse data.';
+  h += '<div class="dbu-note"><b>How to read.</b> Each cell is what you buy for that customer that week. <b>Order-driven (OD)</b> accounts show their committed order in the weeks they order and resume their run-rate past their last committed week; <b>steady (ST)</b> accounts show their run-rate every week, lifted only when a commitment exceeds it. ' + buyNote + '</div>';
   h += '</div>';
   host.innerHTML = h;
 }
@@ -23036,7 +23075,7 @@ function renderDemandAccuracy(){
   if (fp === 'ginger' && typeof getCommitted === 'function' && typeof dmWeekKey === 'function') {
     const _monNow = dmWeekKey(new Date());
     const _byWk = {};
-    getCommitted().forEach(function(x){ if (x && x.wk && x.wk >= _monNow) _byWk[x.wk] = (_byWk[x.wk] || 0) + (+x.cases || 0); });
+    getCommitted().forEach(function(x){ if (x && x.wk && x.wk >= _monNow && _cmProd(x) === 'ginger') _byWk[x.wk] = (_byWk[x.wk] || 0) + (+x.cases || 0); });
     const _wks = Object.keys(_byWk).sort();
     committedWks = _wks.length;
     committedCs = _wks.reduce(function(s,w){ return s + _byWk[w]; }, 0);
