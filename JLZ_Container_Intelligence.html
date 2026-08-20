@@ -21733,24 +21733,41 @@ function dmShiftState(m){
   else if(Math.abs(d3) >= MAJOR && Math.abs(d6) < MINOR) k = 'watch';                                    // only 3w moved = likely one big order
   return { k:k, d3:d3, d6:d6, r3:r3, r6:r6, r13:b };
 }
-function dmWindowMode(){ try{ return localStorage.getItem(DM_WIN_LS) || 'auto'; }catch(e){ return 'auto'; } }
-function dmWindow(){
-  var v = dmWindowMode();
+// Reaction window is PER-PRODUCT: turmeric’s window is independent of ginger’s,
+// so changing it on one product never moves another product’s buy plan. Stored as
+// a { <product>: 'auto'|'3'|'6'|'13' } map (back-compat: a bare legacy string reads
+// as ginger’s). Only ginger’s window feeds the Buy Planner / Simulator.
+function _dmWinMap(){ try{ var v = JSON.parse(localStorage.getItem(DM_WIN_LS) || '{}'); if(v && typeof v === 'object') return v; }catch(e){} var raw = null; try{ raw = localStorage.getItem(DM_WIN_LS); }catch(_){} return raw ? { ginger:raw } : {}; }
+function _dmWinProd(p){ return p || ((typeof productFocus === 'function') ? productFocus() : 'ginger'); }
+function dmWindowModelFor(p){
+  if(p === 'ginger') return (typeof qaModelG === 'function') ? qaModelG() : null;
+  if(typeof productFocus === 'function' && productFocus() === p) return (typeof _dmModel !== 'undefined') ? _dmModel : null;
+  return null;
+}
+function dmWindowMode(p){ p = _dmWinProd(p); var m = _dmWinMap()[p]; return (m === '3' || m === '6' || m === '13') ? m : 'auto'; }
+function dmWindow(p){
+  p = _dmWinProd(p);
+  var v = dmWindowMode(p);
   if(v === '3' || v === '6' || v === '13') return +v;
-  var s = dmShiftState();                                    // auto: cooling → 6w (safe to under-buy), else 13w
-  return (s && s.k === 'cool') ? 6 : 13;
+  var mdl = dmWindowModelFor(p);                             // auto: cooling → 6w (safe to under-buy), else 13w
+  var st = mdl ? dmShiftState(mdl) : null;
+  return (st && st.k === 'cool') ? 6 : 13;
 }
 window.dmSetWindow = function(v){
-  try{ localStorage.setItem(DM_WIN_LS, String(v)); }catch(e){}
-  try{ if(typeof renderBuyPlanner === 'function') renderBuyPlanner(); }catch(e){}
-  try{ if(typeof renderSimulator === 'function') renderSimulator(); }catch(e){}
-  try{ if(typeof dmRebuildView === 'function') dmRebuildView(); }catch(e){}
-  try{ if(typeof renderBuildupPanel === 'function') renderBuildupPanel(); }catch(e){}
+  var p = (typeof productFocus === 'function') ? productFocus() : 'ginger';
+  var map = _dmWinMap(); map[p] = String(v);
+  try{ localStorage.setItem(DM_WIN_LS, JSON.stringify(map)); }catch(e){}
+  try{ if(typeof dmRebuildView === 'function') dmRebuildView(); }catch(e){}           // refresh the focused product’s demand view (the hero)
+  if(p === 'ginger'){                                                                  // only ginger’s window feeds the buy plan
+    try{ if(typeof renderBuyPlanner === 'function') renderBuyPlanner(); }catch(e){}
+    try{ if(typeof renderSimulator === 'function') renderSimulator(); }catch(e){}
+    try{ if(typeof renderBuildupPanel === 'function') renderBuildupPanel(); }catch(e){}
+  }
 };
 function dmEffectiveRunRateLbs(){
   const m = qaModelG();
   if (!m || !(m.runRate13 > 0)) return null;
-  const win = (typeof dmWindow === 'function') ? dmWindow() : 13;          // 3 / 6 / 13-week reaction window
+  const win = (typeof dmWindow === 'function') ? dmWindow('ginger') : 13;   // ginger plan uses ginger's own reaction window
   const base = (win === 3 ? (m.runRate3 || m.runRate13) : win === 6 ? (m.runRate6 || m.runRate13) : m.runRate13);
   let ex = 0;
   qaQuietList().forEach(x => { ex += (x.rrLbs || 0) * (1 - qaPct(x.c) / 100); });
@@ -21758,9 +21775,8 @@ function dmEffectiveRunRateLbs(){
 }
 function renderDmRunRate(){
   var host = document.getElementById('dm-runrate'); if(!host) return;
-  var ap = (typeof getActiveProduct === 'function') ? getActiveProduct() : 'ginger';
   var m = (typeof _dmModel !== 'undefined' && _dmModel) ? _dmModel : null;
-  if((ap !== 'ginger' && ap !== 'all') || !m || !(m.runRate13 > 0) || !Array.isArray(m.weeklyReliable)){ host.innerHTML = ''; return; }
+  if(!m || !(m.runRate13 > 0) || !Array.isArray(m.weeklyReliable)){ host.innerHTML = ''; return; }   // shows for every focused product (sales layer)
   var cl = m.caseLb || DM_CASE_LB;
   var win = (typeof dmWindow === 'function') ? dmWindow() : 13;
   var mode = (typeof dmWindowMode === 'function') ? dmWindowMode() : 'auto';
@@ -21775,7 +21791,7 @@ function renderDmRunRate(){
   var rk = s ? s.k : 'steady', rc, rt;
   if(rk==='accel'){ rc='amb'; rt='<b>Accelerating — confirmed.</b> 3-wk and 6-wk agree ('+fp(s.d3)+' / '+fp(s.d6)+'). Recommend planning on <b>6 wk</b> ('+rr[6].toLocaleString()+' cs). '+(win===6?'<b>✓ applied</b>':'<button type="button" class="dmrr-apply" onclick="dmSetWindow(\'6\')">Apply 6 wk</button>'); }
   else if(rk==='cool'){ rc='grn'; rt='<b>Cooling — confirmed.</b> 3-wk and 6-wk agree ('+fp(s.d3)+' / '+fp(s.d6)+'). Safe direction — '+(mode==='auto'?('<b>auto-applied 6 wk</b> ('+rr[6].toLocaleString()+' cs).'):('consider 6 wk ('+rr[6].toLocaleString()+' cs).')); }
-  else if(rk==='watch'){ rc='amb'; rt='<b>Watch — not confirmed.</b> 3-wk moved '+fp(s.d3)+' but 6-wk has not followed. Likely one big order (e.g. Sol-ti), not a shift. No action.'; }
+  else if(rk==='watch'){ rc='amb'; rt='<b>Watch — not confirmed.</b> 3-wk moved '+fp(s.d3)+' but 6-wk has not followed. Likely one big order (a single large account), not a shift. No action.'; }
   else if(rk==='mixed'){ rc='amb'; rt='<b>Mixed signal.</b> The short windows disagree — 3w '+fp(s.d3)+', 6w '+fp(s.d6)+' — typical of lumpy weeks. No clear trend; plan on 13 wk.'; }
   else { rc='grn'; rt='<b>Steady.</b> The three windows agree — demand firm on the quarter. Plan on 13 wk.'; }
   var wk = m.weeklyReliable.slice(-win);
@@ -21806,38 +21822,6 @@ function renderDmRunRate(){
     + '</div>';
 }
 
-function renderBpScenarios(){
-  var host = document.getElementById('bp-scenarios'); if(!host) return;
-  var m = (typeof _dmModelG !== 'undefined' && _dmModelG) ? _dmModelG : null;
-  if(!m || !(m.runRate13 > 0) || (typeof productFocus === 'function' && productFocus() !== 'ginger')){ host.innerHTML = ''; return; }
-  var cl = m.caseLb || DM_CASE_LB;
-  var r = { 3: Math.round((m.runRate3 || m.runRate13)/cl), 6: Math.round((m.runRate6 || m.runRate13)/cl), 13: Math.round(m.runRate13/cl) };
-  var s = (typeof dmShiftState === 'function') ? dmShiftState(m) : null;
-  var mode = (typeof dmWindowMode === 'function') ? dmWindowMode() : 'auto';
-  var win = (typeof dmWindow === 'function') ? dmWindow() : 13;
-  var pct = function(w){ return (r[w] - r[13]) / (r[13] || 1); };
-  var fp = function(x){ return (x >= 0 ? '+' : '') + Math.round(x*100) + '%'; };
-  var modes = [['auto','Auto'],['3','3w'],['6','6w'],['13','13w']];
-  var seg = '<div style="display:inline-flex;border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;font-family:var(--fm);font-size:11px">'
-    + modes.map(function(mm,i){ var on = (mode === mm[0]); return '<button type="button" onclick="dmSetWindow(\''+mm[0]+'\')" style="border:0;'+(i?'border-left:1px solid var(--gray-200);':'')+'padding:4px 10px;font-weight:'+(on?'700':'500')+';cursor:pointer;background:'+(on?'var(--jlz)':'var(--white)')+';color:'+(on?'#fff':'var(--gray-600)')+'">'+mm[1]+(mm[0]==='auto'&&on?(' \u2192'+win+'w'):'')+'</button>'; }).join('')
-    + '</div>';
-  var bg,bd,fg,ic,txt;
-  if(!s || s.k==='steady'){ bg='var(--green-50)';bd='var(--green-100)';fg='var(--green-700)';ic='\u2713';txt='<b>Steady.</b> The three windows agree \u2014 demand is firm on the quarter. Plan stays on 13w.'; }
-  else if(s.k==='watch'){ bg='var(--amber-50)';bd='var(--amber-200)';fg='var(--amber-700)';ic='\u25CB';txt='<b>Watch \u2014 not confirmed.</b> 3-week run-rate moved '+fp(s.d3)+' but 6-week has not followed. Likely one big order (e.g. Sol-ti), not a demand shift. No action.'; }
-  else if(s.k==='mixed'){ bg='var(--amber-50)';bd='var(--amber-200)';fg='var(--amber-700)';ic='\u2248';txt='<b>Mixed signal.</b> The short windows disagree \u2014 3w '+fp(s.d3)+', 6w '+fp(s.d6)+' \u2014 typical of lumpy weeks (a big order lands, then a gap). No clear trend; plan stays on 13w.'; }
-  else if(s.k==='accel'){ bg='var(--red-50)';bd='var(--red-100)';fg='var(--red-700)';ic='\u25B2';txt='<b>Accelerating \u2014 confirmed.</b> 3w and 6w agree ('+fp(s.d3)+' / '+fp(s.d6)+') \u2014 real, not noise. Recommend planning on <b>6 weeks</b> ('+r[6].toLocaleString()+' cs). '+(win===6?'<b>\u2713 applied</b>':'<button type="button" onclick="dmSetWindow(\'6\')" style="border:0;border-radius:5px;background:var(--jlz);color:#fff;font:600 11px var(--fb);padding:3px 11px;cursor:pointer;margin-left:4px">Apply 6w</button>'); }
-  else { bg='var(--green-50)';bd='var(--green-100)';fg='var(--green-700)';ic='\u25BC';txt='<b>Cooling \u2014 confirmed.</b> 3w and 6w agree ('+fp(s.d3)+' / '+fp(s.d6)+'). Safe direction \u2014 '+(mode==='auto'?'<b>auto-applied 6 weeks</b> ('+r[6].toLocaleString()+' cs) to avoid over-buying.':'consider 6 weeks ('+r[6].toLocaleString()+' cs).'); }
-  var banner = '<div style="display:flex;gap:9px;align-items:flex-start;background:'+bg+';border:1px solid '+bd+';border-radius:7px;padding:9px 12px;font-size:12px;line-height:1.5;color:var(--gray-700);margin-bottom:10px"><span style="color:'+fg+';font-weight:700;font-size:13px">'+ic+'</span><div>'+txt+'</div></div>';
-  var cell = function(w,role){ var eff = (win == w); return '<div style="border:1.5px solid '+(eff?'var(--jlz)':'var(--gray-200)')+';border-radius:7px;padding:9px 11px;background:'+(eff?'var(--jlz-light)':'var(--white)')+'">'
-    + '<div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500)">'+w+'w \u00b7 '+role+(eff?' <span style="color:var(--jlz)">\u00b7 in plan</span>':'')+'</div>'
-    + '<div style="font-family:var(--fm);font-size:18px;font-weight:700;color:var(--gray-800);margin-top:2px">'+r[w].toLocaleString()+' <span style="font-size:10px;font-weight:400;color:var(--gray-400)">cs/wk</span></div>'
-    + (w===13 ? '<div style="font-size:10px;color:var(--gray-400);font-family:var(--fm)">base (quarter)</div>' : '<div style="font-size:10px;font-weight:700;font-family:var(--fm);color:'+(pct(w)>=0?'var(--amber-700)':'var(--green-700)')+'">'+(pct(w)>=0?'\u25B2 ':'\u25BC ')+fp(pct(w))+' vs 13w</div>')
-    + '</div>'; };
-  var cells = '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">'+cell(3,'spot')+cell(6,'momentum')+cell(13,'structural')+'</div>';
-  host.innerHTML = '<div class="card" style="padding:13px 15px">'
-    + '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px"><div style="font-size:12px;font-weight:700;color:var(--gray-800)">Demand window <span style="font-weight:400;color:var(--gray-400);font-size:11px">\u00b7 how fast the plan reacts</span></div>'+seg+'</div>'
-    + banner + cells + '</div>';
-}
 window.qaSetPct = function(cust, pct){
   const s = qaScenario(); s[cust] = pct;
   try { localStorage.setItem(QA_LS_KEY, JSON.stringify(s)); } catch(e){}
@@ -22367,6 +22351,7 @@ function dmcWeekLabel(wk) {
 }
 function renderCommittedPanel(model) {
   var host = document.getElementById('dm-committed'); if(!host) return;
+  if(typeof productFocus === 'function' && productFocus() !== 'ginger'){ host.innerHTML = ''; return; }   // committed orders mirror the ginger buy plan — ginger only for now
   var m = model || (typeof _dmModel !== 'undefined' ? _dmModel : null);
   var custs = dmcCustomers(m);
   var futures = (typeof bpFutureWeeks === 'function') ? bpFutureWeeks(11).slice(1) : [];  // next 10 weeks (skip the current, still-open week)
