@@ -21792,7 +21792,7 @@ function renderDmRunRate(){
   var custs = (m.customers||[]).filter(function(c){ return c && c.c && ((c[key]||0) >= 1); }).sort(function(a,b){ return (b[key]||0)-(a[key]||0); });
   var cmax = custs.length ? Math.max.apply(null, custs.map(function(c){ return c[key]||0; })) : 1;
   var shown = custs.slice(0,8), tot=0; custs.forEach(function(c){ tot += Math.round(c[key]||0); });
-  var rows = shown.map(function(c){ var v=Math.round(c[key]||0); return '<tr><td class="l">'+esc(c.c)+(c.sporadic?'<span class="dmrr-od">ORDER-DRIVEN</span>':'')+'</td><td>'+v.toLocaleString()+'</td><td><span class="dmrr-barc" style="width:'+Math.round(v/cmax*100)+'px"></span></td></tr>'; }).join('');
+  var rows = shown.map(function(c){ var v=Math.round(c[key]||0); return '<tr><td class="l">'+esc(c.c)+(c.sporadic?'<span class="dmrr-od" title="Buys in bursts, not weekly. The number shown is its run-rate (total cases &divide; all weeks in the window), so it looks small &mdash; the plan does NOT use that average: it uses this account’s committed orders in the weeks it ordered, and only resumes the run-rate beyond the last committed week.">ORDER-DRIVEN</span>':'')+'</td><td>'+v.toLocaleString()+'</td><td><span class="dmrr-barc" style="width:'+Math.round(v/cmax*100)+'px"></span></td></tr>'; }).join('');
   var rest = custs.length - shown.length;
   if(rest > 0){ var rv=0; custs.slice(8).forEach(function(c){ rv += Math.round(c[key]||0); }); rows += '<tr><td class="l" style="color:var(--gray-400)">+ '+rest+' smaller</td><td style="color:var(--gray-400)">'+rv.toLocaleString()+'</td><td></td></tr>'; }
   rows += '<tr class="tot"><td class="l">Total</td><td>'+tot.toLocaleString()+'</td><td></td></tr>';
@@ -22939,7 +22939,7 @@ function cxStyles(){ return '<style>'
   + '.dmrr-seg button{border:0;border-left:1px solid var(--gray-200);background:var(--white);color:var(--gray-600);padding:5px 12px;font-weight:600;cursor:pointer}'
   + '.dmrr-seg button:first-child{border-left:0}.dmrr-seg button.on{background:var(--jlz);color:#fff}'
   + '.dmrr-bigrow{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;margin-top:2px}'
-  + '.dmrr-big{font-family:Georgia,\'Times New Roman\',serif;font-size:38px;font-weight:700;color:var(--jlz);line-height:1;letter-spacing:-.02em}'
+  + '.dmrr-big{font-family:var(--fd);font-size:38px;font-weight:800;color:var(--jlz);line-height:1.1;letter-spacing:-.01em}'
   + '.dmrr-u{font-size:12px;color:var(--gray-500)}.dmrr-role{font-family:var(--fm);font-size:10px;color:var(--gray-400);margin-left:auto;text-transform:uppercase;letter-spacing:.05em}'
   + '.dmrr-rib{border:1px solid;border-radius:7px;padding:8px 12px;font-size:12px;line-height:1.5;color:var(--gray-800);margin-top:11px}'
   + '.dmrr-rib.amb{background:var(--amber-50);border-color:var(--amber-200)}.dmrr-rib.grn{background:var(--green-50);border-color:var(--green-100)}'
