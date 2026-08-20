@@ -11552,35 +11552,52 @@ function ooDateToISO(s) {
 }
 // Pure parser (rows = SheetJS sheet_to_json objects). fulfilledMax = the demand
 // model's dataMax (YYYY-MM-DD) for anti-double-count with the fulfilled feed.
+// Classify an Unshipped SKU to {product, packLbs}. Ginger keeps its EXACT legacy rule
+// (Peru 30-lb case only — never widened; the ginger buy plan depends on it). Other
+// products accept any pack size and are converted to case-equivalents downstream.
+function ooClassifySku(sku) {
+  var s = String(sku == null ? '' : sku).trim();
+  if (s === 'OG-GIN-30Lbs-PR') return { product: 'ginger', packLbs: 30 };
+  if (/^OG-GIN/i.test(s)) return null;                             // other ginger packs / origins: excluded (unchanged)
+  var m = s.match(/^OG-([A-Za-z]+)-.*?(\d+(?:\.\d+)?)\s*lbs/i);    // OG-<code>-...<n>Lbs...
+  if (!m) return null;
+  var map = { TUR: 'turmeric', GAR: 'garlic', SHA: 'shallots' };
+  var product = map[m[1].toUpperCase()], packLbs = parseFloat(m[2]);
+  if (!product || !(packLbs > 0)) return null;
+  return { product: product, packLbs: packLbs };
+}
 function parseOpenOrders(rows, fulfilledMax) {
-  var out = [], seen = {}, st = { total: (rows || []).length, kept: 0, nonGinger: 0, pending: 0, stale: 0, dup: 0, badRow: 0 };
-  // Open orders ship (and invoice) eventually, so they must STAY in the demand — never
-  // silently dropped for being at/under the Excel's invoice cutoff. The Unshipped report
-  // only ever contains un-shipped orders, so NONE can already be in the invoiced Excel:
-  // there is no double-count to guard against here. We only TAG status for the panel:
-  //  · pending = fulfillment already at/under the cutoff but still open (awaiting invoice).
-  //  · stale   = badly overdue (>3 wks before the cutoff) → a stray to review, still counted.
+  var out = [], seen = {}, st = { total: (rows || []).length, kept: 0, nonProduct: 0, pending: 0, stale: 0, dup: 0, badRow: 0, byProduct: {} };
+  // Open orders ship (and invoice) eventually, so they STAY in demand — never dropped for being at/under
+  // the invoice cutoff. The Unshipped report only ever holds un-shipped orders, so none can already be in
+  // the invoiced Excel: no double-count to guard. We only TAG status: pending (at/under cutoff, awaiting
+  // invoice) or stale (>3 wks overdue — a stray to review, still counted).
   var staleISO = '';
   if(fulfilledMax) { var _sd = new Date(fulfilledMax + 'T00:00:00'); _sd.setDate(_sd.getDate() - 21); staleISO = _sd.toISOString().slice(0, 10); }
   (rows || []).forEach(function(r) {
     var sku = String(r['SKU'] == null ? '' : r['SKU']).trim();
-    // Peru ginger, standard 30-lb case only. Excludes -HI (Hawaiian), 5/10-lb ginger,
-    // garlic, turmeric. (Non-30lb ginger would need caseLb->30 conversion; out of scope v1.)
-    if(sku !== 'OG-GIN-30Lbs-PR') { st.nonGinger++; return; }
+    var cls = ooClassifySku(sku);
+    if(!cls) { st.nonProduct++; return; }
     var iso = ooDateToISO(r['Fulfillment Date']);
     if(!iso) { st.badRow++; return; }
-    var key = String(r['Order No'] || '') + '|' + sku;                            // dedupe (a line can repeat across exports)
+    var key = String(r['Order No'] || '') + '|' + sku;             // dedupe (a line can repeat across exports)
     if(seen[key]) { st.dup++; return; }
     seen[key] = 1;
-    var qty = Math.round(parseFloat(r['Order qty']) || 0);
+    var qty = parseFloat(r['Order qty']) || 0;
     if(qty <= 0) { st.badRow++; return; }
+    // Convert to the product's STANDARD case (lbs ÷ caseLb) — the same casing the run-rate uses, so
+    // committed and run-rate live on one scale. Ginger stays 1 qty = 1 case (its filter is the 30-lb case).
+    var caseLb = (typeof productCaseLb === 'function') ? productCaseLb(cls.product) : 30;
+    var cases = (cls.product === 'ginger') ? Math.round(qty) : Math.round(qty * cls.packLbs / caseLb);
+    if(cases <= 0) { st.subCase = (st.subCase || 0) + 1; return; }   // a positive order smaller than one converted case
     var cust = String(r['Customer Name'] == null ? '' : r['Customer Name']).trim() || '—';
     var wk = (typeof dmWeekKey === 'function') ? dmWeekKey(new Date(iso + 'T12:00:00')) : iso;   // noon-local → stable Monday
     var stale = !!(staleISO && iso < staleISO);
     var pending = !stale && !!(fulfilledMax && iso <= fulfilledMax);
     if(stale) st.stale++; else if(pending) st.pending++;
-    out.push({ customer: cust, wk: wk, cases: qty, type: 'inv', source: 'import', orderNo: String(r['Order No'] || ''), sku: sku, pending: pending, stale: stale, product: 'ginger' });
+    out.push({ customer: cust, wk: wk, cases: cases, type: 'inv', source: 'import', orderNo: String(r['Order No'] || ''), sku: sku, pending: pending, stale: stale, product: cls.product });
     st.kept++;
+    st.byProduct[cls.product] = (st.byProduct[cls.product] || 0) + 1;
   });
   return { entries: out, stats: st };
 }
@@ -22371,13 +22388,11 @@ function renderCommittedPanel(model) {
     return;
   }
   var opt = function(v, lab, extra) { return '<option value="' + libEsc(v) + '"' + (extra || '') + '>' + libEsc(lab) + '</option>'; };
-  var importBlock = isG
-    ? ('<div class="dmc-h">Import open orders</div>'
-       + '<div class="dmc-hint">Upload WholesaleWare’s <b>Unshipped Sales Order Report</b> (.xlsx/.csv) — or the SKU sheet. Auto-fills committed Peru ginger 30LB; strays before the data cutoff and your manual entries stay clean.</div>'
-       + '<input type="file" id="dmc-import-file" accept=".xlsx,.xls" onchange="dmcImportFile(this)" style="font-size:12px;width:100%"/>'
-       + (window._dmcImportMsg ? '<div style="font-size:11px;color:var(--jlz);background:var(--jlz-light);border-radius:var(--r);padding:6px 9px;margin-top:6px;line-height:1.5">' + window._dmcImportMsg + '</div>' : '')
-       + '<div style="height:1px;background:var(--gray-200);margin:14px 0"></div>')
-    : ('<div class="dmc-hint" style="margin-bottom:12px">Auto-import is ginger-only for now. Add ' + libEsc(pl) + ' committed orders manually below.</div>');
+  var importBlock = '<div class="dmc-h">Import open orders</div>'
+    + '<div class="dmc-hint">Upload WholesaleWare’s <b>Unshipped Sales Order Report</b> (.xlsx/.csv). <b>One import fills all products</b> (ginger, turmeric, garlic, shallots) — each shows under its own product; other pack sizes are converted to cases. Strays before the data cutoff and your manual entries stay clean.</div>'
+    + '<input type="file" id="dmc-import-file" accept=".xlsx,.xls" onchange="dmcImportFile(this)" style="font-size:12px;width:100%"/>'
+    + (window._dmcImportMsg ? '<div style="font-size:11px;color:var(--jlz);background:var(--jlz-light);border-radius:var(--r);padding:6px 9px;margin-top:6px;line-height:1.5">' + window._dmcImportMsg + '</div>' : '')
+    + '<div style="height:1px;background:var(--gray-200);margin:14px 0"></div>';
   var shipBlock = isG
     ? ('<label class="dmc-l">How does it ship?</label><div class="dmc-seg">'
        + '<button type="button" class="dmc-segb' + (_dmcType === 'inv' ? ' on' : '') + '" data-t="inv">From warehouse</button>'
@@ -22565,15 +22580,17 @@ function dmcImportFile(input) {
       var ws = wb.Sheets[wb.SheetNames[0]];
       var rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
       if (dmcIsUnshippedFormat(rows)) rows = dmcNormalizeUnshipped(rows);   // accept WholesaleWare's native Unshipped Sales Order Report directly
-      var fulfilledMax = (typeof _dmModel !== 'undefined' && _dmModel && _dmModel.dataMax) ? _dmModel.dataMax : '';
+      var fulfilledMax = (typeof dmGlobalDataMax === 'function' && dmGlobalDataMax()) ? dmGlobalDataMax() : ((typeof _dmModel !== 'undefined' && _dmModel && _dmModel.dataMax) ? _dmModel.dataMax : '');
       var res = parseOpenOrders(rows, fulfilledMax);
       importCommittedOpenOrders(res.entries);
       var s = res.stats;
-      window._dmcImportMsg = 'Imported <b>' + s.kept + '</b> committed ginger order' + (s.kept === 1 ? '' : 's') +
+      var byP = Object.keys(s.byProduct || {}).map(function(p){ return s.byProduct[p] + ' ' + ((typeof productLabel === 'function') ? productLabel(p) : p); }).join(', ');
+      window._dmcImportMsg = 'Imported <b>' + s.kept + '</b> committed order' + (s.kept === 1 ? '' : 's') + (byP ? ' (' + byP + ')' : '') +
         (s.pending ? ' · ' + s.pending + ' pending invoice' : '') + (s.stale ? ' · <b>' + s.stale + ' stale (review)</b>' : '') +
-        '. Skipped ' + s.nonGinger + ' non-ginger, ' + s.dup + ' duplicate' +
-        (s.badRow ? ', ' + s.badRow + ' unreadable' : '') + '. Open orders stay counted — nothing dropped.';
+        '. Skipped ' + s.nonProduct + ' non-product, ' + s.dup + ' duplicate' +
+        (s.badRow ? ', ' + s.badRow + ' unreadable' : '') + (s.subCase ? ', ' + s.subCase + ' sub-case' : '') + '. Converted to cases by pack weight. Open orders stay counted — nothing dropped.';
       renderCommittedPanel();
+      if (typeof renderBuildupPanel === 'function') renderBuildupPanel();
     } catch(err) { alert('Import failed: ' + err.message); }
   };
   reader.readAsArrayBuffer(f);
