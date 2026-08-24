@@ -11508,17 +11508,25 @@ function committedInvForWeek(wk, product) {
 //    their committed for this specific week — its average is not projected in the weeks it didn't order.
 //  · Accounts committed but unknown to the model: add their full committed (they're not in the baseline).
 // The caller applies the shrink inflation (weeklyDemand = salesDemand × 1/(1-shrink)) to the result.
-function hybridSalesForWeek(wk, salesDemand, model, product) {
+function hybridSalesForWeek(wk, salesDemand, model, product, extraOrders) {
   var custs = (model && model.customers) || null;
   if (!custs) return null;   // no model → caller falls back to legacy max()
   // committed for THIS week per customer, and each customer's LAST committed week (its "known horizon")
   var comThis = {}, comLast = {};
   var _hp = product || 'ginger';
+  var _acc = function(cust, w, cases){
+    if (!cust || !w) return;
+    if (w === wk) comThis[cust] = (comThis[cust] || 0) + (+cases || 0);
+    if (!comLast[cust] || w > comLast[cust]) comLast[cust] = w;
+  };
   getCommitted().forEach(function(c){
     if (!c || c.type !== 'inv' || !c.wk || _cmProd(c) !== _hp) return;
-    if (c.wk === wk) comThis[c.customer] = (comThis[c.customer] || 0) + (+c.cases || 0);
-    if (!comLast[c.customer] || c.wk > comLast[c.customer]) comLast[c.customer] = c.wk;
+    _acc(c.customer, c.wk, c.cases);
   });
+  // Extra (hypothetical) orders — Simulator scenarios — netted IDENTICALLY to committed: for an
+  // order-driven account a scenario order REPLACES its run-rate that week (no double-count); a
+  // steady account adds only the excess. Real committed callers pass nothing, so the plan is untouched.
+  (extraOrders || []).forEach(function(c){ if (c) _acc(c.customer, c.wk, c.cases); });
   var adj = 0, seen = {};
   custs.forEach(function(c){
     if (!c || !c.c) return;
@@ -19234,11 +19242,12 @@ function simRenderProjection(realOrders, hypoOrders) {
     const _wkKey = (typeof dmWeekKey === 'function' && fw.weekStartDate) ? dmWeekKey(fw.weekStartDate) : null;
     const committedWk = (_wkKey && typeof committedInvForWeek === 'function') ? committedInvForWeek(_wkKey) : 0;
     const _simMdl = (typeof _dmModelG !== 'undefined' ? _dmModelG : ((typeof window!=='undefined' && window._dmModelG) || null));
+    const _hypoExtra = (typeof simActiveHypoSales === 'function') ? simActiveHypoSales() : [];
     const _hybridSales = (_wkKey && _simMdl && _simMdl.customers && typeof hybridSalesForWeek === 'function')
-      ? hybridSalesForWeek(_wkKey, salesDemand, _simMdl) : null;
+      ? hybridSalesForWeek(_wkKey, salesDemand, _simMdl, 'ginger', _hypoExtra) : null;
     const _infl = (salesDemand > 0) ? (weeklyDemand / salesDemand) : 1;
     const _hypoSalesWk = (typeof simHypoSalesForWeek === 'function' && _wkKey) ? simHypoSalesForWeek(_wkKey) : 0;
-    const wkDemand = ((_hybridSales != null) ? (_hybridSales * _infl) : Math.max(committedWk, weeklyDemand)) + _hypoSalesWk * _infl;
+    const wkDemand = (_hybridSales != null) ? (_hybridSales * _infl) : (Math.max(committedWk, weeklyDemand) + _hypoSalesWk * _infl);
     const startStock = running;
     running = running + arrivalCases - wkDemand;
     const cover = wkDemand > 0 ? running / wkDemand : 0;
@@ -19274,7 +19283,7 @@ function simRenderProjection(realOrders, hypoOrders) {
         + (arrivalCases > 0 ? '<div style="font-size:9px;color:var(--gray-400);font-weight:400">' + arrivalText + '</div>' : '')
         + (downgradedArrivals.length ? '<div style="font-size:9px;color:var(--amber-700);font-weight:600;text-decoration:line-through;text-decoration-color:var(--amber-300)">' + downgradedText + '</div>' : '')
       + '</td>'
-      + '<td style="padding:8px 12px;text-align:right;color:var(--red-600)">−' + Math.round(wkDemand).toLocaleString() + ((typeof _hypoSalesWk !== 'undefined' && _hypoSalesWk > 0) ? '<div style="font-size:9px;color:#7C3AED;font-weight:600">🧪 +' + Math.round(_hypoSalesWk).toLocaleString() + ' scenario</div>' : '') + '</td>'
+      + '<td style="padding:8px 12px;text-align:right;color:var(--red-600)">−' + Math.round(wkDemand).toLocaleString() + ((typeof _hypoSalesWk !== 'undefined' && _hypoSalesWk > 0) ? '<div style="font-size:9px;color:#7C3AED;font-weight:600">🧪 scenario</div>' : '') + '</td>'
       + '<td style="padding:8px 12px;text-align:right;font-weight:700;color:' + (running <= 0 ? 'var(--red-600)' : 'var(--gray-800)') + '">' + Math.round(running).toLocaleString() + '</td>'
       + '<td style="padding:8px 12px;text-align:right;font-weight:600;color:' + coverColor + '">' + cover.toFixed(1) + 'w</td>'
       + '<td style="padding:8px 12px">' + statusBadge + '</td>'
@@ -19288,6 +19297,9 @@ function simRenderProjection(realOrders, hypoOrders) {
 function simHypoSaleWk(o){ return (o && o.date) ? ((typeof dmWeekKey==='function') ? dmWeekKey(new Date(o.date+'T12:00:00')) : o.date) : (o ? o.week : ''); }
 function simHypoSalesForWeek(mondayISO){
   return simGetState().hypotheticalSales.reduce(function(s,o){ return s + ((o.on !== false && simHypoSaleWk(o) === mondayISO) ? (+o.cases||0) : 0); }, 0);
+}
+function simActiveHypoSales(){
+  return simGetState().hypotheticalSales.filter(function(o){ return o.on !== false; }).map(function(o){ return { customer: o.customer, wk: simHypoSaleWk(o), cases: (+o.cases||0) }; });
 }
 function simHsCustomers(){
   var m = (typeof _dmModelG !== 'undefined' && _dmModelG) ? _dmModelG : null;
