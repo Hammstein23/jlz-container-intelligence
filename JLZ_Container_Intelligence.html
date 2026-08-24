@@ -4722,6 +4722,10 @@ function authInjectLogo() {
         <div class="text-muted" style="font-size:var(--text-10);text-transform:uppercase;letter-spacing:.04em">Hypothetical orders</div>
         <div id="sim-hypo-count" style="font-weight:600;color:var(--jlz);font-family:var(--fb)">0</div>
       </div>
+      <div>
+        <div class="text-muted" style="font-size:var(--text-10);text-transform:uppercase;letter-spacing:.04em" title="Which run-rate window the projection's demand is based on. Shared with the Buy Planner.">Demand window</div>
+        <div id="sim-winsel" style="display:inline-flex;border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;font-family:var(--fm);font-size:11px;margin-top:3px"></div>
+      </div>
       <div class="ml-auto text-mono text-muted" style="font-size:var(--text-10)">
         Tweak inputs in Buy Planner → Settings to change assumptions
       </div>
@@ -4757,7 +4761,7 @@ function authInjectLogo() {
   <!-- ── 2.7 HYPOTHETICAL SALES (scenario demand) ── -->
   <div class="card mb-4">
     <div class="card-header" style="padding:12px 16px">
-      <div style="width:24px;height:24px;border-radius:var(--radius-sm);background:#F2ECFE;color:#7C3AED;display:flex;align-items:center;justify-content:center;font-size:13px">\U0001f9ea</div>
+      <div style="width:24px;height:24px;border-radius:var(--radius-sm);background:#F2ECFE;color:#7C3AED;display:flex;align-items:center;justify-content:center;font-size:13px">🧪</div>
       <span class="card-title">Hypothetical sales — scenario demand</span>
       <span class="card-subtitle ml-auto">layer possible customer orders · feeds the projection below · never touches the real plan</span>
     </div>
@@ -19332,7 +19336,22 @@ function simRenderHypoSales(){
       + '<button onclick="simRemoveHypoSale(\''+o.id+'\')" style="border:0;background:none;color:var(--gray-400);font-size:16px;cursor:pointer;padding:0 3px">×</button>'
       + '</div>';
   }).join('') + '</div>'
-  + '<div style="font-size:11px;color:var(--gray-400);font-family:var(--fm);margin-top:8px">'+total.toLocaleString()+' cs of scenario demand active · reflected in the projection below (Demand column, \U0001f9ea)</div>';
+  + '<div style="font-size:11px;color:var(--gray-400);font-family:var(--fm);margin-top:8px">'+total.toLocaleString()+' cs of scenario demand active · reflected in the projection below (Demand column, 🧪)</div>';
+}
+function simRenderWindowSel(){
+  var host=document.getElementById('sim-winsel'); if(!host) return;
+  var mode=(typeof dmWindowMode==='function')?dmWindowMode('ginger'):'auto';
+  var win=(typeof dmWindow==='function')?dmWindow('ginger'):13;
+  var modes=[['auto','Auto'],['3','3wk'],['6','6wk'],['13','13wk']];
+  host.innerHTML=modes.map(function(m,i){var on=(mode===m[0]);return '<button type="button" onclick="simSetDemandWindow(\''+m[0]+'\')" style="border:0;'+(i?'border-left:1px solid var(--gray-200);':'')+'padding:3px 9px;font-weight:'+(on?'700':'500')+';cursor:pointer;background:'+(on?'var(--jlz)':'var(--white)')+';color:'+(on?'#fff':'var(--gray-600)')+'">'+m[1]+((m[0]==='auto'&&on)?(' \u2192'+win):'')+'</button>';}).join('');
+}
+function simSetDemandWindow(v){
+  try{ var raw=localStorage.getItem('jlz_demand_window'); var map={};
+    try{ var p=JSON.parse(raw||'{}'); if(p&&typeof p==='object'){ map=p; } else if(raw){ map={ginger:raw}; } }catch(e){ if(raw) map={ginger:raw}; }
+    map.ginger=String(v); localStorage.setItem('jlz_demand_window', JSON.stringify(map));
+  }catch(e){}
+  renderSimulator();
+  if(typeof renderBuyPlanner==='function'){ try{ renderBuyPlanner(); }catch(e){} }
 }
 // ── MAIN RENDER ──
 function renderSimulator() {
@@ -19388,6 +19407,7 @@ function renderSimulator() {
   simRenderProjection(activeOrders, state.hypotheticalOrders);
   simRenderHypoTable(state.hypotheticalOrders);
   if (typeof simRenderHypoSales === 'function') simRenderHypoSales();
+  if (typeof simRenderWindowSel === 'function') simRenderWindowSel();
   simRenderQuotesTable(state.quotes);
 }
 
