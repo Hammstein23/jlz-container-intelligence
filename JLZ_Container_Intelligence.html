@@ -14431,8 +14431,11 @@ function invmProdSetService(p,v){ var st=prodInvState(); if(!st[p]) st[p]={lots:
 function invmProdSetDemand(p,v){ var st=prodInvState(); if(!st[p]) st[p]={lots:[]}; st[p].demandOverride=(v===''||v==null)?null:Math.max(0,parseFloat(v)||0); prodInvSave(st); renderInventory(); }
 function invmProdClearDemand(p){ var st=prodInvState(); if(st[p]){ st[p].demandOverride=null; prodInvSave(st); renderInventory(); } }
 function invmProdSetLotCases(p,i,v){ var st=prodInvState(); if(st[p]&&st[p].lots&&st[p].lots[i]){ st[p].lots[i].cases=Math.max(0,parseFloat(v)||0); prodInvSave(st); renderInventory(); } }
+function invmProdSetLotReceived(p,i,v){ var st=prodInvState(); if(st[p]&&st[p].lots&&st[p].lots[i]){ st[p].lots[i].received=v||''; prodInvSave(st); renderInventory(); } }
 function invmProdRemoveLot(p,i){ var st=prodInvState(); if(st[p]&&st[p].lots){ st[p].lots.splice(i,1); prodInvSave(st); renderInventory(); } }
-function invmProdAddLot(p){ var st=prodInvState(); if(!st[p]) st[p]={serviceLevel:95,demandOverride:null,lots:[]}; if(!st[p].lots) st[p].lots=[]; var sup=(PRODUCTS[p]&&PRODUCTS[p].suppliers&&PRODUCTS[p].suppliers[0])||{}; st[p].lots.push({lot:'NEW',origin:sup.origin||'',supplier:sup.name||'',cases:0,avgCost:0}); prodInvSave(st); renderInventory(); }
+function invmProdAddLot(p){ var st=prodInvState(); if(!st[p]) st[p]={serviceLevel:95,demandOverride:null,lots:[]}; if(!st[p].lots) st[p].lots=[]; var sup=(PRODUCTS[p]&&PRODUCTS[p].suppliers&&PRODUCTS[p].suppliers[0])||{}; st[p].lots.push({lot:'NEW',origin:sup.origin||'',supplier:sup.name||'',cases:0,avgCost:0,received:''}); prodInvSave(st); renderInventory(); }
+// FEFO order: oldest received first (soonest-expiring, since a product's lots share one shelf life). Undated lots go last.
+function invmFefoSort(lots){ return lots.slice().sort(function(a,b){ var ra=(a&&a.received)||'', rb=(b&&b.received)||''; if(ra&&rb) return ra<rb?-1:(ra>rb?1:0); if(ra&&!rb) return -1; if(!ra&&rb) return 1; return 0; }); }
 // Incoming supply per product from the Fase 1 Orders pipeline (Contracted / In Transit), by arrival week.
 function invmProductArrivals(p){
   var out={};
@@ -14540,41 +14543,51 @@ function invmRenderProduct(p){
       + '<div class="ipv-kpi"><div class="lbl">Lots</div><div class="big">'+s.lots.length+'</div><div class="note">excl. W / vLot</div></div>'
       + '<div class="ipv-kpi"><div class="lbl">Inventory value</div><div class="big" style="font-size:20px">$'+f(s.costVal)+'</div><div class="note">at avg cost</div></div>'
     + '</div>';
-  // lots table
+  // lots table — FEFO (oldest received first) + storage days, ginger-style aging.
   var thL='text-align:left;font-family:var(--fb);font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-400);font-weight:700;padding:8px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-200)';
   var thR=thL.replace('text-align:left','text-align:right');
   var td='padding:9px 14px;border-bottom:1px solid var(--gray-100)';
+  var fefo=(typeof invmFefoSort==='function')?invmFefoSort(s.lots):s.lots;
+  var storedOf=function(l){ return (l&&l.received)?((typeof bpDaysSince==='function')?bpDaysSince(l.received):0):null; };
+  var oldest=0, sumAge=0, sumC=0, undated=0;
+  fefo.forEach(function(l){ var d=storedOf(l); var c=parseFloat(l.cases)||0; if(d==null){ undated++; } else { if(d>oldest) oldest=d; sumAge+=d*c; sumC+=c; } });
+  var avgAge=sumC>0?Math.round(sumAge/sumC):null;
+  var ageBadge=function(d){ if(d==null) return '<span style="color:var(--gray-300)">—</span>'; var c=(d>=45)?'#b91c1c':(d>=30)?'#b45309':'var(--gray-700)'; return '<span style="color:'+c+';font-weight:700">'+d+'d</span>'; };
+  var dinp='font-family:var(--fm);font-size:10.5px;border:1px solid var(--gray-200);border-radius:5px;padding:2px 5px;color:var(--gray-700)';
   html += '<div class="card" style="background:var(--white);border:1px solid var(--gray-200);border-radius:10px;overflow:hidden;margin-bottom:14px">'
-    + '<div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--gray-100)"><span style="font-size:12px;font-weight:700;color:var(--jlz);text-transform:uppercase;letter-spacing:.05em">Lots on hand — '+esc(s.label)+oScope+'</span>'
-      + '<button onclick="invmProdAddLot(\''+p+'\')" style="font-family:var(--fb);font-size:11px;font-weight:600;padding:5px 11px;border:1px solid var(--gray-200);border-radius:6px;background:var(--white);color:var(--gray-600);cursor:pointer">+ Add lot</button></div>';
+    + '<div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--gray-100)"><span style="font-size:12px;font-weight:700;color:var(--jlz);text-transform:uppercase;letter-spacing:.05em">Lots on hand — '+esc(s.label)+oScope+' <span style="font-weight:500;color:var(--gray-400);text-transform:none;letter-spacing:0">· FEFO</span></span>'
+      + '<button onclick="invmProdAddLot(\''+p+'\')" style="font-family:var(--fb);font-size:11px;font-weight:600;padding:5px 11px;border:1px solid var(--gray-200);border-radius:6px;background:var(--white);color:var(--gray-600);cursor:pointer">+ Add lot</button></div>'
+    + '<div style="padding:9px 14px;font-size:11px;color:var(--gray-600);font-family:var(--fm);border-bottom:1px solid var(--gray-100);background:var(--gray-50)">Oldest first (soonest to move) · avg age <b>'+(avgAge==null?'—':avgAge+'d')+'</b> · oldest <b>'+(oldest?oldest+'d':'—')+'</b>'+(undated?(' · <span style="color:var(--amber-700)">'+undated+' lot(s) missing received date</span>'):'')+'</div>';
   if(s.lots.length){
-    html += '<table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11.5px"><thead><tr>'
-      + '<th style="'+thL+'">Lot</th><th style="'+thL+'">Origin</th><th style="'+thL+'">Supplier</th>'
+    html += '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11.5px"><thead><tr>'
+      + '<th style="'+thL+'">Lot</th><th style="'+thL+'">Origin</th><th style="'+thL+'">Supplier</th><th style="'+thL+'">Received</th><th style="'+thR+'">Stored</th>'
       + '<th style="'+thR+'">Cases</th><th style="'+thR+'">Lbs</th><th style="'+thR+'">Cost/cs</th>'
       + '<th style="background:var(--gray-50);border-bottom:1px solid var(--gray-200)"></th></tr></thead><tbody>';
-    s.lots.forEach(function(l){
-      var idx=s.allLots.indexOf(l);   // true index in the store (list may be origin-filtered)
+    fefo.forEach(function(l){
+      var idx=s.allLots.indexOf(l);   // true index in the store (list may be origin-filtered / re-sorted)
       html += '<tr>'
         + '<td style="'+td+';color:var(--gray-800)">'+esc(l.lot)+'</td>'
         + '<td style="'+td+';color:var(--gray-700)">'+esc(l.origin)+'</td>'
         + '<td style="'+td+';color:var(--gray-700)">'+esc(l.supplier)+'</td>'
-        + '<td style="padding:6px 14px;border-bottom:1px solid var(--gray-100);text-align:right"><input type="number" step="1" value="'+(parseFloat(l.cases)||0)+'" onchange="invmProdSetLotCases(\''+p+'\','+idx+',this.value)" style="width:64px;text-align:right;font-family:var(--fm);font-size:11.5px;border:1px solid var(--gray-200);border-radius:5px;padding:2px 6px;color:var(--gray-900)"></td>'
+        + '<td style="padding:6px 14px;border-bottom:1px solid var(--gray-100)"><input type="date" value="'+(l.received||'')+'" onchange="invmProdSetLotReceived(\''+p+'\','+idx+',this.value)" style="'+dinp+'"></td>'
+        + '<td style="'+td+';text-align:right">'+ageBadge(storedOf(l))+'</td>'
+        + '<td style="padding:6px 14px;border-bottom:1px solid var(--gray-100);text-align:right"><input type="number" step="1" value="'+(parseFloat(l.cases)||0)+'" onchange="invmProdSetLotCases(\''+p+'\','+idx+',this.value)" style="width:60px;text-align:right;font-family:var(--fm);font-size:11.5px;border:1px solid var(--gray-200);border-radius:5px;padding:2px 6px;color:var(--gray-900)"></td>'
         + '<td style="'+td+';text-align:right;color:var(--gray-700)">'+f((parseFloat(l.cases)||0)*s.caseLb)+'</td>'
         + '<td style="'+td+';text-align:right;color:var(--gray-700)">$'+f(l.avgCost)+'</td>'
         + '<td style="'+td+';text-align:right"><button onclick="invmProdRemoveLot(\''+p+'\','+idx+')" title="Remove" style="border:none;background:none;color:var(--gray-300);cursor:pointer;font-size:15px;line-height:1">×</button></td>'
         + '</tr>';
     });
-    html += '<tr><td colspan="3" style="padding:9px 14px;background:var(--gray-50);font-weight:700;color:var(--gray-900)">Total (excl. W / vLot lots)</td>'
+    html += '<tr><td colspan="5" style="padding:9px 14px;background:var(--gray-50);font-weight:700;color:var(--gray-900)">Total (excl. W / vLot lots)</td>'
       + '<td style="padding:9px 14px;background:var(--gray-50);text-align:right;font-weight:700;color:var(--gray-900)">'+f(s.onHandCases)+'</td>'
       + '<td style="padding:9px 14px;background:var(--gray-50);text-align:right;font-weight:700;color:var(--gray-900)">'+f(s.onHandLbs)+'</td>'
       + '<td colspan="2" style="padding:9px 14px;background:var(--gray-50)"></td></tr>';
-    html += '</tbody></table>';
+    html += '</tbody></table></div>';
   } else {
     html += '<div style="padding:26px;text-align:center;color:var(--gray-300);font-size:12px">No lots. Use <b>+ Add lot</b> or the Sales Desk snippet.</div>';
   }
   html += '</div>';
   html += '<div style="font-size:11.5px;color:var(--gray-600);background:var(--sky-50,#eff6ff);border:1px solid var(--sky-200,#bfdbfe);border-radius:8px;padding:11px 13px">'
-    + '<b style="color:var(--sky-700,#1d4ed8)">Update on-hand:</b> tell me "update the '+esc(s.label)+' inventory" and I\'ll generate a <b>Sales Desk</b> snippet (Floor Count, excl. W/vLot lots) to paste in the console — same as the Monday ginger routine. Replaces this product\'s lots.</div>';
+    + '<b style="color:var(--sky-700,#1d4ed8)">Update on-hand:</b> tell me "update the '+esc(s.label)+' inventory" and I\'ll generate a <b>Sales Desk</b> snippet (Floor Count, excl. W/vLot lots) to paste in the console — same as the Monday ginger routine. <b>Received date</b> = the PO\'s scheduled delivery date (WholesaleWare → Purchase Orders); it drives storage days + FEFO. Set it per lot above or I\'ll pull it with the update.</div>';
   return html;
 }
 // ── Analysis block (assumptions + KPIs + formula) — shared by the Buy Planner product view.
