@@ -14171,6 +14171,7 @@ function bpInvLot(id,st,hist){
 // ============ INVENTORY MANAGEMENT MODULE (d-series, Stage 1) ============
 var INVM_TAB='lots', INVM_DAYSMODE='auto', INVM_RATEKEY='mean';
 var INVM_PRODUCT='ginger';   // which product the Inventory module shows (ginger = existing rich module)
+var INVM_ORIGIN='all';       // origin sub-filter within a product view ('all' or e.g. 'Fiji'/'Hawaii')
 function invmEl(id){ return document.getElementById(id); }
 function invmNum(id,def){ var e=invmEl(id); var v=e?parseFloat(e.value):NaN; return isNaN(v)?def:v; }
 function invmF(n){ return Math.round(n||0).toLocaleString('en-US'); }
@@ -14334,7 +14335,11 @@ function invmTab(x){ INVM_TAB=x; renderInventory(); }
 // run-rate) → weeks of cover → an ANALYTICALLY-derived target cover (lead time + safety stock,
 // safety = z·CV·√lead) → suggested order. No shelf-life, no CIF (delivered purchase, no incoterms).
 var PROD_INV_LS='jlz_prod_inv_v1';
-function invmSetProduct(p){ INVM_PRODUCT=p; renderInventory(); }
+function invmSetProduct(p){ INVM_PRODUCT=p; INVM_ORIGIN='all'; renderInventory(); }
+function invmSetOrigin(o){ INVM_ORIGIN=o||'all'; renderInventory(); }
+// Distinct origins present in a product's on-hand lots (for the origin sub-filter).
+function invmOriginsFor(p){ var seen={}, out=[]; (prodInvFor(p).lots||[]).forEach(function(l){ var o=(l.origin||'').trim(); if(o && !seen[o]){ seen[o]=1; out.push(o); } }); return out; }
+function invmOriginMatch(r,origin){ if(!origin||origin==='all') return true; return String(r&&r.origin||'').toLowerCase().indexOf(String(origin).toLowerCase())>-1; }
 // Service level → z (one-sided normal). Default 95% → 1.65.
 function invmZFromService(pct){ pct=+pct||95; if(pct>=99)return 2.33; if(pct>=98)return 2.05; if(pct>=97)return 1.88; if(pct>=95)return 1.65; if(pct>=90)return 1.28; if(pct>=85)return 1.04; if(pct>=80)return 0.84; return 1.65; }
 function invmStdev(a){ if(!a||a.length<2)return 0; var mn=a.reduce(function(x,y){return x+y;},0)/a.length; var v=a.reduce(function(s,x){return s+(x-mn)*(x-mn);},0)/(a.length-1); return Math.sqrt(v); }
@@ -14362,22 +14367,29 @@ function prodInvState(){ try{ var o=JSON.parse(localStorage.getItem(PROD_INV_LS)
 function prodInvSave(st){ try{ localStorage.setItem(PROD_INV_LS, JSON.stringify(st)); }catch(e){} }
 function prodInvFor(p){ var st=prodInvState(); if(!st[p]) st[p]={serviceLevel:95,demandOverride:null,lots:[]}; return st[p]; }
 // Demand model for any product (ginger via prod model; focused product live; else built on-demand from raw rows).
-function invmProductModel(p){
-  if(p==='ginger') return (typeof qaModelG==='function')?qaModelG():null;
-  if(typeof productFocus==='function' && productFocus()===p && typeof _dmModel!=='undefined' && _dmModel) return _dmModel;
+function invmProductModel(p,origin){
+  origin=origin||'all';
+  if(origin==='all'){
+    if(p==='ginger') return (typeof qaModelG==='function')?qaModelG():null;
+    if(typeof productFocus==='function' && productFocus()===p && typeof _dmModel!=='undefined' && _dmModel) return _dmModel;
+  }
   if(typeof _dmRawAll!=='undefined' && Array.isArray(_dmRawAll) && typeof dmBuild==='function'){
-    try{ return dmBuild(_dmRawAll.filter(function(r){ return (r.prod||'ginger')===p; }), false, p); }catch(e){ return null; }
+    try{ return dmBuild(_dmRawAll.filter(function(r){ return (r.prod||'ginger')===p && invmOriginMatch(r,origin); }), false, p); }catch(e){ return null; }
   }
   return null;
 }
-function invmProductStats(p){
+function invmProductStats(p,origin){
+  origin=origin||(typeof INVM_ORIGIN!=='undefined'?INVM_ORIGIN:'all');
   var meta=(typeof PRODUCTS==='object'&&PRODUCTS[p])||{};
   var caseLb=(typeof productCaseLb==='function')?productCaseLb(p):30;
-  var store=prodInvFor(p), lots=store.lots||[];
+  var store=prodInvFor(p);
+  var origins=invmOriginsFor(p);
+  var allLots=store.lots||[];
+  var lots=(origin==='all')?allLots:allLots.filter(function(l){ return invmOriginMatch(l,origin); });
   var onHandCases=lots.reduce(function(s,l){ return s+(parseFloat(l.cases)||0); },0);
   var onHandLbs=onHandCases*caseLb;
   var costVal=lots.reduce(function(s,l){ return s+(parseFloat(l.cases)||0)*(parseFloat(l.avgCost)||0); },0);
-  var m=invmProductModel(p);
+  var m=invmProductModel(p,origin);
   var rr13=(m&&m.runRate13>0)?m.runRate13:0;                              // lbs/wk (13-wk structural)
   var ovr=(store.demandOverride!=null&&store.demandOverride!=='')?parseFloat(store.demandOverride):null;
   var weeklyLbs=(ovr!=null&&ovr>0)?ovr*caseLb:rr13;                       // override is entered in cases
@@ -14387,7 +14399,9 @@ function invmProductStats(p){
   var mean=vals.length?vals.reduce(function(a,b){return a+b;},0)/vals.length:0;
   var sd=(vals.length>1)?invmStdev(vals):0;
   var cv=(mean>0)?sd/mean:0;
-  var lead=0; (meta.suppliers||[]).forEach(function(s){ if((s.leadDays||0)>lead) lead=s.leadDays; });
+  var supList=(meta.suppliers||[]).filter(function(sp){ return origin==='all' || invmOriginMatch(sp,origin); });
+  if(!supList.length) supList=(meta.suppliers||[]);
+  var lead=0; supList.forEach(function(s){ if((s.leadDays||0)>lead) lead=s.leadDays; });
   var leadWks=lead/7;
   var svc=(store.serviceLevel!=null)?store.serviceLevel:95, z=invmZFromService(svc);
   var safetyWks=(cv>0&&leadWks>0)?z*cv*Math.sqrt(leadWks):0;
@@ -14396,7 +14410,8 @@ function invmProductStats(p){
   var orderCases=Math.ceil(Math.max(0,(targetWks*weeklyLbs)-onHandLbs)/caseLb);
   var status='ok';
   if(weeklyLbs>0){ if(coverWks<leadWks) status='ur'; else if(coverWks<targetWks) status='re'; }
-  return {p:p,meta:meta,label:meta.label||p,caseLb:caseLb,lots:lots,onHandCases:onHandCases,onHandLbs:onHandLbs,costVal:costVal,
+  return {p:p,meta:meta,label:meta.label||p,caseLb:caseLb,lots:lots,allLots:allLots,onHandCases:onHandCases,onHandLbs:onHandLbs,costVal:costVal,
+    origin:origin,origins:origins,supList:supList,
     hasModel:!!m,rr13:rr13,weeklyLbs:weeklyLbs,weeklyCases:weeklyCases,demandOverride:ovr,cv:cv,nWeeks:vals.length,
     lead:lead,leadWks:leadWks,z:z,serviceLevel:svc,safetyWks:safetyWks,targetWks:targetWks,coverWks:coverWks,orderCases:orderCases,status:status};
 }
@@ -14406,89 +14421,177 @@ function invmProdClearDemand(p){ var st=prodInvState(); if(st[p]){ st[p].demandO
 function invmProdSetLotCases(p,i,v){ var st=prodInvState(); if(st[p]&&st[p].lots&&st[p].lots[i]){ st[p].lots[i].cases=Math.max(0,parseFloat(v)||0); prodInvSave(st); renderInventory(); } }
 function invmProdRemoveLot(p,i){ var st=prodInvState(); if(st[p]&&st[p].lots){ st[p].lots.splice(i,1); prodInvSave(st); renderInventory(); } }
 function invmProdAddLot(p){ var st=prodInvState(); if(!st[p]) st[p]={serviceLevel:95,demandOverride:null,lots:[]}; if(!st[p].lots) st[p].lots=[]; var sup=(PRODUCTS[p]&&PRODUCTS[p].suppliers&&PRODUCTS[p].suppliers[0])||{}; st[p].lots.push({lot:'NEW',origin:sup.origin||'',supplier:sup.name||'',cases:0,avgCost:0}); prodInvSave(st); renderInventory(); }
+// Incoming supply per product from the Fase 1 Orders pipeline (Contracted / In Transit), by arrival week.
+function invmProductArrivals(p){
+  var out={};
+  var orders=(typeof getOrders==='function')?getOrders():[];
+  orders.forEach(function(o){
+    if(_ordProd(o)!==p) return;
+    if(!(o.status==='Contracted'||o.status==='In Transit')) return;
+    var eta=o.arrivalActual||o.arrivalEstimated||o.etaActual||o.etaEstimated; if(!eta) return;
+    var cs=parseFloat(o.cases)||0; if(cs<=0) return;
+    var wk; try{ wk=(typeof dmWeekKey==='function')?dmWeekKey(new Date(String(eta).slice(0,10)+'T12:00:00')):null; }catch(e){ wk=null; }
+    if(!wk) return;
+    out[wk]=(out[wk]||0)+cs;
+  });
+  return out;
+}
+// Forward 13-week coverage projection + time-aware buy verdict (Fase 3a). Ginger keeps its own Buy Planner.
+function invmProjectionHTML(s){
+  var p=s.p, N=13;
+  var f=function(n){ return Math.round(n||0).toLocaleString('en-US'); };
+  var f1=function(n){ return (!isFinite(n))?'∞':(Math.round((n||0)*10)/10).toFixed(1); };
+  if(!(s.weeklyLbs>0)) return '';   // no demand → cannot project
+  var weeklyCases=s.weeklyCases, safetyCases=s.safetyWks*weeklyCases, targetCases=s.targetWks*weeklyCases;
+  var arrivals=invmProductArrivals(p), hasArr=false;
+  var base=new Date();
+  var baseMon; try{ baseMon=(typeof dmWeekKey==='function')?dmWeekKey(base):null; }catch(e){ baseMon=null; }
+  var baseDate=baseMon?new Date(baseMon+'T12:00:00'):base;
+  var weeks=[], start=s.onHandCases, firstShort=null;
+  for(var i=0;i<N;i++){
+    var dd=new Date(baseDate.getTime()+i*7*86400000);
+    var wkISO; try{ wkISO=(typeof dmWeekKey==='function')?dmWeekKey(dd):dd.toISOString().slice(0,10); }catch(e){ wkISO=dd.toISOString().slice(0,10); }
+    var arr=arrivals[wkISO]||0; if(arr>0) hasArr=true;
+    var end=start+arr-weeklyCases;
+    if(firstShort===null && end<safetyCases) firstShort=i;
+    weeks.push({i:i,wkISO:wkISO,start:start,arr:arr,end:end});
+    start=end;
+  }
+  var lbl=function(iso){ return (typeof dmcDateLabel==='function' && dmcDateLabel(iso)) || String(iso).slice(5); };
+  // verdict — aligned with the KPI status so the two never contradict.
+  var verdict, vcls;
+  if(firstShort===null){
+    vcls='ok'; verdict='<b>Covered for '+N+' weeks.</b> On-hand'+(hasArr?' + incoming':'')+' never drops below safety ('+f(safetyCases)+' cs). No action.';
+  } else if(!(s.orderCases>0)){
+    // on-hand is above target now, but the drawdown will reach the reorder point later
+    vcls='ok';
+    verdict='<b>On track.</b> On-hand is above target now; cover reaches the reorder point around <b>'+lbl(weeks[firstShort].wkISO)+'</b>. Reorder then — no action yet.';
+  } else {
+    var shortWk=weeks[firstShort];
+    var orderByIdx=Math.max(0, firstShort-Math.ceil(s.leadWks));
+    var orderByISO=weeks[orderByIdx].wkISO;
+    vcls=(s.status==='ur')?'ur':'re';
+    verdict='<b>'+((s.status==='ur')?'Urgent.':'Reorder.')+'</b> Drops below safety ('+f(safetyCases)+' cs) on <b>'+lbl(shortWk.wkISO)+'</b> (week +'+firstShort+'). '
+      +'Lead '+f1(s.leadWks)+' wk → place the order by <b>'+lbl(orderByISO)+'</b> at the latest. Suggested: <b>'+f(s.orderCases)+' cs</b> to reach target.';
+  }
+  // table
+  var th='text-align:right;font-family:var(--fb);font-size:9px;text-transform:uppercase;letter-spacing:.03em;color:var(--gray-400);font-weight:700;padding:6px 10px;background:var(--gray-50);border-bottom:1px solid var(--gray-200)';
+  var rows='';
+  weeks.forEach(function(w){
+    var col=(w.end<0)?'#b91c1c':(w.end<safetyCases)?'#b45309':(w.end<targetCases)?'var(--gray-700)':'#047857';
+    var bg=(w.i===firstShort)?'background:#fffbeb;':'';
+    rows+='<tr style="'+bg+'">'
+      +'<td style="text-align:left;padding:5px 10px;border-bottom:1px solid var(--gray-100);color:var(--gray-600)">'+(w.i===0?'now':lbl(w.wkISO))+'</td>'
+      +'<td style="text-align:right;padding:5px 10px;border-bottom:1px solid var(--gray-100);color:var(--gray-500)">'+f(w.start)+'</td>'
+      +'<td style="text-align:right;padding:5px 10px;border-bottom:1px solid var(--gray-100);color:'+(w.arr>0?'#047857':'var(--gray-300)')+'">'+(w.arr>0?('+'+f(w.arr)):'·')+'</td>'
+      +'<td style="text-align:right;padding:5px 10px;border-bottom:1px solid var(--gray-100);color:var(--gray-400)">−'+f(weeklyCases)+'</td>'
+      +'<td style="text-align:right;padding:5px 10px;border-bottom:1px solid var(--gray-100);font-weight:700;color:'+col+'">'+f(w.end)+'</td>'
+      +'</tr>';
+  });
+  return '<div style="background:var(--white);border:1px solid var(--gray-200);border-radius:10px;overflow:hidden;margin-bottom:14px">'
+    +'<div style="padding:11px 14px;border-bottom:1px solid var(--gray-100)"><span style="font-size:12px;font-weight:700;color:var(--jlz);text-transform:uppercase;letter-spacing:.05em">'+N+'-week projection</span> <span style="font-size:10.5px;color:var(--gray-400)">· cases · arrivals from the Orders pipeline</span></div>'
+    +'<div style="padding:11px 14px"><div class="ipv-st '+vcls+'" style="display:block;margin-bottom:10px;line-height:1.55">'+verdict+'</div>'
+    +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11px">'
+    +'<thead><tr><th style="'+th+';text-align:left">Week</th><th style="'+th+'">Start</th><th style="'+th+'">In</th><th style="'+th+'">Demand</th><th style="'+th+'">End</th></tr></thead>'
+    +'<tbody>'+rows+'</tbody></table></div>'
+    +'<div style="font-size:10px;color:var(--gray-400);margin-top:8px">End = Start + In − Demand. <span style="color:#047857">green</span> ≥ target · <span style="color:#b45309">amber</span> &lt; safety · <span style="color:#b91c1c">red</span> &lt; 0. Highlighted row = first drop below safety.</div>'
+    +'</div></div>';
+}
 function invmRenderProduct(p){
   var s=invmProductStats(p);
   var f=function(n){ return Math.round(n||0).toLocaleString('en-US'); };
   var f1=function(n){ return (!isFinite(n))?'∞':(Math.round((n||0)*10)/10).toFixed(1); };
   var esc=(typeof libEsc==='function')?libEsc:function(x){ return String(x==null?'':x); };
-  var stCls=s.status, stTxt=(s.status==='ur')?'● Urgente':(s.status==='re')?'● Reponer':'● OK';
+  var stCls=s.status, stTxt=(s.status==='ur')?'● Urgent':(s.status==='re')?'● Reorder':'● OK';
+  var oScope = (s.origin==='all') ? '' : ' ('+esc(s.origin)+')';
   var demandVal = s.weeklyLbs>0 ? f(s.weeklyCases) : '';
-  var demandSrc = s.weeklyLbs<=0 ? '<span style="color:var(--amber-700)">cargá ventas o poné manual</span>'
-                : (s.demandOverride!=null ? 'manual · <a href="javascript:invmProdClearDemand(\''+p+'\')" style="color:var(--jlz)">usar run-rate</a>' : '◆ run-rate real 13 sem');
-  var covTxt = s.weeklyLbs>0 ? f1(s.coverWks)+' <small>sem</small>' : '—';
-  var tgtTxt = (s.weeklyLbs>0 && s.leadWks>0) ? f1(s.targetWks)+' <small>sem</small>' : '—';
+  var demandSrc = s.weeklyLbs<=0 ? '<span style="color:var(--amber-700)">load sales or set manually</span>'
+                : (s.demandOverride!=null ? 'manual · <a href="javascript:invmProdClearDemand(\''+p+'\')" style="color:var(--jlz)">use run-rate</a>' : '◆ live run-rate · 13 wk'+oScope);
+  var covTxt = s.weeklyLbs>0 ? f1(s.coverWks)+' <small>wk</small>' : '—';
+  var tgtTxt = (s.weeklyLbs>0 && s.leadWks>0) ? f1(s.targetWks)+' <small>wk</small>' : '—';
   var ordTxt = s.weeklyLbs>0 ? f(s.orderCases)+' <small>cs</small>' : '—';
-  var cvTxt = (s.nWeeks>1) ? (Math.round(s.cv*100)+'% ('+s.nWeeks+' sem)') : 'insuf. historial';
+  var cvTxt = (s.nWeeks>1) ? (Math.round(s.cv*100)+'% ('+s.nWeeks+' wk)') : 'insufficient history';
+  var supNames = esc((s.supList&&s.supList.map(function(x){return x.name;}).join(', '))||'—');
+  var supOrigins = esc((s.supList&&s.supList.map(function(x){return x.origin;}).filter(function(v,i,a){return a.indexOf(v)===i;}).join(' / '))||'');
+  var html='';
+  // origin sub-filter (only when the product has more than one origin on hand)
+  if(s.origins && s.origins.length>1){
+    var pill=function(val,lbl){ var on=(s.origin===val); return '<button onclick="invmSetOrigin(\''+val+'\')" style="font-family:var(--fb);font-size:12px;font-weight:600;padding:5px 13px;border-radius:999px;border:1px solid '+(on?'var(--jlz)':'var(--gray-200)')+';background:'+(on?'var(--jlz)':'var(--white)')+';color:'+(on?'#fff':'var(--gray-600)')+';cursor:pointer">'+lbl+'</button>'; };
+    html += '<div style="display:flex;gap:6px;align-items:center;margin-bottom:12px;flex-wrap:wrap"><span style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-right:4px">Origin</span>'
+      + pill('all','All origins')
+      + s.origins.map(function(o){ return pill(o, esc(o)); }).join('')
+      + '</div>';
+  }
   // assumptions
-  var html=''
-    + '<div class="ipv-assume">'
-      + '<div class="ipv-af"><label>Demanda semanal</label>'
+  html += '<div class="ipv-assume">'
+      + '<div class="ipv-af"><label>Weekly demand</label>'
         + '<div class="val"><input type="number" step="1" value="'+demandVal+'" placeholder="—" onchange="invmProdSetDemand(\''+p+'\',this.value)"> <small>cs</small></div>'
         + '<div class="src">'+demandSrc+'</div></div>'
-      + '<div class="ipv-af"><label>Nivel de servicio</label>'
+      + '<div class="ipv-af"><label>Service level</label>'
         + '<div class="val"><input type="number" step="1" min="80" max="99" value="'+s.serviceLevel+'" onchange="invmProdSetService(\''+p+'\',this.value)"> <small>% · z='+s.z.toFixed(2)+'</small></div>'
-        + '<div class="src">riesgo de stockout que aceptás</div></div>'
+        + '<div class="src">stockout risk you accept</div></div>'
       + '<div class="ipv-af"><label>Lead time</label>'
-        + '<div class="val">'+f1(s.leadWks)+' <small>sem · '+f(s.lead)+' d</small></div>'
-        + '<div class="src">máx proveedor · '+esc((s.meta.suppliers&&s.meta.suppliers.map(function(x){return x.name;}).join(', '))||'—')+'</div></div>'
-      + '<div class="ipv-af"><label>Presentación compra</label>'
-        + '<div class="val">'+f(s.caseLb)+' <small>lb/caja</small></div>'
-        + '<div class="src">'+esc((s.meta.suppliers&&s.meta.suppliers.map(function(x){return x.origin;}).filter(function(v,i,a){return a.indexOf(v)===i;}).join(' / '))||'')+'</div></div>'
+        + '<div class="val">'+f1(s.leadWks)+' <small>wk · '+f(s.lead)+' d</small></div>'
+        + '<div class="src">max supplier · '+supNames+'</div></div>'
+      + '<div class="ipv-af"><label>Purchase pack</label>'
+        + '<div class="val">'+f(s.caseLb)+' <small>lb/case</small></div>'
+        + '<div class="src">'+supOrigins+'</div></div>'
     + '</div>'
     // KPIs
     + '<div class="ipv-kpis">'
-      + '<div class="ipv-kpi"><div class="lbl">On-hand</div><div class="big">'+f(s.onHandCases)+' <small>cs</small></div><div class="note">'+f(s.onHandLbs)+' lb · '+s.lots.length+' lots · costo '+'$'+f(s.costVal)+'</div></div>'
-      + '<div class="ipv-kpi"><div class="lbl">Cobertura actual</div><div class="big">'+covTxt+'</div><div class="note">on-hand ÷ demanda/sem</div></div>'
-      + '<div class="ipv-kpi"><div class="lbl">Cobertura objetivo</div><div class="big">'+tgtTxt+'</div><div class="note">lead '+f1(s.leadWks)+' + safety '+f1(s.safetyWks)+'</div></div>'
-      + '<div class="ipv-kpi"><div class="lbl">Sugerido ordenar</div><div class="big" style="color:'+(s.orderCases>0?'var(--jlz)':'var(--gray-400)')+'">'+ordTxt+'</div><div><span class="ipv-st '+stCls+'">'+stTxt+'</span></div></div>'
+      + '<div class="ipv-kpi"><div class="lbl">On-hand'+oScope+'</div><div class="big">'+f(s.onHandCases)+' <small>cs</small></div><div class="note">'+f(s.onHandLbs)+' lb · '+s.lots.length+' lots · cost $'+f(s.costVal)+'</div></div>'
+      + '<div class="ipv-kpi"><div class="lbl">Current cover</div><div class="big">'+covTxt+'</div><div class="note">on-hand ÷ demand/wk</div></div>'
+      + '<div class="ipv-kpi"><div class="lbl">Target cover</div><div class="big">'+tgtTxt+'</div><div class="note">lead '+f1(s.leadWks)+' + safety '+f1(s.safetyWks)+'</div></div>'
+      + '<div class="ipv-kpi"><div class="lbl">Suggested order</div><div class="big" style="color:'+(s.orderCases>0?'var(--jlz)':'var(--gray-400)')+'">'+ordTxt+'</div><div><span class="ipv-st '+stCls+'">'+stTxt+'</span></div></div>'
     + '</div>';
   // formula (only when demand is known)
   if(s.weeklyLbs>0 && s.leadWks>0){
     html += '<div class="ipv-formula">'
-      + '<b>cobertura actual</b> = '+f(s.onHandLbs)+' lb ÷ '+f(s.weeklyLbs)+' lb/sem = <b>'+f1(s.coverWks)+' sem</b><br>'
-      + '<b>variabilidad</b> (CV de tus ventas) = '+cvTxt+' · <b>safety</b> = z('+s.z.toFixed(2)+' @'+s.serviceLevel+'%) × CV × √lead = <b>'+f1(s.safetyWks)+' sem</b><br>'
-      + '<b>cobertura objetivo</b> = lead '+f1(s.leadWks)+' + safety '+f1(s.safetyWks)+' = <b>'+f1(s.targetWks)+' sem</b><br>'
-      + '<b>ordenar</b> = máx(0, objetivo×demanda − on-hand) ÷ '+f(s.caseLb)+' lb = <b>'+f(s.orderCases)+' cs</b>'
+      + '<b>current cover</b> = '+f(s.onHandLbs)+' lb ÷ '+f(s.weeklyLbs)+' lb/wk = <b>'+f1(s.coverWks)+' wk</b><br>'
+      + '<b>variability</b> (CV of your sales) = '+cvTxt+' · <b>safety</b> = z('+s.z.toFixed(2)+' @'+s.serviceLevel+'%) × CV × √lead = <b>'+f1(s.safetyWks)+' wk</b><br>'
+      + '<b>target cover</b> = lead '+f1(s.leadWks)+' + safety '+f1(s.safetyWks)+' = <b>'+f1(s.targetWks)+' wk</b><br>'
+      + '<b>order</b> = max(0, target×demand − on-hand) ÷ '+f(s.caseLb)+' lb = <b>'+f(s.orderCases)+' cs</b>'
       + '</div>';
   } else if(!s.hasModel){
-    html += '<div class="ipv-formula" style="color:var(--amber-700);border-color:var(--amber-200);background:var(--amber-50)">No hay ventas cargadas para calcular la demanda/objetivo. Cargá el reporte de ventas (tab Demand) o poné la demanda semanal a mano arriba.</div>';
+    html += '<div class="ipv-formula" style="color:var(--amber-700);border-color:var(--amber-200);background:var(--amber-50)">No sales loaded to compute demand / target. Load the sales report (Demand tab) or set weekly demand manually above.</div>';
   }
+  // forward projection + time-aware buy verdict (Fase 3a)
+  html += invmProjectionHTML(s);
   // lots table
+  var thL='text-align:left;font-family:var(--fb);font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-400);font-weight:700;padding:8px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-200)';
+  var thR=thL.replace('text-align:left','text-align:right');
+  var td='padding:9px 14px;border-bottom:1px solid var(--gray-100)';
   html += '<div class="card" style="background:var(--white);border:1px solid var(--gray-200);border-radius:10px;overflow:hidden;margin-bottom:14px">'
-    + '<div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--gray-100)"><span style="font-size:12px;font-weight:700;color:var(--jlz);text-transform:uppercase;letter-spacing:.05em">Lots en mano — '+esc(s.label)+'</span>'
-      + '<button onclick="invmProdAddLot(\''+p+'\')" style="font-family:var(--fb);font-size:11px;font-weight:600;padding:5px 11px;border:1px solid var(--gray-200);border-radius:6px;background:var(--white);color:var(--gray-600);cursor:pointer">+ Agregar lot</button></div>';
+    + '<div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--gray-100)"><span style="font-size:12px;font-weight:700;color:var(--jlz);text-transform:uppercase;letter-spacing:.05em">Lots on hand — '+esc(s.label)+oScope+'</span>'
+      + '<button onclick="invmProdAddLot(\''+p+'\')" style="font-family:var(--fb);font-size:11px;font-weight:600;padding:5px 11px;border:1px solid var(--gray-200);border-radius:6px;background:var(--white);color:var(--gray-600);cursor:pointer">+ Add lot</button></div>';
   if(s.lots.length){
-    html += '<table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11.5px">'
-      + '<thead><tr>'
-      + '<th style="text-align:left;font-family:var(--fb);font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-400);font-weight:700;padding:8px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-200)">Lot</th>'
-      + '<th style="text-align:left;font-family:var(--fb);font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-400);font-weight:700;padding:8px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-200)">Origen</th>'
-      + '<th style="text-align:left;font-family:var(--fb);font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-400);font-weight:700;padding:8px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-200)">Proveedor</th>'
-      + '<th style="text-align:right;font-family:var(--fb);font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-400);font-weight:700;padding:8px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-200)">Cajas</th>'
-      + '<th style="text-align:right;font-family:var(--fb);font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-400);font-weight:700;padding:8px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-200)">Lbs</th>'
-      + '<th style="text-align:right;font-family:var(--fb);font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-400);font-weight:700;padding:8px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-200)">Costo/cs</th>'
+    html += '<table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11.5px"><thead><tr>'
+      + '<th style="'+thL+'">Lot</th><th style="'+thL+'">Origin</th><th style="'+thL+'">Supplier</th>'
+      + '<th style="'+thR+'">Cases</th><th style="'+thR+'">Lbs</th><th style="'+thR+'">Cost/cs</th>'
       + '<th style="background:var(--gray-50);border-bottom:1px solid var(--gray-200)"></th></tr></thead><tbody>';
-    s.lots.forEach(function(l,i){
+    s.lots.forEach(function(l){
+      var idx=s.allLots.indexOf(l);   // true index in the store (list may be origin-filtered)
       html += '<tr>'
-        + '<td style="padding:9px 14px;border-bottom:1px solid var(--gray-100);color:var(--gray-800)">'+esc(l.lot)+'</td>'
-        + '<td style="padding:9px 14px;border-bottom:1px solid var(--gray-100);color:var(--gray-700)">'+esc(l.origin)+'</td>'
-        + '<td style="padding:9px 14px;border-bottom:1px solid var(--gray-100);color:var(--gray-700)">'+esc(l.supplier)+'</td>'
-        + '<td style="padding:6px 14px;border-bottom:1px solid var(--gray-100);text-align:right"><input type="number" step="1" value="'+(parseFloat(l.cases)||0)+'" onchange="invmProdSetLotCases(\''+p+'\','+i+',this.value)" style="width:64px;text-align:right;font-family:var(--fm);font-size:11.5px;border:1px solid var(--gray-200);border-radius:5px;padding:2px 6px;color:var(--gray-900)"></td>'
-        + '<td style="padding:9px 14px;border-bottom:1px solid var(--gray-100);text-align:right;color:var(--gray-700)">'+f((parseFloat(l.cases)||0)*s.caseLb)+'</td>'
-        + '<td style="padding:9px 14px;border-bottom:1px solid var(--gray-100);text-align:right;color:var(--gray-700)">$'+f(l.avgCost)+'</td>'
-        + '<td style="padding:9px 14px;border-bottom:1px solid var(--gray-100);text-align:right"><button onclick="invmProdRemoveLot(\''+p+'\','+i+')" title="Quitar" style="border:none;background:none;color:var(--gray-300);cursor:pointer;font-size:15px;line-height:1">×</button></td>'
+        + '<td style="'+td+';color:var(--gray-800)">'+esc(l.lot)+'</td>'
+        + '<td style="'+td+';color:var(--gray-700)">'+esc(l.origin)+'</td>'
+        + '<td style="'+td+';color:var(--gray-700)">'+esc(l.supplier)+'</td>'
+        + '<td style="padding:6px 14px;border-bottom:1px solid var(--gray-100);text-align:right"><input type="number" step="1" value="'+(parseFloat(l.cases)||0)+'" onchange="invmProdSetLotCases(\''+p+'\','+idx+',this.value)" style="width:64px;text-align:right;font-family:var(--fm);font-size:11.5px;border:1px solid var(--gray-200);border-radius:5px;padding:2px 6px;color:var(--gray-900)"></td>'
+        + '<td style="'+td+';text-align:right;color:var(--gray-700)">'+f((parseFloat(l.cases)||0)*s.caseLb)+'</td>'
+        + '<td style="'+td+';text-align:right;color:var(--gray-700)">$'+f(l.avgCost)+'</td>'
+        + '<td style="'+td+';text-align:right"><button onclick="invmProdRemoveLot(\''+p+'\','+idx+')" title="Remove" style="border:none;background:none;color:var(--gray-300);cursor:pointer;font-size:15px;line-height:1">×</button></td>'
         + '</tr>';
     });
-    html += '<tr><td colspan="3" style="padding:9px 14px;background:var(--gray-50);font-weight:700;color:var(--gray-900)">Total (sin lotes W / vLot)</td>'
+    html += '<tr><td colspan="3" style="padding:9px 14px;background:var(--gray-50);font-weight:700;color:var(--gray-900)">Total (excl. W / vLot lots)</td>'
       + '<td style="padding:9px 14px;background:var(--gray-50);text-align:right;font-weight:700;color:var(--gray-900)">'+f(s.onHandCases)+'</td>'
       + '<td style="padding:9px 14px;background:var(--gray-50);text-align:right;font-weight:700;color:var(--gray-900)">'+f(s.onHandLbs)+'</td>'
       + '<td colspan="2" style="padding:9px 14px;background:var(--gray-50)"></td></tr>';
     html += '</tbody></table>';
   } else {
-    html += '<div style="padding:26px;text-align:center;color:var(--gray-300);font-size:12px">Sin lots. Usá <b>+ Agregar lot</b> o el snippet del Sales Desk.</div>';
+    html += '<div style="padding:26px;text-align:center;color:var(--gray-300);font-size:12px">No lots. Use <b>+ Add lot</b> or the Sales Desk snippet.</div>';
   }
   html += '</div>';
   html += '<div style="font-size:11.5px;color:var(--gray-600);background:var(--sky-50,#eff6ff);border:1px solid var(--sky-200,#bfdbfe);border-radius:8px;padding:11px 13px">'
-    + '<b style="color:var(--sky-700,#1d4ed8)">Actualizar on-hand:</b> decime «actualiza el inventario de'+esc(s.label)+'» y genero un snippet del <b>Sales Desk</b> (Floor Count, sin lotes W/vLot) que pegás en la consola — igual que la rutina de ginger de los lunes. Reemplaza los lots de este producto.</div>';
+    + '<b style="color:var(--sky-700,#1d4ed8)">Update on-hand:</b> tell me "update the '+esc(s.label)+' inventory" and I\'ll generate a <b>Sales Desk</b> snippet (Floor Count, excl. W/vLot lots) to paste in the console — same as the Monday ginger routine. Replaces this product\'s lots.</div>';
   return html;
 }
 function invmSetDays(x){ INVM_DAYSMODE=x; renderInventory(); }
