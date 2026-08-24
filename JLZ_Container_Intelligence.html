@@ -4412,6 +4412,7 @@ function authInjectLogo() {
     <button class="invm-ptab"    id="bp-pt-garlic"   onclick="bpSetProduct('garlic')">Garlic</button>
     <button class="invm-ptab"    id="bp-pt-shallots" onclick="bpSetProduct('shallots')">Shallots</button>
   </div>
+  <div class="invm-prodbar" id="bp-ginger-origin" style="display:none;gap:6px;align-items:center;margin:2px 0 12px"></div>
   <div id="bp-product-view" style="display:none"></div>
   <div id="bp-ginger-body">
 
@@ -5494,6 +5495,7 @@ function authInjectLogo() {
     <button class="invm-ptab"    id="invm-pt-garlic"   onclick="invmSetProduct('garlic')">Garlic</button>
     <button class="invm-ptab"    id="invm-pt-shallots" onclick="invmSetProduct('shallots')">Shallots</button>
   </div>
+  <div class="invm-prodbar" id="invm-ginger-origin" style="display:none;gap:6px;align-items:center;margin-top:2px"></div>
   <div class="invm-tabs">
     <button class="invm-tab" id="invm-tb-ov" onclick="invmTab('ov')">Overview</button>
     <button class="invm-tab on" id="invm-tb-lots" onclick="invmTab('lots')">Lots</button>
@@ -14316,11 +14318,27 @@ function renderInventory(){
   // Product selector: ginger keeps the rich module below; other products use the reorder view.
   (typeof ORDER_PRODUCTS!=='undefined'?ORDER_PRODUCTS:['ginger']).forEach(function(p){ var b=invmEl('invm-pt-'+p); if(b) b.classList.toggle('on', p===INVM_PRODUCT); });
   var tabsBar=document.querySelector('.invm-tabs'), barEl=document.querySelector('.invm-bar');
+  var goBar=invmEl('invm-ginger-origin');
   if(INVM_PRODUCT!=='ginger'){
+    if(goBar) goBar.style.display='none';
     if(tabsBar) tabsBar.style.display='none';
     if(barEl) barEl.style.display='none';
     var slP=invmEl('invm-subline'); if(slP) slP.textContent=((typeof PRODUCTS==='object'&&PRODUCTS[INVM_PRODUCT]&&PRODUCTS[INVM_PRODUCT].label)||INVM_PRODUCT);
     content.innerHTML=invmRenderProduct(INVM_PRODUCT);
+    return;
+  }
+  // GINGER — Peru (rich module below) / Hawaii (new reorder view). Peru is the default.
+  var gOrig=(INVM_ORIGIN==='Hawaii')?'Hawaii':'Peru';
+  if(goBar){
+    goBar.style.display='';
+    goBar.innerHTML='<span style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-right:4px;font-family:var(--fb)">Origin</span>'
+      + ['Peru','Hawaii'].map(function(o){ return '<button class="invm-ptab'+(gOrig===o?' on':'')+'" onclick="invmSetOrigin(\''+o+'\')">'+o+'</button>'; }).join('');
+  }
+  if(gOrig==='Hawaii'){
+    if(tabsBar) tabsBar.style.display='none';
+    if(barEl) barEl.style.display='none';
+    var slH=invmEl('invm-subline'); if(slH) slH.textContent='ginger · Hawaii';
+    content.innerHTML=invmRenderProduct('ginger');
     return;
   }
   if(tabsBar) tabsBar.style.display='';
@@ -14347,8 +14365,15 @@ function invmTab(x){ INVM_TAB=x; renderInventory(); }
 // run-rate) → weeks of cover → an ANALYTICALLY-derived target cover (lead time + safety stock,
 // safety = z·CV·√lead) → suggested order. No shelf-life, no CIF (delivered purchase, no incoterms).
 var PROD_INV_LS='jlz_prod_inv_v1';
-function invmSetProduct(p){ INVM_PRODUCT=p; INVM_ORIGIN='all'; renderInventory(); }
+function invmSetProduct(p){ INVM_PRODUCT=p; var og=invmOriginsFor(p); INVM_ORIGIN=(p==='ginger')?'Peru':((og&&og[0])||'all'); renderInventory(); }
 function invmSetOrigin(o){ INVM_ORIGIN=o||'all'; renderInventory(); }
+// Re-render whichever product views are showing (Inventory and/or the Buy Planner product view),
+// since demand/service/lot edits feed both. Cheap for Inventory; only refreshes BP when its product view is open.
+function invmReRender(){
+  if(typeof renderInventory==='function') renderInventory();
+  var bpv=document.getElementById('bp-product-view');
+  if(bpv && bpv.style.display!=='none' && typeof renderBuyPlanner==='function') renderBuyPlanner();
+}
 // Distinct origins present in a product's on-hand lots (for the origin sub-filter).
 function invmOriginsFor(p){ var seen={}, out=[]; (prodInvFor(p).lots||[]).forEach(function(l){ var o=(l.origin||'').trim(); if(o && !seen[o]){ seen[o]=1; out.push(o); } }); return out; }
 function invmOriginMatch(r,origin){ if(!origin||origin==='all') return true; return String(r&&r.origin||'').toLowerCase().indexOf(String(origin).toLowerCase())>-1; }
@@ -14357,22 +14382,25 @@ function invmZFromService(pct){ pct=+pct||95; if(pct>=99)return 2.33; if(pct>=98
 function invmStdev(a){ if(!a||a.length<2)return 0; var mn=a.reduce(function(x,y){return x+y;},0)/a.length; var v=a.reduce(function(s,x){return s+(x-mn)*(x-mn);},0)/(a.length-1); return Math.sqrt(v); }
 // Per-product inventory store, seeded from the Sales Desk snapshot (8/23, non-W / non-vLot lots only).
 function prodInvSeed(){ return {
+  ginger:{ serviceLevel:95, demandOverride:null, lots:[
+    {lot:'2395076',origin:'Hawaii',supplier:'Crown Pacific LLC',cases:1,avgCost:103,received:'2026-06-09'}
+  ]},
   turmeric:{ serviceLevel:95, demandOverride:null, lots:[
-    {lot:'2597551',origin:'Fiji',  supplier:'Sbimal',            cases:102, avgCost:72},
-    {lot:'2260876',origin:'Fiji',  supplier:'Sbimal',            cases:7,   avgCost:83},
-    {lot:'2439588',origin:'Fiji',  supplier:'Sbimal',            cases:6,   avgCost:79},
-    {lot:'2305337',origin:'Fiji',  supplier:'Sbimal',            cases:4,   avgCost:84},
-    {lot:'2599919',origin:'Hawaii',supplier:'Kailani Farms',     cases:45,  avgCost:180},
-    {lot:'2435247',origin:'Hawaii',supplier:'Crown Pacific LLC', cases:1,   avgCost:187},
-    {lot:'2558277',origin:'Hawaii',supplier:'Crown Pacific LLC', cases:1,   avgCost:195}
+    {lot:'2597551',origin:'Fiji',  supplier:'Sbimal',            cases:102, avgCost:72, received:'2026-08-24'},
+    {lot:'2260876',origin:'Fiji',  supplier:'Sbimal',            cases:7,   avgCost:83, received:'2026-04-28'},
+    {lot:'2439588',origin:'Fiji',  supplier:'Sbimal',            cases:6,   avgCost:79, received:'2026-06-24'},
+    {lot:'2305337',origin:'Fiji',  supplier:'Sbimal',            cases:4,   avgCost:84, received:'2026-05-12'},
+    {lot:'2599919',origin:'Hawaii',supplier:'Kailani Farms',     cases:45,  avgCost:180,received:'2026-08-22'},
+    {lot:'2435247',origin:'Hawaii',supplier:'Crown Pacific LLC', cases:1,   avgCost:187,received:'2026-06-24'},
+    {lot:'2558277',origin:'Hawaii',supplier:'Crown Pacific LLC', cases:1,   avgCost:195,received:'2026-08-05'}
   ]},
   garlic:{ serviceLevel:95, demandOverride:null, lots:[
-    {lot:'2305351',origin:'California',supplier:'Christopher Ranch',cases:13,avgCost:94},
-    {lot:'2579010',origin:'California',supplier:'Christopher Ranch',cases:11,avgCost:92},
-    {lot:'2608782',origin:'California',supplier:'Christopher Ranch',cases:44,avgCost:86}
+    {lot:'2305351',origin:'California',supplier:'Christopher Ranch',cases:13,avgCost:94,received:'2026-05-08'},
+    {lot:'2579010',origin:'California',supplier:'Christopher Ranch',cases:11,avgCost:92,received:'2026-08-06'},
+    {lot:'2608782',origin:'California',supplier:'Christopher Ranch',cases:44,avgCost:86,received:'2026-08-18'}
   ]},
   shallots:{ serviceLevel:95, demandOverride:null, lots:[
-    {lot:'2587428',origin:'California',supplier:'Peri and Sons',cases:53,avgCost:64}
+    {lot:'2587428',origin:'California',supplier:'Peri and Sons',cases:53,avgCost:64,received:'2026-08-07'}
   ]}
 }; }
 function prodInvState(){ try{ var o=JSON.parse(localStorage.getItem(PROD_INV_LS)||'null'); if(o&&typeof o==='object') return o; }catch(e){} var s=prodInvSeed(); try{ localStorage.setItem(PROD_INV_LS, JSON.stringify(s)); }catch(e){} return s; }
@@ -14391,13 +14419,15 @@ function invmProductModel(p,origin){
   return null;
 }
 function invmProductStats(p,origin){
-  origin=origin||(typeof INVM_ORIGIN!=='undefined'?INVM_ORIGIN:'all');
   var meta=(typeof PRODUCTS==='object'&&PRODUCTS[p])||{};
   var caseLb=(typeof productCaseLb==='function')?productCaseLb(p):30;
   var store=prodInvFor(p);
   var origins=invmOriginsFor(p);
+  origin=origin||(typeof INVM_ORIGIN!=='undefined'?INVM_ORIGIN:'');
+  // Always per-origin: Fiji vs Hawaii (cost/lead differ) must never blend. Resolve 'all'/invalid to the first origin.
+  if(origins.length && (origin==='all' || origins.indexOf(origin)<0)) origin=origins[0];
   var allLots=store.lots||[];
-  var lots=(origin==='all')?allLots:allLots.filter(function(l){ return invmOriginMatch(l,origin); });
+  var lots=(!origin||origin==='all')?allLots:allLots.filter(function(l){ return invmOriginMatch(l,origin); });
   var onHandCases=lots.reduce(function(s,l){ return s+(parseFloat(l.cases)||0); },0);
   var onHandLbs=onHandCases*caseLb;
   var costVal=lots.reduce(function(s,l){ return s+(parseFloat(l.cases)||0)*(parseFloat(l.avgCost)||0); },0);
@@ -14427,13 +14457,13 @@ function invmProductStats(p,origin){
     hasModel:!!m,rr13:rr13,weeklyLbs:weeklyLbs,weeklyCases:weeklyCases,demandOverride:ovr,cv:cv,nWeeks:vals.length,
     lead:lead,leadWks:leadWks,z:z,serviceLevel:svc,safetyWks:safetyWks,targetWks:targetWks,coverWks:coverWks,orderCases:orderCases,status:status};
 }
-function invmProdSetService(p,v){ var st=prodInvState(); if(!st[p]) st[p]={lots:[]}; st[p].serviceLevel=Math.max(50,Math.min(99.5,parseFloat(v)||95)); prodInvSave(st); renderInventory(); }
-function invmProdSetDemand(p,v){ var st=prodInvState(); if(!st[p]) st[p]={lots:[]}; st[p].demandOverride=(v===''||v==null)?null:Math.max(0,parseFloat(v)||0); prodInvSave(st); renderInventory(); }
-function invmProdClearDemand(p){ var st=prodInvState(); if(st[p]){ st[p].demandOverride=null; prodInvSave(st); renderInventory(); } }
-function invmProdSetLotCases(p,i,v){ var st=prodInvState(); if(st[p]&&st[p].lots&&st[p].lots[i]){ st[p].lots[i].cases=Math.max(0,parseFloat(v)||0); prodInvSave(st); renderInventory(); } }
-function invmProdSetLotReceived(p,i,v){ var st=prodInvState(); if(st[p]&&st[p].lots&&st[p].lots[i]){ st[p].lots[i].received=v||''; prodInvSave(st); renderInventory(); } }
-function invmProdRemoveLot(p,i){ var st=prodInvState(); if(st[p]&&st[p].lots){ st[p].lots.splice(i,1); prodInvSave(st); renderInventory(); } }
-function invmProdAddLot(p){ var st=prodInvState(); if(!st[p]) st[p]={serviceLevel:95,demandOverride:null,lots:[]}; if(!st[p].lots) st[p].lots=[]; var sup=(PRODUCTS[p]&&PRODUCTS[p].suppliers&&PRODUCTS[p].suppliers[0])||{}; st[p].lots.push({lot:'NEW',origin:sup.origin||'',supplier:sup.name||'',cases:0,avgCost:0,received:''}); prodInvSave(st); renderInventory(); }
+function invmProdSetService(p,v){ var st=prodInvState(); if(!st[p]) st[p]={lots:[]}; st[p].serviceLevel=Math.max(50,Math.min(99.5,parseFloat(v)||95)); prodInvSave(st); invmReRender(); }
+function invmProdSetDemand(p,v){ var st=prodInvState(); if(!st[p]) st[p]={lots:[]}; st[p].demandOverride=(v===''||v==null)?null:Math.max(0,parseFloat(v)||0); prodInvSave(st); invmReRender(); }
+function invmProdClearDemand(p){ var st=prodInvState(); if(st[p]){ st[p].demandOverride=null; prodInvSave(st); invmReRender(); } }
+function invmProdSetLotCases(p,i,v){ var st=prodInvState(); if(st[p]&&st[p].lots&&st[p].lots[i]){ st[p].lots[i].cases=Math.max(0,parseFloat(v)||0); prodInvSave(st); invmReRender(); } }
+function invmProdSetLotReceived(p,i,v){ var st=prodInvState(); if(st[p]&&st[p].lots&&st[p].lots[i]){ st[p].lots[i].received=v||''; prodInvSave(st); invmReRender(); } }
+function invmProdRemoveLot(p,i){ var st=prodInvState(); if(st[p]&&st[p].lots){ st[p].lots.splice(i,1); prodInvSave(st); invmReRender(); } }
+function invmProdAddLot(p){ var st=prodInvState(); if(!st[p]) st[p]={serviceLevel:95,demandOverride:null,lots:[]}; if(!st[p].lots) st[p].lots=[]; var sup=(PRODUCTS[p]&&PRODUCTS[p].suppliers&&PRODUCTS[p].suppliers[0])||{}; st[p].lots.push({lot:'NEW',origin:sup.origin||'',supplier:sup.name||'',cases:0,avgCost:0,received:''}); prodInvSave(st); invmReRender(); }
 // FEFO order: oldest received first (soonest-expiring, since a product's lots share one shelf life). Undated lots go last.
 function invmFefoSort(lots){ return lots.slice().sort(function(a,b){ var ra=(a&&a.received)||'', rb=(b&&b.received)||''; if(ra&&rb) return ra<rb?-1:(ra>rb?1:0); if(ra&&!rb) return -1; if(!ra&&rb) return 1; return 0; }); }
 // Incoming supply per product from the Fase 1 Orders pipeline (Contracted / In Transit), by arrival week.
@@ -14529,11 +14559,11 @@ function invmRenderProduct(p){
   var supNames = esc((s.supList&&s.supList.map(function(x){return x.name;}).join(', '))||'—');
   var supOrigins = esc((s.supList&&s.supList.map(function(x){return x.origin;}).filter(function(v,i,a){return a.indexOf(v)===i;}).join(' / '))||'');
   var html='';
-  // origin sub-filter (only when the product has more than one origin on hand)
-  if(s.origins && s.origins.length>1){
+  // origin sub-filter — always per-origin (Fiji/Hawaii never blended). Shown when the product has any origin.
+  // Ginger's Peru/Hawaii pills live in the module's own origin bar, so skip the internal one here.
+  if(p!=='ginger' && s.origins && s.origins.length>=1){
     var pill=function(val,lbl){ var on=(s.origin===val); return '<button onclick="invmSetOrigin(\''+val+'\')" style="font-family:var(--fb);font-size:12px;font-weight:600;padding:5px 13px;border-radius:999px;border:1px solid '+(on?'var(--jlz)':'var(--gray-200)')+';background:'+(on?'var(--jlz)':'var(--white)')+';color:'+(on?'#fff':'var(--gray-600)')+';cursor:pointer">'+lbl+'</button>'; };
     html += '<div style="display:flex;gap:6px;align-items:center;margin-bottom:12px;flex-wrap:wrap"><span style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-right:4px">Origin</span>'
-      + pill('all','All origins')
       + s.origins.map(function(o){ return pill(o, esc(o)); }).join('')
       + '</div>';
   }
@@ -14630,13 +14660,21 @@ function invmAnalysisHTML(s){
   return html;
 }
 // Buy Planner product view (turmeric/garlic/shallots): analysis + forward projection. Ginger keeps its full planner.
-var BP_PRODUCT='ginger';
-function bpSetProduct(p){ BP_PRODUCT=p; if(typeof renderBuyPlanner==='function') renderBuyPlanner(); }
+var BP_PRODUCT='ginger', BP_ORIGIN='';
+function bpSetProduct(p){ BP_PRODUCT=p; var og=invmOriginsFor(p); BP_ORIGIN=(p==='ginger')?'Peru':((og&&og[0])||''); if(typeof renderBuyPlanner==='function') renderBuyPlanner(); }
+function bpSetOrigin(o){ BP_ORIGIN=o||''; if(typeof renderBuyPlanner==='function') renderBuyPlanner(); }
 function bpRenderProduct(p){
-  var s=invmProductStats(p,'all');
+  var origins=invmOriginsFor(p);
+  if(origins.length && origins.indexOf(BP_ORIGIN)<0) BP_ORIGIN=origins[0];   // always per-origin
+  var s=invmProductStats(p, BP_ORIGIN||'all');
   var esc=(typeof libEsc==='function')?libEsc:function(x){ return String(x==null?'':x); };
-  return '<div style="margin-bottom:6px;font-size:11px;color:var(--gray-400);font-family:var(--fm)">Buy Planner · '+esc(s.label)+' — when & how much to order</div>'
-    + invmAnalysisHTML(s) + invmProjectionHTML(s);
+  var bar='';
+  if(p!=='ginger' && origins.length>=1){   // ginger's Peru/Hawaii pills live in the module's own bar
+    var pill=function(val){ var on=(BP_ORIGIN===val); return '<button onclick="bpSetOrigin(\''+val+'\')" style="font-family:var(--fb);font-size:12px;font-weight:600;padding:5px 13px;border-radius:999px;border:1px solid '+(on?'var(--jlz)':'var(--gray-200)')+';background:'+(on?'var(--jlz)':'var(--white)')+';color:'+(on?'#fff':'var(--gray-600)')+';cursor:pointer">'+esc(val)+'</button>'; };
+    bar='<div style="display:flex;gap:6px;align-items:center;margin-bottom:12px;flex-wrap:wrap"><span style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-right:4px">Origin</span>'+origins.map(function(o){ return pill(o); }).join('')+'</div>';
+  }
+  return '<div style="margin-bottom:8px;font-size:11px;color:var(--gray-400);font-family:var(--fm)">Buy Planner · '+esc(s.label)+(BP_ORIGIN?(' · '+esc(BP_ORIGIN)):'')+' — when &amp; how much to order</div>'
+    + bar + invmAnalysisHTML(s) + invmProjectionHTML(s);
 }
 function invmSetDays(x){ INVM_DAYSMODE=x; renderInventory(); }
 function invmSetRate(x){ INVM_RATEKEY=x; renderInventory(); }
@@ -14973,13 +15011,23 @@ function renderBuyPlanner() {
   try{
     var _bpProd=(typeof BP_PRODUCT!=='undefined')?BP_PRODUCT:'ginger';
     (typeof ORDER_PRODUCTS!=='undefined'?ORDER_PRODUCTS:['ginger']).forEach(function(x){ var b=document.getElementById('bp-pt-'+x); if(b) b.classList.toggle('on', x===_bpProd); });
-    var _bpv=document.getElementById('bp-product-view'), _bgb=document.getElementById('bp-ginger-body');
+    var _bpv=document.getElementById('bp-product-view'), _bgb=document.getElementById('bp-ginger-body'), _bgo=document.getElementById('bp-ginger-origin');
     if(_bpProd!=='ginger'){
+      if(_bgo) _bgo.style.display='none';
       if(_bgb) _bgb.style.display='none';
       if(_bpv){ _bpv.style.display=''; _bpv.innerHTML=bpRenderProduct(_bpProd); }
     } else {
-      if(_bgb) _bgb.style.display='';
-      if(_bpv){ _bpv.style.display='none'; _bpv.innerHTML=''; }
+      // ginger — Peru (full planner) / Hawaii (projection view), same split as Inventory
+      var _gO=(BP_ORIGIN==='Hawaii')?'Hawaii':'Peru';
+      if(_bgo){ _bgo.style.display=''; _bgo.innerHTML='<span style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-right:4px;font-family:var(--fb)">Origin</span>'
+        + ['Peru','Hawaii'].map(function(o){ return '<button class="invm-ptab'+(_gO===o?' on':'')+'" onclick="bpSetOrigin(\''+o+'\')">'+o+'</button>'; }).join(''); }
+      if(_gO==='Hawaii'){
+        if(_bgb) _bgb.style.display='none';
+        if(_bpv){ _bpv.style.display=''; _bpv.innerHTML=bpRenderProduct('ginger'); }
+      } else {
+        if(_bgb) _bgb.style.display='';
+        if(_bpv){ _bpv.style.display='none'; _bpv.innerHTML=''; }
+      }
     }
   }catch(e){ console.warn('bp product view', e); }
   // Single source of truth: on-hand (#bp-stock-lbs) is DERIVED from the inventory
