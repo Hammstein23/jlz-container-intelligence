@@ -4754,6 +4754,26 @@ function authInjectLogo() {
     </div>
   </div>
 
+  <!-- ── 2.7 HYPOTHETICAL SALES (scenario demand) ── -->
+  <div class="card mb-4">
+    <div class="card-header" style="padding:12px 16px">
+      <div style="width:24px;height:24px;border-radius:var(--radius-sm);background:#F2ECFE;color:#7C3AED;display:flex;align-items:center;justify-content:center;font-size:13px">\U0001f9ea</div>
+      <span class="card-title">Hypothetical sales — scenario demand</span>
+      <span class="card-subtitle ml-auto">layer possible customer orders · feeds the projection below · never touches the real plan</span>
+    </div>
+    <div class="card-body" style="padding:14px 16px">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+        <div style="flex:1 1 180px"><label style="display:block;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px">Customer</label><input list="sim-hs-custs" id="sim-hs-cust" placeholder="e.g. Sol-ti" style="width:100%;height:34px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:0 9px;font-size:13px"><datalist id="sim-hs-custs"></datalist></div>
+        <div style="flex:0 1 160px"><label style="display:block;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px">Week</label><select id="sim-hs-week" style="width:100%;height:34px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:0 8px;font-size:13px"></select></div>
+        <div style="flex:0 1 90px"><label style="display:block;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px">Cases</label><input type="number" id="sim-hs-cases" min="1" step="50" value="500" style="width:100%;height:34px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:0 9px;font-size:13px;font-family:var(--fm)"></div>
+        <button class="btn btn-primary" onclick="simAddHypoSale()" style="height:34px">+ Add sale</button>
+      </div>
+      <label style="display:inline-flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:var(--gray-500);cursor:pointer"><input type="checkbox" id="sim-hs-usedate" onchange="var w=document.getElementById('sim-hs-datewrap'); if(w) w.style.display=this.checked?'inline-block':'none'"> use an exact date instead of the week</label>
+      <span id="sim-hs-datewrap" style="display:none;margin-left:8px"><input type="date" id="sim-hs-date" style="height:30px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:0 8px;font-size:12px"></span>
+      <div id="sim-hs-list" style="margin-top:12px"></div>
+    </div>
+  </div>
+
   <!-- ── 3. STOCK PROJECTION (with hypothetical orders applied) ── -->
   <details class="card mb-4" open>
     <summary class="card-header" style="cursor:pointer;list-style:none">
@@ -18018,11 +18038,12 @@ function simGetState() {
     const s = JSON.parse(localStorage.getItem(SIM_STORAGE_KEY) || '{}');
     return {
       hypotheticalOrders: Array.isArray(s.hypotheticalOrders) ? s.hypotheticalOrders : [],
+      hypotheticalSales:  Array.isArray(s.hypotheticalSales) ? s.hypotheticalSales : [],
       quotes:             Array.isArray(s.quotes) ? s.quotes : [],
       downgradedPos:      Array.isArray(s.downgradedPos) ? s.downgradedPos : [],
     };
   } catch (e) {
-    return { hypotheticalOrders: [], quotes: [], downgradedPos: [] };
+    return { hypotheticalOrders: [], hypotheticalSales: [], quotes: [], downgradedPos: [] };
   }
 }
 function simSaveState(state) {
@@ -18030,7 +18051,7 @@ function simSaveState(state) {
 }
 function simResetState() {
   if (!confirm('Clear all hypothetical orders and quotes? This cannot be undone.')) return;
-  simSaveState({ hypotheticalOrders: [], quotes: [], downgradedPos: [] });
+  simSaveState({ hypotheticalOrders: [], hypotheticalSales: [], quotes: [], downgradedPos: [] });
   renderSimulator();
 }
 
@@ -19210,7 +19231,8 @@ function simRenderProjection(realOrders, hypoOrders) {
     const _hybridSales = (_wkKey && _simMdl && _simMdl.customers && typeof hybridSalesForWeek === 'function')
       ? hybridSalesForWeek(_wkKey, salesDemand, _simMdl) : null;
     const _infl = (salesDemand > 0) ? (weeklyDemand / salesDemand) : 1;
-    const wkDemand = (_hybridSales != null) ? (_hybridSales * _infl) : Math.max(committedWk, weeklyDemand);
+    const _hypoSalesWk = (typeof simHypoSalesForWeek === 'function' && _wkKey) ? simHypoSalesForWeek(_wkKey) : 0;
+    const wkDemand = ((_hybridSales != null) ? (_hybridSales * _infl) : Math.max(committedWk, weeklyDemand)) + _hypoSalesWk * _infl;
     const startStock = running;
     running = running + arrivalCases - wkDemand;
     const cover = wkDemand > 0 ? running / wkDemand : 0;
@@ -19246,7 +19268,7 @@ function simRenderProjection(realOrders, hypoOrders) {
         + (arrivalCases > 0 ? '<div style="font-size:9px;color:var(--gray-400);font-weight:400">' + arrivalText + '</div>' : '')
         + (downgradedArrivals.length ? '<div style="font-size:9px;color:var(--amber-700);font-weight:600;text-decoration:line-through;text-decoration-color:var(--amber-300)">' + downgradedText + '</div>' : '')
       + '</td>'
-      + '<td style="padding:8px 12px;text-align:right;color:var(--red-600)">−' + Math.round(wkDemand).toLocaleString() + '</td>'
+      + '<td style="padding:8px 12px;text-align:right;color:var(--red-600)">−' + Math.round(wkDemand).toLocaleString() + ((typeof _hypoSalesWk !== 'undefined' && _hypoSalesWk > 0) ? '<div style="font-size:9px;color:#7C3AED;font-weight:600">🧪 +' + Math.round(_hypoSalesWk).toLocaleString() + ' scenario</div>' : '') + '</td>'
       + '<td style="padding:8px 12px;text-align:right;font-weight:700;color:' + (running <= 0 ? 'var(--red-600)' : 'var(--gray-800)') + '">' + Math.round(running).toLocaleString() + '</td>'
       + '<td style="padding:8px 12px;text-align:right;font-weight:600;color:' + coverColor + '">' + cover.toFixed(1) + 'w</td>'
       + '<td style="padding:8px 12px">' + statusBadge + '</td>'
@@ -19256,6 +19278,62 @@ function simRenderProjection(realOrders, hypoOrders) {
   el.innerHTML = html;
 }
 
+// ── HYPOTHETICAL SALES (scenario demand) — sandbox, Simulator-only ──
+function simHypoSaleWk(o){ return (o && o.date) ? ((typeof dmWeekKey==='function') ? dmWeekKey(new Date(o.date+'T12:00:00')) : o.date) : (o ? o.week : ''); }
+function simHypoSalesForWeek(mondayISO){
+  return simGetState().hypotheticalSales.reduce(function(s,o){ return s + ((o.on !== false && simHypoSaleWk(o) === mondayISO) ? (+o.cases||0) : 0); }, 0);
+}
+function simHsCustomers(){
+  var m = (typeof _dmModelG !== 'undefined' && _dmModelG) ? _dmModelG : null;
+  return (typeof dmcCustomers === 'function') ? dmcCustomers(m) : [];
+}
+function simAddHypoSale(){
+  var cust = ((document.getElementById('sim-hs-cust')||{}).value || '').trim();
+  var cases = parseInt((document.getElementById('sim-hs-cases')||{}).value, 10);
+  var useDate = (document.getElementById('sim-hs-usedate')||{}).checked;
+  var week = (document.getElementById('sim-hs-week')||{}).value;
+  var date = useDate ? ((document.getElementById('sim-hs-date')||{}).value || '') : '';
+  if(!cust || !cases || cases < 1 || (!week && !date)) return;
+  var st = simGetState();
+  st.hypotheticalSales.push({ id: simNewId('hs'), customer: cust, week: week, date: date, cases: cases, on: true });
+  simSaveState(st);
+  var ci=document.getElementById('sim-hs-cust'); if(ci) ci.value='';
+  renderSimulator();
+}
+function simToggleHypoSale(id){
+  var st = simGetState(); var o = st.hypotheticalSales.find(function(x){return x.id===id;});
+  if(o){ o.on = (o.on === false); simSaveState(st); renderSimulator(); }
+}
+function simRemoveHypoSale(id){
+  var st = simGetState(); st.hypotheticalSales = st.hypotheticalSales.filter(function(x){return x.id!==id;});
+  simSaveState(st); renderSimulator();
+}
+function simRenderHypoSales(){
+  var st = simGetState();
+  var dl = document.getElementById('sim-hs-custs');
+  if(dl) dl.innerHTML = simHsCustomers().map(function(c){ return '<option value="'+String(c).replace(/"/g,'&quot;')+'">'; }).join('');
+  var wsel = document.getElementById('sim-hs-week');
+  if(wsel && !wsel.options.length){
+    var fw = (typeof bpFutureWeeks==='function') ? bpFutureWeeks(12).slice(1) : [];
+    wsel.innerHTML = fw.map(function(f){ var lab=(typeof cxWeekNo==='function'?('W'+cxWeekNo(f.weekStartISO)):f.week); return '<option value="'+f.weekStartISO+'">'+lab+' · '+f.week+'</option>'; }).join('');
+  }
+  var box = document.getElementById('sim-hs-list'); if(!box) return;
+  var list = st.hypotheticalSales;
+  if(!list.length){ box.innerHTML = '<div style="font-size:12px;color:var(--gray-400)">No scenario sales yet. Add one to model a possible order and watch the projection below react.</div>'; return; }
+  var total = list.filter(function(o){return o.on!==false;}).reduce(function(s,o){return s+(+o.cases||0);},0);
+  box.innerHTML = '<div style="display:flex;flex-direction:column;gap:6px">' + list.map(function(o){
+    var when = (o.date && typeof dmcDateLabel==='function' && dmcDateLabel(o.date)) ? dmcDateLabel(o.date) : (typeof cxWeekNo==='function' ? ('W'+cxWeekNo(simHypoSaleWk(o))) : simHypoSaleWk(o));
+    var off = (o.on===false);
+    return '<div style="display:flex;align-items:center;gap:9px;padding:7px 10px;border:1px solid #DDD0FB;border-left:3px solid #7C3AED;border-radius:7px;background:'+(off?'var(--gray-50)':'#F7F3FE')+';opacity:'+(off?'.55':'1')+'">'
+      + '<span style="font-family:var(--fm);font-size:8.5px;font-weight:600;color:#7C3AED;background:#F2ECFE;border:1px solid #DDD0FB;border-radius:4px;padding:1px 5px;text-transform:uppercase">scenario</span>'
+      + '<span style="font-size:13px;font-weight:600;color:var(--gray-800)">'+String(o.customer)+'</span>'
+      + '<span style="font-size:12px;color:var(--gray-500);font-family:var(--fm)">· '+when+' · '+(+o.cases||0).toLocaleString()+' cs</span>'
+      + '<button onclick="simToggleHypoSale(\''+o.id+'\')" style="margin-left:auto;border:1px solid var(--gray-200);background:var(--white);border-radius:6px;font-size:11px;padding:3px 9px;cursor:pointer;color:var(--gray-600)">'+(off?'off':'on')+'</button>'
+      + '<button onclick="simRemoveHypoSale(\''+o.id+'\')" style="border:0;background:none;color:var(--gray-400);font-size:16px;cursor:pointer;padding:0 3px">×</button>'
+      + '</div>';
+  }).join('') + '</div>'
+  + '<div style="font-size:11px;color:var(--gray-400);font-family:var(--fm);margin-top:8px">'+total.toLocaleString()+' cs of scenario demand active · reflected in the projection below (Demand column, \U0001f9ea)</div>';
+}
 // ── MAIN RENDER ──
 function renderSimulator() {
   const state = simGetState();
@@ -19309,6 +19387,7 @@ function renderSimulator() {
   simRenderPipelineList(activeOrders);
   simRenderProjection(activeOrders, state.hypotheticalOrders);
   simRenderHypoTable(state.hypotheticalOrders);
+  if (typeof simRenderHypoSales === 'function') simRenderHypoSales();
   simRenderQuotesTable(state.quotes);
 }
 
