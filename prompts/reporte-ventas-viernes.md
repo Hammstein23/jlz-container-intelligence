@@ -24,11 +24,30 @@ Referencia visual: el último `scratchpad/reporte-ventas-wkNN.html`. Secciones, 
    "executive summary" en prosa aparte (redundante).
 4. **Headline figures** — Booked / Allocated / Invoiced.
 5. **Weekly trend** — 10 semanas, base *booked*, barras + línea de promedio, semana en curso marcada.
-6. **Forward pipeline** — semanas futuras, por orden con producto + supply flag.
-7. **Price movement vs last time** — por cliente, ▲▬▼ / NEW + nota de margen.
-8. **Revenue by account** — tabla de concentración con % share.
-9. **Detail by product and customer** — con **precio de venta por cliente**, orígenes/pesos separados.
-10. **Footer** — definitions, conventions, sources, in-development.
+6. **Year over year** — Net Sales YTD 2025 vs 2026, misma ventana (ej. 1-ene a la fecha de corte del
+   ledger). **Es la señal que el cierre semanal esconde.** El flag "read with care/verify" va **solo hasta
+   que lo verificás** (misma ventana + descompuesto); una vez confirmado, presentarlo como **real** y NO
+   dejar el flag. **Siempre descomponer** con esta escalera (2026-08-21):
+   (a) **Bridge por cuenta y producto** — quién/qué explica la caída;
+   (b) **Same-store** (cuentas activas ambos años) — ¿el negocio retenido crece o cae? separa "salida
+      deliberada / cuenta recuperable" de "erosión real";
+   (c) **Frecuencia vs tamaño** (# órdenes vs $/orden por cuenta) — ¿compran menos seguido o menos por vez?;
+   (d) **Narrativa + "open questions"** que el equipo completa (estructural vs estacional).
+   Ago corriente es MTD → no comparable a Ago full. (Ver Paso 4.5.)
+7. **Forward pipeline** — semanas futuras, por orden con producto + supply flag.
+8. **Price realization** (reemplaza el viejo "price movement") — por cliente, **$/caja vs el "libro"
+   (mediana realizada del producto)** + columna "Read", no solo ▲▬▼. Muestra dónde está la plata:
+   quién está bajo el libro y el **impacto en $** (ej. Sol-ti $57 vs libro $59 × 700-1000 cs = $1.4-2K/orden).
+   Incluir movimientos recientes reales del ledger. (Ver Paso 4.6.)
+9. **Revenue by account** — tabla de concentración con % share + **nota de share del top-account por
+   semana** (ej. Sol-ti 0·0·48·0·45·38·60% — el patrón lumpy, no el % de una semana, es la señal real).
+10. **Account momentum** — últimas 4 sem vs 4 previas por cuenta: ▲ crece / ▼ se enfría / ✕ churned / NEW.
+    Es el antídoto a la concentración (a quién proteger, a quién empujar). Flaggear si el top account se enfría.
+11. **Margin by account** — margen 8-sem por cuenta (top por ventas). Marca las **cuentas de margen flaco
+    que están creciendo** (el leak real, ej. Bristol 6.7%, Co-op 9.9%) — candidatas a reprice/requalify.
+12. **Detail by product and customer** — con **precio de venta por cliente**, orígenes/pesos separados.
+13. **Target vs actual** (si Juan dio una meta semanal) — semáforo vs meta. Sin meta: omitir o marcar "set target".
+14. **Footer** — definitions, conventions, sources, in-development.
 
 ---
 
@@ -89,6 +108,23 @@ H `Target Fullfillment Date` (MM/DD/YYYY) · V `Billable Units` · **W `Billable
 - **Margen (el número del CEO):** `Σ Net Profit / Σ Net Sales` sobre ventana reciente asentada (~6–8 sem), overall
   **y por producto** (Sub Category col B). **Tendencia:** últimas 4 sem vs 4 previas (¿sube o baja?). Ojo:
   líneas "Freight/Uncategorized" dan 100% (inflan) → reportar por-producto para el número limpio.
+
+### 4.5 · Análisis extendido (del mismo Excel — todo con Python stdlib)
+Del `Sales By Account` salen, además del margen, cuatro cortes que hacen el reporte accionable. Todo por
+`(Customer, Item, fecha)` con `Net Sales` (AM col 38), `Net Profit` (AN col 39), `Billable Delivered Price`
+(W col 22), `Billable Units` (V col 21). Cuidado: **el ledger trae historia hasta 2023** → acotá la ventana.
+- **YoY (sección 6):** Net Sales mensual por año. Comparar mismos meses 2025 vs 2026. Ago corriente es MTD.
+  Presentar SIEMPRE con el flag de verificar comparabilidad (mega-cuenta que se fue, scope de producto).
+- **Price realization (sección 8):** por producto (ej. Ginger 30LB), precio ponderado por cuenta en las
+  **últimas ~6 semanas**; "libro" = **mediana** entre cuentas. Mostrar cada cuenta vs el libro + $ impacto.
+  NO es "cambió vs la vez pasada" — es "vs lo que cobrás al resto". (Ojo: precio es por-caja y depende del
+  peso del pack; comparar solo dentro del MISMO item/peso, nunca 5LB vs 30LB.)
+- **Account momentum (sección 10):** Net Sales por cuenta en las **últimas 4 sem asentadas vs las 4 previas**
+  → % cambio. ▲ crece / ▼ se enfría / ✕ churned (cayó a 0) / NEW. Flaggear si el **top account se enfría**.
+- **Margin by account (sección 11):** `ΣNet Profit / ΣNet Sales` por cuenta, ventana 8 sem. Marca las
+  **cuentas de margen flaco que crecen** (el leak real).
+
+### 4.6 · (deprecado — ver 4.5 "Price realization"; el viejo "price movement vs last time" quedó reemplazado)
 
 ### 4.9 · Alimentar Container Intelligence (committed orders) — el motivo original
 El objetivo de todo esto era mejorar la **proyección de compra del jengibre peruano**. Desde 2026-08-15 el app
