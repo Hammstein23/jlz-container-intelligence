@@ -4491,6 +4491,7 @@ function authInjectLogo() {
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px">
         <div class="kpi-card"><div class="kpi-label">Weekly demand</div><div class="kpi-value"><span id="bp-demand-cs">—</span> <span style="font-size:12px;color:var(--gray-400);font-weight:600">cs</span></div><div class="kpi-sub"><span id="bp-demand-lbs">—</span> lb/wk · post-shrink</div></div>
         <div class="kpi-card"><div class="kpi-label">Demand source</div><div class="kpi-value" id="bp-demand-src" style="font-size:13px">—</div><div class="kpi-sub">feeds the plan</div></div>
+        <div class="kpi-card"><div class="kpi-label">Demand window</div><div id="bp-winsel" style="display:inline-flex;border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;font-family:var(--fm);font-size:11px;margin-top:4px"></div><div class="kpi-sub">run-rate the plan uses</div></div>
       </div>
       <div id="bp-quiet-panel" style="margin-top:12px"></div>
     </div>
@@ -14682,6 +14683,7 @@ function renderBuyPlanner() {
   _setKpi('bp-demand-lbs', Math.round(demandLbsWk).toLocaleString());
   _setKpi('bp-demand-cs',  Math.round(salesDemand).toLocaleString());
   _setKpi('bp-demand-src', usingDemandModule ? 'Demand · Peru' : 'Manual fallback');
+  if (typeof winRenderToggle === 'function') winRenderToggle('bp-winsel');
   const coverage = salesDemand > 0 ? stockCases / salesDemand : 0;
   const covEl = document.getElementById('bp-coverage');
   if (covEl) {
@@ -19338,20 +19340,21 @@ function simRenderHypoSales(){
   }).join('') + '</div>'
   + '<div style="font-size:11px;color:var(--gray-400);font-family:var(--fm);margin-top:8px">'+total.toLocaleString()+' cs of scenario demand active · reflected in the projection below (Demand column, 🧪)</div>';
 }
-function simRenderWindowSel(){
-  var host=document.getElementById('sim-winsel'); if(!host) return;
+function winRenderToggle(hostId){
+  var host=document.getElementById(hostId); if(!host) return;
   var mode=(typeof dmWindowMode==='function')?dmWindowMode('ginger'):'auto';
   var win=(typeof dmWindow==='function')?dmWindow('ginger'):13;
   var modes=[['auto','Auto'],['3','3wk'],['6','6wk'],['13','13wk']];
-  host.innerHTML=modes.map(function(m,i){var on=(mode===m[0]);return '<button type="button" onclick="simSetDemandWindow(\''+m[0]+'\')" style="border:0;'+(i?'border-left:1px solid var(--gray-200);':'')+'padding:3px 9px;font-weight:'+(on?'700':'500')+';cursor:pointer;background:'+(on?'var(--jlz)':'var(--white)')+';color:'+(on?'#fff':'var(--gray-600)')+'">'+m[1]+((m[0]==='auto'&&on)?(' \u2192'+win):'')+'</button>';}).join('');
+  host.innerHTML=modes.map(function(m,i){var on=(mode===m[0]);return '<button type="button" onclick="winSetGinger(\''+m[0]+'\')" style="border:0;'+(i?'border-left:1px solid var(--gray-200);':'')+'padding:3px 9px;font-weight:'+(on?'700':'500')+';cursor:pointer;background:'+(on?'var(--jlz)':'var(--white)')+';color:'+(on?'#fff':'var(--gray-600)')+'">'+m[1]+((m[0]==='auto'&&on)?(' \u2192'+win):'')+'</button>';}).join('');
 }
-function simSetDemandWindow(v){
+function winSetGinger(v){
   try{ var raw=localStorage.getItem('jlz_demand_window'); var map={};
     try{ var p=JSON.parse(raw||'{}'); if(p&&typeof p==='object'){ map=p; } else if(raw){ map={ginger:raw}; } }catch(e){ if(raw) map={ginger:raw}; }
     map.ginger=String(v); localStorage.setItem('jlz_demand_window', JSON.stringify(map));
   }catch(e){}
-  renderSimulator();
-  if(typeof renderBuyPlanner==='function'){ try{ renderBuyPlanner(); }catch(e){} }
+  try{ if(typeof renderBuyPlanner==='function') renderBuyPlanner(); }catch(e){}
+  try{ if(typeof renderSimulator==='function') renderSimulator(); }catch(e){}
+  try{ if(typeof renderBuildupPanel==='function') renderBuildupPanel(); }catch(e){}
 }
 // ── MAIN RENDER ──
 function renderSimulator() {
@@ -19407,7 +19410,7 @@ function renderSimulator() {
   simRenderProjection(activeOrders, state.hypotheticalOrders);
   simRenderHypoTable(state.hypotheticalOrders);
   if (typeof simRenderHypoSales === 'function') simRenderHypoSales();
-  if (typeof simRenderWindowSel === 'function') simRenderWindowSel();
+  if (typeof winRenderToggle === 'function') winRenderToggle('sim-winsel');
   simRenderQuotesTable(state.quotes);
 }
 
