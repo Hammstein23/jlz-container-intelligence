@@ -4404,6 +4404,17 @@ function authInjectLogo() {
     #bp-cc-card .bp-iv-aging{display:flex;align-items:center;gap:9px;background:var(--amber-50);border:1px solid var(--amber-100);color:var(--amber-800);border-radius:var(--radius-sm);padding:9px 12px;font-size:12px;margin-bottom:12px}
   </style>
 
+  <!-- Product selector — the Buy Planner is per-product. Ginger keeps the full planner below;
+       turmeric/garlic/shallots use the forward projection + buy recommendation view. -->
+  <div class="invm-prodbar" id="bp-prodbar" style="margin:4px 0 14px">
+    <button class="invm-ptab on" id="bp-pt-ginger"   onclick="bpSetProduct('ginger')">Ginger</button>
+    <button class="invm-ptab"    id="bp-pt-turmeric" onclick="bpSetProduct('turmeric')">Turmeric</button>
+    <button class="invm-ptab"    id="bp-pt-garlic"   onclick="bpSetProduct('garlic')">Garlic</button>
+    <button class="invm-ptab"    id="bp-pt-shallots" onclick="bpSetProduct('shallots')">Shallots</button>
+  </div>
+  <div id="bp-product-view" style="display:none"></div>
+  <div id="bp-ginger-body">
+
   <div class="bp-zone"><span class="bp-zone-tag">Now</span><span class="bp-zone-desc">your position at a glance</span><span class="bp-zone-line"></span></div>
 
   <div id="bp-snapshot-banner" class="bp-status">
@@ -4679,6 +4690,7 @@ function authInjectLogo() {
     </div>
   </div>
 
+  </div><!-- end bp-ginger-body -->
 </div><!-- end tab-planner -->
 
 
@@ -14522,41 +14534,12 @@ function invmRenderProduct(p){
       + s.origins.map(function(o){ return pill(o, esc(o)); }).join('')
       + '</div>';
   }
-  // assumptions
-  html += '<div class="ipv-assume">'
-      + '<div class="ipv-af"><label>Weekly demand</label>'
-        + '<div class="val"><input type="number" step="1" value="'+demandVal+'" placeholder="—" onchange="invmProdSetDemand(\''+p+'\',this.value)"> <small>cs</small></div>'
-        + '<div class="src">'+demandSrc+'</div></div>'
-      + '<div class="ipv-af"><label>Service level</label>'
-        + '<div class="val"><input type="number" step="1" min="80" max="99" value="'+s.serviceLevel+'" onchange="invmProdSetService(\''+p+'\',this.value)"> <small>% · z='+s.z.toFixed(2)+'</small></div>'
-        + '<div class="src">stockout risk you accept</div></div>'
-      + '<div class="ipv-af"><label>Lead time</label>'
-        + '<div class="val">'+f1(s.leadWks)+' <small>wk · '+f(s.lead)+' d</small></div>'
-        + '<div class="src">max supplier · '+supNames+'</div></div>'
-      + '<div class="ipv-af"><label>Purchase pack</label>'
-        + '<div class="val">'+f(s.caseLb)+' <small>lb/case</small></div>'
-        + '<div class="src">'+supOrigins+'</div></div>'
-    + '</div>'
-    // KPIs
-    + '<div class="ipv-kpis">'
-      + '<div class="ipv-kpi"><div class="lbl">On-hand'+oScope+'</div><div class="big">'+f(s.onHandCases)+' <small>cs</small></div><div class="note">'+f(s.onHandLbs)+' lb · '+s.lots.length+' lots · cost $'+f(s.costVal)+'</div></div>'
-      + '<div class="ipv-kpi"><div class="lbl">Current cover</div><div class="big">'+covTxt+'</div><div class="note">on-hand ÷ demand/wk</div></div>'
-      + '<div class="ipv-kpi"><div class="lbl">Target cover</div><div class="big">'+tgtTxt+'</div><div class="note">lead '+f1(s.leadWks)+' + safety '+f1(s.safetyWks)+'</div></div>'
-      + '<div class="ipv-kpi"><div class="lbl">Suggested order</div><div class="big" style="color:'+(s.orderCases>0?'var(--jlz)':'var(--gray-400)')+'">'+ordTxt+'</div><div><span class="ipv-st '+stCls+'">'+stTxt+'</span></div></div>'
+  // on-hand summary — the buy analysis + forward projection now live in the Buy Planner (per product).
+  html += '<div class="ipv-kpis" style="grid-template-columns:repeat(3,1fr)">'
+      + '<div class="ipv-kpi"><div class="lbl">On-hand'+oScope+'</div><div class="big">'+f(s.onHandCases)+' <small>cs</small></div><div class="note">'+f(s.onHandLbs)+' lb</div></div>'
+      + '<div class="ipv-kpi"><div class="lbl">Lots</div><div class="big">'+s.lots.length+'</div><div class="note">excl. W / vLot</div></div>'
+      + '<div class="ipv-kpi"><div class="lbl">Inventory value</div><div class="big" style="font-size:20px">$'+f(s.costVal)+'</div><div class="note">at avg cost</div></div>'
     + '</div>';
-  // formula (only when demand is known)
-  if(s.weeklyLbs>0 && s.leadWks>0){
-    html += '<div class="ipv-formula">'
-      + '<b>current cover</b> = '+f(s.onHandLbs)+' lb ÷ '+f(s.weeklyLbs)+' lb/wk = <b>'+f1(s.coverWks)+' wk</b><br>'
-      + '<b>variability</b> (CV of your sales) = '+cvTxt+' · <b>safety</b> = z('+s.z.toFixed(2)+' @'+s.serviceLevel+'%) × CV × √lead = <b>'+f1(s.safetyWks)+' wk</b><br>'
-      + '<b>target cover</b> = lead '+f1(s.leadWks)+' + safety '+f1(s.safetyWks)+' = <b>'+f1(s.targetWks)+' wk</b><br>'
-      + '<b>order</b> = max(0, target×demand − on-hand) ÷ '+f(s.caseLb)+' lb = <b>'+f(s.orderCases)+' cs</b>'
-      + '</div>';
-  } else if(!s.hasModel){
-    html += '<div class="ipv-formula" style="color:var(--amber-700);border-color:var(--amber-200);background:var(--amber-50)">No sales loaded to compute demand / target. Load the sales report (Demand tab) or set weekly demand manually above.</div>';
-  }
-  // forward projection + time-aware buy verdict (Fase 3a)
-  html += invmProjectionHTML(s);
   // lots table
   var thL='text-align:left;font-family:var(--fb);font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-400);font-weight:700;padding:8px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-200)';
   var thR=thL.replace('text-align:left','text-align:right');
@@ -14593,6 +14576,54 @@ function invmRenderProduct(p){
   html += '<div style="font-size:11.5px;color:var(--gray-600);background:var(--sky-50,#eff6ff);border:1px solid var(--sky-200,#bfdbfe);border-radius:8px;padding:11px 13px">'
     + '<b style="color:var(--sky-700,#1d4ed8)">Update on-hand:</b> tell me "update the '+esc(s.label)+' inventory" and I\'ll generate a <b>Sales Desk</b> snippet (Floor Count, excl. W/vLot lots) to paste in the console — same as the Monday ginger routine. Replaces this product\'s lots.</div>';
   return html;
+}
+// ── Analysis block (assumptions + KPIs + formula) — shared by the Buy Planner product view.
+function invmAnalysisHTML(s){
+  var f=function(n){ return Math.round(n||0).toLocaleString('en-US'); };
+  var f1=function(n){ return (!isFinite(n))?'∞':(Math.round((n||0)*10)/10).toFixed(1); };
+  var esc=(typeof libEsc==='function')?libEsc:function(x){ return String(x==null?'':x); };
+  var stCls=s.status, stTxt=(s.status==='ur')?'● Urgent':(s.status==='re')?'● Reorder':'● OK';
+  var demandVal = s.weeklyLbs>0 ? f(s.weeklyCases) : '';
+  var demandSrc = s.weeklyLbs<=0 ? '<span style="color:var(--amber-700)">load sales or set manually</span>'
+                : (s.demandOverride!=null ? 'manual · <a href="javascript:invmProdClearDemand(\''+s.p+'\')" style="color:var(--jlz)">use run-rate</a>' : '◆ live run-rate · 13 wk');
+  var covTxt = s.weeklyLbs>0 ? f1(s.coverWks)+' <small>wk</small>' : '—';
+  var tgtTxt = (s.weeklyLbs>0 && s.leadWks>0) ? f1(s.targetWks)+' <small>wk</small>' : '—';
+  var ordTxt = s.weeklyLbs>0 ? f(s.orderCases)+' <small>cs</small>' : '—';
+  var cvTxt = (s.nWeeks>1) ? (Math.round(s.cv*100)+'% ('+s.nWeeks+' wk)') : 'insufficient history';
+  var supNames = esc((s.supList&&s.supList.map(function(x){return x.name;}).join(', '))||'—');
+  var supOrigins = esc((s.supList&&s.supList.map(function(x){return x.origin;}).filter(function(v,i,a){return a.indexOf(v)===i;}).join(' / '))||'');
+  var html='<div class="ipv-assume">'
+      + '<div class="ipv-af"><label>Weekly demand</label><div class="val"><input type="number" step="1" value="'+demandVal+'" placeholder="—" onchange="invmProdSetDemand(\''+s.p+'\',this.value)"> <small>cs</small></div><div class="src">'+demandSrc+'</div></div>'
+      + '<div class="ipv-af"><label>Service level</label><div class="val"><input type="number" step="1" min="80" max="99" value="'+s.serviceLevel+'" onchange="invmProdSetService(\''+s.p+'\',this.value)"> <small>% · z='+s.z.toFixed(2)+'</small></div><div class="src">stockout risk you accept</div></div>'
+      + '<div class="ipv-af"><label>Lead time</label><div class="val">'+f1(s.leadWks)+' <small>wk · '+f(s.lead)+' d</small></div><div class="src">max supplier · '+supNames+'</div></div>'
+      + '<div class="ipv-af"><label>Purchase pack</label><div class="val">'+f(s.caseLb)+' <small>lb/case</small></div><div class="src">'+supOrigins+'</div></div>'
+    + '</div>'
+    + '<div class="ipv-kpis">'
+      + '<div class="ipv-kpi"><div class="lbl">On-hand</div><div class="big">'+f(s.onHandCases)+' <small>cs</small></div><div class="note">'+f(s.onHandLbs)+' lb · '+s.lots.length+' lots</div></div>'
+      + '<div class="ipv-kpi"><div class="lbl">Current cover</div><div class="big">'+covTxt+'</div><div class="note">on-hand ÷ demand/wk</div></div>'
+      + '<div class="ipv-kpi"><div class="lbl">Target cover</div><div class="big">'+tgtTxt+'</div><div class="note">lead '+f1(s.leadWks)+' + safety '+f1(s.safetyWks)+'</div></div>'
+      + '<div class="ipv-kpi"><div class="lbl">Suggested order</div><div class="big" style="color:'+(s.orderCases>0?'var(--jlz)':'var(--gray-400)')+'">'+ordTxt+'</div><div><span class="ipv-st '+stCls+'">'+stTxt+'</span></div></div>'
+    + '</div>';
+  if(s.weeklyLbs>0 && s.leadWks>0){
+    html += '<div class="ipv-formula">'
+      + '<b>current cover</b> = '+f(s.onHandLbs)+' lb ÷ '+f(s.weeklyLbs)+' lb/wk = <b>'+f1(s.coverWks)+' wk</b><br>'
+      + '<b>variability</b> (CV of your sales) = '+cvTxt+' · <b>safety</b> = z('+s.z.toFixed(2)+' @'+s.serviceLevel+'%) × CV × √lead = <b>'+f1(s.safetyWks)+' wk</b><br>'
+      + '<b>target cover</b> = lead '+f1(s.leadWks)+' + safety '+f1(s.safetyWks)+' = <b>'+f1(s.targetWks)+' wk</b><br>'
+      + '<b>order</b> = max(0, target×demand − on-hand) ÷ '+f(s.caseLb)+' lb = <b>'+f(s.orderCases)+' cs</b>'
+      + '</div>';
+  } else if(!s.hasModel){
+    html += '<div class="ipv-formula" style="color:var(--amber-700);border-color:var(--amber-200);background:var(--amber-50)">No sales loaded to compute demand / target. Load the sales report (Demand tab) or set weekly demand manually above.</div>';
+  }
+  return html;
+}
+// Buy Planner product view (turmeric/garlic/shallots): analysis + forward projection. Ginger keeps its full planner.
+var BP_PRODUCT='ginger';
+function bpSetProduct(p){ BP_PRODUCT=p; if(typeof renderBuyPlanner==='function') renderBuyPlanner(); }
+function bpRenderProduct(p){
+  var s=invmProductStats(p,'all');
+  var esc=(typeof libEsc==='function')?libEsc:function(x){ return String(x==null?'':x); };
+  return '<div style="margin-bottom:6px;font-size:11px;color:var(--gray-400);font-family:var(--fm)">Buy Planner · '+esc(s.label)+' — when & how much to order</div>'
+    + invmAnalysisHTML(s) + invmProjectionHTML(s);
 }
 function invmSetDays(x){ INVM_DAYSMODE=x; renderInventory(); }
 function invmSetRate(x){ INVM_RATEKEY=x; renderInventory(); }
@@ -14923,6 +14954,21 @@ function bpLeadTimeSigmaWeeks(){
 }
 
 function renderBuyPlanner() {
+  // Product selector: ginger keeps the full planner below; other products use the projection view.
+  // The ginger body is still computed every call (it keeps _bpDigest fresh for the rest of the app),
+  // only its visibility toggles.
+  try{
+    var _bpProd=(typeof BP_PRODUCT!=='undefined')?BP_PRODUCT:'ginger';
+    (typeof ORDER_PRODUCTS!=='undefined'?ORDER_PRODUCTS:['ginger']).forEach(function(x){ var b=document.getElementById('bp-pt-'+x); if(b) b.classList.toggle('on', x===_bpProd); });
+    var _bpv=document.getElementById('bp-product-view'), _bgb=document.getElementById('bp-ginger-body');
+    if(_bpProd!=='ginger'){
+      if(_bgb) _bgb.style.display='none';
+      if(_bpv){ _bpv.style.display=''; _bpv.innerHTML=bpRenderProduct(_bpProd); }
+    } else {
+      if(_bgb) _bgb.style.display='';
+      if(_bpv){ _bpv.style.display='none'; _bpv.innerHTML=''; }
+    }
+  }catch(e){ console.warn('bp product view', e); }
   // Single source of truth: on-hand (#bp-stock-lbs) is DERIVED from the inventory
   // lots (managed in the Inventory module), and the Inventory-zone summary is filled.
   try{
