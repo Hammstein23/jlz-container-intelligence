@@ -2624,9 +2624,11 @@ function authInjectLogo() {
       .dmc-chip{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:var(--r);padding:6px 9px;}
       .dmc-tag{font-size:9px;font-weight:700;font-family:var(--fm);text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);background:var(--gray-100);padding:1px 6px;border-radius:99px;margin-left:2px;}
       .dmc-tag.direct{color:#6d28d9;background:#ede9fe;}
+      .dmc-tag.manual{color:#3730a3;background:#e0e7ff;}
       .dmc-tag.pending{color:#b45309;background:#fffbeb;}
       .dmc-tag.stale{color:#b42318;background:#fef2f2;}
       .dmc-chip.cpe{border-left:3px solid #f59e0b;}
+      .dmc-chip.cmn{border-left:3px solid #6366f1;}
       .dmc-chip.cst{border-left:3px solid #ef4444;}
       .dmc-rm{border:none;background:none;color:var(--gray-400);cursor:pointer;font-size:16px;line-height:1;padding:2px 4px;}
       .dmc-rm:hover{color:var(--red-600);}
@@ -11455,11 +11457,11 @@ function saveCommitted(arr) {
 // default: the ginger buy plan depends on legacy rows still counting as ginger.
 function _cmProd(c) { return (c && c.product) || 'ginger'; }
 // Add a warehouse-committed order. cases coerced to a positive integer.
-function addCommitted(customer, wk, cases, product) {
+function addCommitted(customer, wk, cases, product, date) {
   var n = Math.round(Number(cases) || 0);
   if(!customer || !wk || n <= 0) return getCommitted();
   var all = getCommitted();
-  all.push({ customer: String(customer), wk: String(wk), cases: n, type: 'inv', source: 'manual', product: product || 'ginger' });
+  all.push({ customer: String(customer), wk: String(wk), cases: n, type: 'inv', source: 'manual', product: product || 'ginger', date: date || '' });
   saveCommitted(all);
   return all;
 }
@@ -11595,7 +11597,7 @@ function parseOpenOrders(rows, fulfilledMax) {
     var stale = !!(staleISO && iso < staleISO);
     var pending = !stale && !!(fulfilledMax && iso <= fulfilledMax);
     if(stale) st.stale++; else if(pending) st.pending++;
-    out.push({ customer: cust, wk: wk, cases: cases, type: 'inv', source: 'import', orderNo: String(r['Order No'] || ''), sku: sku, pending: pending, stale: stale, product: cls.product });
+    out.push({ customer: cust, wk: wk, date: iso, cases: cases, type: 'inv', source: 'import', orderNo: String(r['Order No'] || ''), sku: sku, pending: pending, stale: stale, product: cls.product });
     st.kept++;
     st.byProduct[cls.product] = (st.byProduct[cls.product] || 0) + 1;
   });
@@ -22372,6 +22374,10 @@ function dmcWeekLabel(wk) {
   var no = (typeof cxWeekNo === 'function') ? cxWeekNo(wk) : '';
   return no ? ('W' + no) : wk;
 }
+function dmcDateLabel(iso) {
+  if(!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '';
+  try { return new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(e){ return ''; }
+}
 function renderCommittedPanel(model) {
   var host = document.getElementById('dm-committed'); if(!host) return;
   var prod = (typeof productFocus === 'function') ? productFocus() : 'ginger';
@@ -22408,8 +22414,7 @@ function renderCommittedPanel(model) {
     + '<div class="dmc-h">Add a committed order</div>'
     + '<div class="dmc-hint">An order you’ve already sold but not shipped.</div>'
     + '<label class="dmc-l">Customer</label><select class="dmc-in" id="dmc-cust">' + custs.map(function(c){ return opt(c, c); }).join('') + '</select>'
-    + '<div class="dmc-row2"><div><label class="dmc-l">Week</label><select class="dmc-in" id="dmc-week">'
-      + futures.map(function(f){ return opt(f.weekStartISO, dmcWeekLabel(f.weekStartISO) + ' · ' + f.week); }).join('') + '</select></div>'
+    + '<div class="dmc-row2"><div><label class="dmc-l">Dispatch date</label><input class="dmc-in" id="dmc-date" type="date" value="' + (futures[0] ? futures[0].weekStartISO : '') + '"/></div>'
       + '<div><label class="dmc-l">Cases</label><input class="dmc-in" id="dmc-cases" type="number" min="1" step="1" value="300"/></div></div>'
     + shipBlock
     + '<button type="button" class="dmc-add" id="dmc-add"' + ((isG && _dmcType === 'direct' && !arriving.length) ? ' disabled' : '') + '>Add committed order</button>'
@@ -22429,7 +22434,7 @@ function dmcApplyType() {
   var host = document.getElementById('dm-committed'); if(!host) return;
   host.querySelectorAll('.dmc-segb').forEach(function(b){ b.classList.toggle('on', b.dataset.t === _dmcType); });
   var cw = host.querySelector('#dmc-cwrap'); if(cw) cw.style.display = (_dmcType === 'direct') ? 'block' : 'none';
-  var wsel = host.querySelector('#dmc-week'), cont = host.querySelector('#dmc-cont'), add = host.querySelector('#dmc-add');
+  var wsel = host.querySelector('#dmc-date'), cont = host.querySelector('#dmc-cont'), add = host.querySelector('#dmc-add');
   if(_dmcType === 'direct') {
     if(wsel) wsel.disabled = true;               // week is the container's arrival, not chosen here
     if(add) add.disabled = !(cont && cont.value);
@@ -22448,8 +22453,9 @@ function dmcAdd() {
     var cont = host.querySelector('#dmc-cont'); if(!cont || !cont.value) return;
     addDirectShip(cont.value, cust, cases);      // week derived from the container's ETA
   } else {
-    var wk = (host.querySelector('#dmc-week') || {}).value; if(!wk) return;
-    addCommitted(cust, wk, cases, prod);
+    var dateISO = (host.querySelector('#dmc-date') || {}).value; if(!dateISO) return;
+    var wk = (typeof dmWeekKey === 'function') ? dmWeekKey(new Date(dateISO + 'T12:00:00')) : dateISO;
+    addCommitted(cust, wk, cases, prod, dateISO);
   }
   renderCommittedPanel();
   if(typeof renderBuildupPanel === 'function') renderBuildupPanel();
@@ -22460,10 +22466,13 @@ function dmcRenderChips() {
   var html = '';
   getCommitted().forEach(function(c, i) {
     if(_cmProd(c) !== prod) return;                 // this product only; i stays the true array index for removal
+    var manualBadge = (c.source === 'manual') ? '<span class="dmc-tag manual" title="Entered by hand — not from the Unshipped import.">manual</span>' : '';
     var tag = c.stale ? '<span class="dmc-tag stale" title="Badly overdue and still open — likely a stray. Still counted; remove with × if it is dead.">stale · review</span>'
             : c.pending ? '<span class="dmc-tag pending" title="Fulfillment date has passed but no invoice yet — still counted in demand, just awaiting invoice.">pending invoice</span>'
             : '<span class="dmc-tag">from warehouse</span>';
-    html += '<div class="dmc-chip' + (c.stale ? ' cst' : (c.pending ? ' cpe' : '')) + '"><span><b>' + libEsc(c.customer) + '</b> · ' + dmcWeekLabel(c.wk) + ' · ' + c.cases + ' cs ' + tag + '</span>'
+    var when = dmcDateLabel(c.date) || dmcWeekLabel(c.wk);
+    var accent = c.stale ? ' cst' : (c.pending ? ' cpe' : (c.source === 'manual' ? ' cmn' : ''));
+    html += '<div class="dmc-chip' + accent + '"><span><b>' + libEsc(c.customer) + '</b> · ' + when + ' · ' + c.cases + ' cs ' + manualBadge + tag + '</span>'
       + '<button class="dmc-rm" onclick="dmcRemoveInv(' + i + ')" title="Remove">×</button></div>';
   });
   if(prod === 'ginger'){
