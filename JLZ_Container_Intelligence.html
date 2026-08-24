@@ -14481,6 +14481,29 @@ function invmProductArrivals(p){
   });
   return out;
 }
+// ── WHAT-IF / SCENARIO orders (Fase 3b) — hypothetical buys, per product+origin, not saved to real Orders.
+var PROD_WHATIF_LS='jlz_prod_whatif_v1';
+function _whKey(p,origin){ return String(p||'')+'|'+String(origin||'all'); }
+function whatifState(){ try{ var o=JSON.parse(localStorage.getItem(PROD_WHATIF_LS)||'{}'); return (o&&typeof o==='object')?o:{}; }catch(e){ return {}; } }
+function whatifSave(o){ try{ localStorage.setItem(PROD_WHATIF_LS, JSON.stringify(o||{})); }catch(e){} }
+function getWhatif(p,origin){ return whatifState()[_whKey(p,origin)]||[]; }
+function addWhatif(p,origin){
+  var cs=Math.round(parseFloat((document.getElementById('bpwi-cases')||{}).value)||0);
+  var arr=((document.getElementById('bpwi-date')||{}).value)||'';
+  if(cs<=0 || !arr){ if(typeof showBar==='function') showBar('Enter cases + arrival date','warn'); return; }
+  var o=whatifState(), k=_whKey(p,origin); (o[k]=o[k]||[]).push({cases:cs, arrival:arr}); whatifSave(o);
+  if(typeof renderBuyPlanner==='function') renderBuyPlanner();
+}
+function removeWhatif(p,origin,i){ var o=whatifState(), k=_whKey(p,origin); if(o[k]){ o[k].splice(i,1); whatifSave(o); if(typeof renderBuyPlanner==='function') renderBuyPlanner(); } }
+function whatifArrivals(p,origin){
+  var out={};
+  getWhatif(p,origin).forEach(function(w){
+    if(!w||!w.arrival) return; var cs=parseFloat(w.cases)||0; if(cs<=0) return;
+    var wk; try{ wk=(typeof dmWeekKey==='function')?dmWeekKey(new Date(String(w.arrival).slice(0,10)+'T12:00:00')):null; }catch(e){ wk=null; }
+    if(!wk) return; out[wk]=(out[wk]||0)+cs;
+  });
+  return out;
+}
 // Forward 13-week coverage projection + time-aware buy verdict (Fase 3a). Ginger keeps its own Buy Planner.
 function invmProjectionHTML(s){
   var p=s.p, N=13;
@@ -14488,7 +14511,7 @@ function invmProjectionHTML(s){
   var f1=function(n){ return (!isFinite(n))?'∞':(Math.round((n||0)*10)/10).toFixed(1); };
   if(!(s.weeklyLbs>0)) return '';   // no demand → cannot project
   var weeklyCases=s.weeklyCases, safetyCases=s.safetyWks*weeklyCases, targetCases=s.targetWks*weeklyCases;
-  var arrivals=invmProductArrivals(p), hasArr=false;
+  var arrivals=invmProductArrivals(p), scen=whatifArrivals(s.p, s.origin), hasArr=false, hasScen=false;
   var base=new Date();
   var baseMon; try{ baseMon=(typeof dmWeekKey==='function')?dmWeekKey(base):null; }catch(e){ baseMon=null; }
   var baseDate=baseMon?new Date(baseMon+'T12:00:00'):base;
@@ -14496,10 +14519,10 @@ function invmProjectionHTML(s){
   for(var i=0;i<N;i++){
     var dd=new Date(baseDate.getTime()+i*7*86400000);
     var wkISO; try{ wkISO=(typeof dmWeekKey==='function')?dmWeekKey(dd):dd.toISOString().slice(0,10); }catch(e){ wkISO=dd.toISOString().slice(0,10); }
-    var arr=arrivals[wkISO]||0; if(arr>0) hasArr=true;
-    var end=start+arr-weeklyCases;
+    var arr=arrivals[wkISO]||0, sc=scen[wkISO]||0; if(arr>0) hasArr=true; if(sc>0) hasScen=true;
+    var end=start+arr+sc-weeklyCases;
     if(firstShort===null && end<safetyCases) firstShort=i;
-    weeks.push({i:i,wkISO:wkISO,start:start,arr:arr,end:end});
+    weeks.push({i:i,wkISO:wkISO,start:start,arr:arr,scen:sc,end:end});
     start=end;
   }
   var lbl=function(iso){ return (typeof dmcDateLabel==='function' && dmcDateLabel(iso)) || String(iso).slice(5); };
@@ -14524,17 +14547,21 @@ function invmProjectionHTML(s){
   var rows='';
   weeks.forEach(function(w){
     var col=(w.end<0)?'#b91c1c':(w.end<safetyCases)?'#b45309':(w.end<targetCases)?'var(--gray-700)':'#047857';
-    var bg=(w.i===firstShort)?'background:#fffbeb;':'';
+    var bg=(w.i===firstShort)?'background:#fffbeb;':(w.scen>0?'background:#faf5ff;':'');
+    var inCell = (w.arr>0?'<span style="color:#047857">+'+f(w.arr)+'</span>':'')
+      + (w.arr>0&&w.scen>0?' ':'')
+      + (w.scen>0?'<span style="color:#7c3aed">🧪+'+f(w.scen)+'</span>':'')
+      + (w.arr<=0&&w.scen<=0?'<span style="color:var(--gray-300)">·</span>':'');
     rows+='<tr style="'+bg+'">'
       +'<td style="text-align:left;padding:5px 10px;border-bottom:1px solid var(--gray-100);color:var(--gray-600)">'+(w.i===0?'now':lbl(w.wkISO))+'</td>'
       +'<td style="text-align:right;padding:5px 10px;border-bottom:1px solid var(--gray-100);color:var(--gray-500)">'+f(w.start)+'</td>'
-      +'<td style="text-align:right;padding:5px 10px;border-bottom:1px solid var(--gray-100);color:'+(w.arr>0?'#047857':'var(--gray-300)')+'">'+(w.arr>0?('+'+f(w.arr)):'·')+'</td>'
+      +'<td style="text-align:right;padding:5px 10px;border-bottom:1px solid var(--gray-100)">'+inCell+'</td>'
       +'<td style="text-align:right;padding:5px 10px;border-bottom:1px solid var(--gray-100);color:var(--gray-400)">−'+f(weeklyCases)+'</td>'
       +'<td style="text-align:right;padding:5px 10px;border-bottom:1px solid var(--gray-100);font-weight:700;color:'+col+'">'+f(w.end)+'</td>'
       +'</tr>';
   });
   return '<div style="background:var(--white);border:1px solid var(--gray-200);border-radius:10px;overflow:hidden;margin-bottom:14px">'
-    +'<div style="padding:11px 14px;border-bottom:1px solid var(--gray-100)"><span style="font-size:12px;font-weight:700;color:var(--jlz);text-transform:uppercase;letter-spacing:.05em">'+N+'-week projection</span> <span style="font-size:10.5px;color:var(--gray-400)">· cases · arrivals from the Orders pipeline</span></div>'
+    +'<div style="padding:11px 14px;border-bottom:1px solid var(--gray-100)"><span style="font-size:12px;font-weight:700;color:var(--jlz);text-transform:uppercase;letter-spacing:.05em">'+N+'-week projection</span> <span style="font-size:10.5px;color:var(--gray-400)">· cases · arrivals from the Orders pipeline'+(hasScen?' <span style="color:#7c3aed">+ 🧪 scenarios</span>':'')+'</span></div>'
     +'<div style="padding:11px 14px"><div class="ipv-st '+vcls+'" style="display:block;margin-bottom:10px;line-height:1.55">'+verdict+'</div>'
     +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11px">'
     +'<thead><tr><th style="'+th+';text-align:left">Week</th><th style="'+th+'">Start</th><th style="'+th+'">In</th><th style="'+th+'">Demand</th><th style="'+th+'">End</th></tr></thead>'
@@ -14673,8 +14700,24 @@ function bpRenderProduct(p){
     var pill=function(val){ var on=(BP_ORIGIN===val); return '<button onclick="bpSetOrigin(\''+val+'\')" style="font-family:var(--fb);font-size:12px;font-weight:600;padding:5px 13px;border-radius:999px;border:1px solid '+(on?'var(--jlz)':'var(--gray-200)')+';background:'+(on?'var(--jlz)':'var(--white)')+';color:'+(on?'#fff':'var(--gray-600)')+';cursor:pointer">'+esc(val)+'</button>'; };
     bar='<div style="display:flex;gap:6px;align-items:center;margin-bottom:12px;flex-wrap:wrap"><span style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-right:4px">Origin</span>'+origins.map(function(o){ return pill(o); }).join('')+'</div>';
   }
+  // What-if / scenario card (Fase 3b)
+  var f=function(n){ return Math.round(n||0).toLocaleString('en-US'); };
+  var lbl=function(iso){ return (typeof dmcDateLabel==='function' && dmcDateLabel(iso)) || String(iso).slice(5); };
+  var wf=getWhatif(s.p, s.origin);
+  var inp='font-family:var(--fm);font-size:12px;border:1px solid var(--gray-200);border-radius:6px;padding:5px 8px;color:var(--gray-900)';
+  var chips = wf.length ? wf.map(function(w,i){ return '<div style="display:inline-flex;align-items:center;gap:6px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:999px;padding:4px 6px 4px 11px;font-size:11px;color:#6b21a8;font-family:var(--fm)">🧪 '+f(w.cases)+' cs · arrives '+lbl(w.arrival)+'<button onclick="removeWhatif(\''+esc(s.p)+'\',\''+esc(s.origin)+'\','+i+')" title="Remove" style="border:none;background:none;color:#a78bda;cursor:pointer;font-size:15px;line-height:1;padding:0 2px">×</button></div>'; }).join('') : '<span style="color:var(--gray-300);font-size:11px">No scenarios yet — add one to test a hypothetical buy.</span>';
+  var whatifCard = '<div style="background:var(--white);border:1px solid #e9d5ff;border-radius:10px;padding:12px 14px;margin-bottom:14px">'
+    + '<div style="font-size:12px;font-weight:700;color:#7c3aed;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">🧪 What-if scenario</div>'
+    + '<div style="font-size:11px;color:var(--gray-500);margin-bottom:11px">Add a hypothetical order to see how it changes the projection above — <b>not</b> saved to real Orders.</div>'
+    + '<div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:11px">'
+      + '<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-bottom:3px">Cases</div><input id="bpwi-cases" type="number" step="1" placeholder="e.g. 200" style="'+inp+';width:96px"></div>'
+      + '<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-bottom:3px">Arrival date</div><input id="bpwi-date" type="date" style="'+inp+'"></div>'
+      + '<button onclick="addWhatif(\''+esc(s.p)+'\',\''+esc(s.origin)+'\')" style="font-family:var(--fb);font-size:12px;font-weight:600;padding:7px 14px;border:none;border-radius:6px;background:#7c3aed;color:#fff;cursor:pointer">+ Add scenario</button>'
+    + '</div>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+chips+'</div>'
+    + '</div>';
   return '<div style="margin-bottom:8px;font-size:11px;color:var(--gray-400);font-family:var(--fm)">Buy Planner · '+esc(s.label)+(BP_ORIGIN?(' · '+esc(BP_ORIGIN)):'')+' — when &amp; how much to order</div>'
-    + bar + invmAnalysisHTML(s) + invmProjectionHTML(s);
+    + bar + invmAnalysisHTML(s) + invmProjectionHTML(s) + whatifCard;
 }
 function invmSetDays(x){ INVM_DAYSMODE=x; renderInventory(); }
 function invmSetRate(x){ INVM_RATEKEY=x; renderInventory(); }
