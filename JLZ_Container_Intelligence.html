@@ -4184,6 +4184,13 @@ function authInjectLogo() {
         <option value="Arrived">Arrived</option>
         <option value="Cancelled">Cancelled</option>
       </select>
+      <select id="ord-filter-product" onchange="renderOrders()" style="height:30px;border:1px solid var(--gray-200);border-radius:var(--r);font-size:11px;font-family:var(--fb);color:var(--gray-700);padding:0 8px;background:var(--white)">
+        <option value="">All products</option>
+        <option value="ginger">Ginger</option>
+        <option value="turmeric">Turmeric</option>
+        <option value="garlic">Garlic</option>
+        <option value="shallots">Shallots</option>
+      </select>
       <select id="ord-filter-mode" onchange="renderOrders()" style="height:30px;border:1px solid var(--gray-200);border-radius:var(--r);font-size:11px;font-family:var(--fb);color:var(--gray-700);padding:0 8px;background:var(--white)">
         <option value="">All modes</option>
         <option value="sea">🚢 Sea</option>
@@ -4215,6 +4222,7 @@ function authInjectLogo() {
         <tr style="background:var(--gray-50);border-bottom:2px solid var(--gray-200)">
           <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;font-size:10px">Status</th>
           <th onclick="ordSort('jlzPo')"        data-sortkey="jlzPo"          style="padding:9px 12px;text-align:left;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;font-size:10px;cursor:pointer;user-select:none">PO <span class="ord-sort-ind" data-sortkey="jlzPo"></span></th>
+          <th onclick="ordSort('product')"      data-sortkey="product"        style="padding:9px 12px;text-align:left;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;font-size:10px;cursor:pointer;user-select:none">Product <span class="ord-sort-ind" data-sortkey="product"></span></th>
           <th onclick="ordSort('supplier')"     data-sortkey="supplier"       style="padding:9px 12px;text-align:left;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;font-size:10px;cursor:pointer;user-select:none">Vendor <span class="ord-sort-ind" data-sortkey="supplier"></span></th>
           <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;font-size:10px">Contract</th>
           <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;font-size:10px">Container</th>
@@ -7022,6 +7030,7 @@ function mibMyPOs(weeks,opts){
   var orders=(typeof getOrders==='function')?getOrders():[];
   var out=[];
   orders.forEach(function(o){
+    if(_ordProd(o)!=='ginger')return;  // ginger FOB bands only (a supplier like Crown Pacific also ships turmeric)
     var isCancelled=(o.status==='Cancelled');
     if(isCancelled&&!includeCancelled)return;
     var l=parseFloat(o.netWeightLb)||0;if(l<=0)return;
@@ -11455,6 +11464,13 @@ function saveOrders(arr) {
   try { localStorage.setItem('jlz_orders_pipeline', JSON.stringify(arr)); }
   catch(e) { console.error('saveOrders failed:', e); }
 }
+// Product of a procurement order. Orders written before multi-product support have
+// no `product` field → they are ginger (the pipeline was ginger-only). NEVER change
+// this default: every existing ginger supply/analytic depends on legacy orders still
+// counting as ginger. Mirror of _cmProd() for the committed store.
+function _ordProd(o) { return (o && o.product) || 'ginger'; }
+// Canonical list of products that can flow through the pipeline. Ginger first (legacy).
+var ORDER_PRODUCTS = ['ginger','turmeric','garlic','shallots'];
 
 // ── SALES COMMITMENTS — data layer (Frente B0) ─────────────────────────
 // Sell-side commitments the operator enters by hand: already sold, not yet
@@ -12289,6 +12305,21 @@ function ordStatusChip(status) {
     + s.label + '</span>';
 }
 
+// ── PRODUCT CHIP ── one color per product line (ginger = legacy default).
+function ordProductChip(product) {
+  const p = product || 'ginger';
+  const styles = {
+    'ginger':   { bg: '#F5EDE1', text: '#8A5A2B' },
+    'turmeric': { bg: '#FBF3D6', text: '#B45309' },
+    'garlic':   { bg: '#F1F3F5', text: '#4B5563' },
+    'shallots': { bg: '#F8E8EF', text: '#9D4D6B' },
+  };
+  const s = styles[p] || styles['ginger'];
+  return '<span style="display:inline-block;padding:2px 9px;border-radius:10px;background:' + s.bg
+    + ';color:' + s.text + ';font-size:10px;font-weight:600;font-family:var(--fb);text-transform:capitalize">'
+    + p + '</span>';
+}
+
 // ── DOWNGRADED CHIP + TOGGLE AFFORDANCE ──
 // Orthogonal to status: an order can be In Transit AND downgraded (e.g. an
 // APHIS-hold container that gets fumigated, losing organic certification).
@@ -12383,10 +12414,12 @@ function renderOrders() {
   const fMode   = document.getElementById('ord-filter-mode')?.value   || '';
   const fWeek   = document.getElementById('ord-filter-week')?.value   || '';
   const fPort   = document.getElementById('ord-filter-port')?.value   || '';
+  const fProd   = document.getElementById('ord-filter-product')?.value || '';
 
   // Apply filters in sequence. Each guards itself for empty value (no filter).
   data = data.filter(o => {
     if (fSearch && !String(o.jlzPo || '').toLowerCase().includes(fSearch)) return false;
+    if (fProd && _ordProd(o) !== fProd) return false;
     if (fVendor && o.supplier !== fVendor) return false;
     if (fStatus && o.status !== fStatus) return false;
     // Mode filter: default to 'sea' when field is not set (legacy orders)
@@ -12405,7 +12438,7 @@ function renderOrders() {
   });
 
   // Track if any filter is active (for empty state message)
-  const anyFilterActive = fSearch || fVendor || fStatus || fMode || fWeek || fPort;
+  const anyFilterActive = fSearch || fVendor || fStatus || fMode || fWeek || fPort || fProd;
 
   const body = document.getElementById('orders-body');
   const empty = document.getElementById('orders-empty');
@@ -12447,6 +12480,7 @@ function renderOrders() {
   const getSortVal = (o, key) => {
     switch (key) {
       case 'jlzPo':    return (o.jlzPo || '').toString();
+      case 'product':  return _ordProd(o);
       case 'supplier': return (o.supplier || '').toLowerCase();
       case 'etd':      return o.etdActual || o.etdEstimated || '9999-99-99';
       case 'etaWh':    return o.arrivalActual || o.arrivalEstimated || '9999-99-99';
@@ -12545,6 +12579,7 @@ function renderOrders() {
     return '<tr onclick="openOrderPanelByPo(\'' + poEsc + '\')" style="cursor:pointer;border-bottom:1px solid var(--gray-100);transition:background .12s" onmouseover="this.style.background=\'var(--gray-50)\'" onmouseout="this.style.background=\'\'">'
       + '<td style="padding:10px 12px">' + ordStatusChip(o.status) + ordDowngradedChip(o, poEsc) + '</td>'
       + '<td style="padding:10px 12px;color:var(--gray-800);font-weight:600">' + (o.jlzPo || '—') + modeChip + '</td>'
+      + '<td style="padding:10px 12px">' + ordProductChip(_ordProd(o)) + '</td>'
       + '<td style="padding:10px 12px;color:var(--gray-700)"><div style="display:flex;align-items:center;gap:6px"><span>' + (o.supplier || '—') + '</span>' + incotermChip + '</div></td>'
       + '<td style="padding:10px 12px;color:var(--gray-500);font-size:10px">' + (o.contractNo || '—') + '</td>'
       + '<td style="padding:10px 12px;color:var(--gray-500);font-size:10px">' + (o.containerNo || '—') + '</td>'
@@ -12651,7 +12686,7 @@ function setOrderView(view) {
 // ── CLEAR ALL FILTERS ──
 // Resets every filter dropdown to its default empty state and re-renders.
 function clearOrderFilters() {
-  ['ord-filter-search','ord-filter-vendor','ord-filter-status','ord-filter-mode','ord-filter-week','ord-filter-port'].forEach(id => {
+  ['ord-filter-search','ord-filter-vendor','ord-filter-status','ord-filter-mode','ord-filter-week','ord-filter-port','ord-filter-product'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
@@ -12750,6 +12785,7 @@ function saveOrderEdit() {
     idx: idx,
     formValues: {
       jlzPo:           getVal('ord-edit-jlzPo') || original.jlzPo,
+      product:         getVal('ord-edit-product') || _ordProd(original),
       supplier:        getVal('ord-edit-supplier'),
       incoterm:        getVal('ord-edit-incoterm') || ordDefaultIncoterm(getVal('ord-edit-supplier')) || 'CIF',
       mode:            newMode,
@@ -12923,6 +12959,7 @@ function deleteCurrentOrder() {
 function newOrderInline() {
   const empty = {
     jlzPo:            'NEW-' + Date.now().toString().slice(-6),
+    product:          'ginger',  // ginger | turmeric | garlic | shallots
     supplier:         '',
     contractNo:       '',
     containerNo:      '',
@@ -13067,6 +13104,7 @@ function buildOrderViewMode(o) {
     // ── Group 1: Identity (expanded by default)
     + grp('Identity', 'identity')
     + '<div class="group-body">'
+    + field('Product', ordProductChip(_ordProd(o)))
     + row2(
         field('Status', ordStatusChip(o.status), { color: 'var(--gray-800)' }),
         field('JLZ PO #', o.jlzPo, { mono: true })
@@ -13281,6 +13319,12 @@ function buildOrderEditForm(o) {
   return ''
     // ── Identity ──
     + grp('Identity')
+    + sel('Product', 'ord-edit-product', _ordProd(o), [
+        { value: 'ginger',   label: 'Ginger' },
+        { value: 'turmeric', label: 'Turmeric' },
+        { value: 'garlic',   label: 'Garlic' },
+        { value: 'shallots', label: 'Shallots' }
+      ])
     + row2(
         sel('Status', 'ord-edit-status', o.status, ['Contracted', 'In Transit', 'Arrived', 'Cancelled']),
         inp('JLZ PO #', 'ord-edit-jlzPo', o.jlzPo)
@@ -13971,7 +14015,8 @@ function bpRollingAvg(sales, n) {
 // ── Pipeline: orders not yet arrived, grouped by arrival week ──
 function bpGetPipelineByWeek() {
   const orders = (typeof getOrders === 'function') ? getOrders() : [];
-  const pipeline = orders.filter(o => o.status === 'Contracted' || o.status === 'In Transit');
+  // Ginger buy-plan supply only — a non-ginger order must never inflate ginger arrivals.
+  const pipeline = orders.filter(o => _ordProd(o) === 'ginger' && (o.status === 'Contracted' || o.status === 'In Transit'));
   const byWeek = {};  // week → [{order, cases}]
   pipeline.forEach(o => {
     const arrival = normalizeDate(o.arrivalEstimated || o.arrivalActual);
@@ -14013,7 +14058,17 @@ function bpTodayISO(){ var d=new Date(); return d.getFullYear()+'-'+String(d.get
 // their negotiated price (historical record); they just don't count anywhere.
 // TODO(cancel-metadata): cancelledDate + cancelReason fields are pending —
 // they need Code.gs ORDER_COLUMNS additions for cross-device sync.
-function bpAllOrders(){ return ((typeof getOrders==='function')?getOrders():[]).filter(function(o){ return o.status!=='Cancelled'; }); }
+// Ginger-supply gateway. Defaults to product='ginger' so every existing caller stays
+// ginger-only once non-ginger orders exist (NO-OP today: all orders are ginger). Pass an
+// explicit product ('turmeric'/'garlic'/'shallots') for its supply, or '*' for all products.
+function bpAllOrders(product){
+  var _p = (product===undefined||product===null) ? 'ginger' : product;
+  return ((typeof getOrders==='function')?getOrders():[]).filter(function(o){
+    if(o.status==='Cancelled') return false;
+    if(_p!=='*' && _ordProd(o)!==_p) return false;
+    return true;
+  });
+}
 function bpCcId(o){ return String(o.id||o.jlzPo||o.contractNo||o.containerNo||((o.supplier||'?')+'|'+(o.arrivalEstimated||o.arrivalActual||''))); }
 // Lookup by id searches RAW orders: historical references (e.g. a cost card
 // created before the order was later cancelled) must still resolve.
@@ -14546,6 +14601,7 @@ function bpLeadTimeSigmaWeeks(){
     const orders = (typeof getOrders === 'function') ? getOrders() : (window._ordersData || []);
     const drifts = [];
     (orders || []).forEach(o => {
+      if (_ordProd(o) !== 'ginger') return;  // ginger lead-time σ only (other products have their own lead times)
       const est = o && o.arrivalEstimated, act = o && o.arrivalActual;
       if (est && act) {
         const d = (new Date(act + 'T00:00:00') - new Date(est + 'T00:00:00')) / 86400000;
@@ -17548,7 +17604,7 @@ async function pullOrdersFromSheet(silent) {
     // Without this, values entered locally (like the FOB-conversion cost estimates)
     // would be silently wiped on every startup by the auto-pull.
     // TODO: when Code.gs adds columns for these fields, this preservation can be removed.
-    const LOCAL_ONLY_ORDER_FIELDS = ['insuranceUsd', 'customsUsd', 'destHandlingUsd', 'directShip'];
+    const LOCAL_ONLY_ORDER_FIELDS = ['insuranceUsd', 'customsUsd', 'destHandlingUsd', 'directShip', 'product'];
     const localByPo = {};
     (getOrders() || []).forEach(o => { if (o.jlzPo) localByPo[o.jlzPo] = o; });
     orders.forEach(o => {
@@ -19374,7 +19430,7 @@ function renderSimulator() {
 
   // Get active pipeline from real Orders module
   const orders = (typeof getOrders === 'function') ? getOrders() : [];
-  const activeOrders = orders.filter(o => o.status === 'Contracted' || o.status === 'In Transit');
+  const activeOrders = orders.filter(o => _ordProd(o) === 'ginger' && (o.status === 'Contracted' || o.status === 'In Transit'));
 
   // Update assumptions banner
   const stockLbs = parseFloat(document.getElementById('bp-stock-lbs')?.value) || 0;
@@ -22180,7 +22236,7 @@ function dmForwardWeeks(afterWk) {
     (byWk[c.wk] = byWk[c.wk] || { committed:0, direct:0 }).committed += (c.cases || 0);
   });
   (typeof getOrders === 'function' ? getOrders() : []).forEach(function(o) {
-    if(!o || !Array.isArray(o.directShip)) return;
+    if(!o || _ordProd(o) !== 'ginger' || !Array.isArray(o.directShip)) return;
     var wk = dmMondayISO(o.arrivalEstimated || o.arrivalActual); if(!wk) return;
     var tot = o.directShip.reduce(function(s, d){ return s + (d.cases || 0); }, 0);
     if(tot > 0) (byWk[wk] = byWk[wk] || { committed:0, direct:0 }).direct += tot;
@@ -22475,8 +22531,10 @@ function dmcCustomers(model) {
   return out.sort();
 }
 function dmcArrivingOrders() {
+  // Direct-ship netting is a ginger-only workflow for v1 — scope the picker to ginger
+  // so non-ginger pipeline orders never appear here. (Revisit in Fase 3 per product.)
   return (typeof getOrders === 'function' ? getOrders() : []).filter(function(o) {
-    return o && o.jlzPo && (o.status === 'Contracted' || o.status === 'In Transit');
+    return o && o.jlzPo && _ordProd(o) === 'ginger' && (o.status === 'Contracted' || o.status === 'In Transit');
   });
 }
 function dmcOrderEtaWk(o) {
@@ -22591,7 +22649,7 @@ function dmcRenderChips() {
   });
   if(prod === 'ginger'){
     (typeof getOrders === 'function' ? getOrders() : []).forEach(function(o) {
-      if(!o || !Array.isArray(o.directShip)) return;
+      if(!o || _ordProd(o) !== 'ginger' || !Array.isArray(o.directShip)) return;
       o.directShip.forEach(function(d, i) {
         html += '<div class="dmc-chip"><span><b>' + libEsc(d.customer) + '</b> · ' + libEsc(o.jlzPo) + ' · ' + d.cases + ' cs <span class="dmc-tag direct">direct-ship</span></span>'
           + '<button class="dmc-rm" onclick="dmcRemoveDirect(\'' + docJs(o.jlzPo) + '\',' + i + ')" title="Remove">×</button></div>';
