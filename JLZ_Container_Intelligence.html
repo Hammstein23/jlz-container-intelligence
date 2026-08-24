@@ -14376,7 +14376,7 @@ function invmReRender(){
 }
 // Distinct origins present in a product's on-hand lots (for the origin sub-filter).
 function invmOriginsFor(p){ var seen={}, out=[]; (prodInvFor(p).lots||[]).forEach(function(l){ var o=(l.origin||'').trim(); if(o && !seen[o]){ seen[o]=1; out.push(o); } }); return out; }
-function invmOriginMatch(r,origin){ if(!origin||origin==='all') return true; return String(r&&r.origin||'').toLowerCase().indexOf(String(origin).toLowerCase())>-1; }
+function invmOriginMatch(r,origin){ if(!origin||origin==='all') return true; var ro=(r&&r.oitem)?r.oitem:((r&&r.origin)||''); return String(ro).toLowerCase().indexOf(String(origin).toLowerCase())>-1; }
 // Service level → z (one-sided normal). Default 95% → 1.65.
 function invmZFromService(pct){ pct=+pct||95; if(pct>=99)return 2.33; if(pct>=98)return 2.05; if(pct>=97)return 1.88; if(pct>=95)return 1.65; if(pct>=90)return 1.28; if(pct>=85)return 1.04; if(pct>=80)return 0.84; return 1.65; }
 function invmStdev(a){ if(!a||a.length<2)return 0; var mn=a.reduce(function(x,y){return x+y;},0)/a.length; var v=a.reduce(function(s,x){return s+(x-mn)*(x-mn);},0)/(a.length-1); return Math.sqrt(v); }
@@ -14418,6 +14418,18 @@ function invmProductModel(p,origin){
   }
   return null;
 }
+// ── COMMITTED / UNSHIPPED (already sold, not yet shipped) per product+origin, in 30lb-equiv cases.
+// Seeded from the WholesaleWare Unshipped Sales Order Report (PICKING status). Reduces available-to-sell.
+var PROD_COMMITTED_LS='jlz_prod_committed_v1';
+function prodCommittedSeed(){ return { 'turmeric|Fiji':71, 'turmeric|Hawaii':1, 'garlic|California':7, 'shallots|California':11, 'ginger|Hawaii':1 }; }
+function prodCommittedState(){ try{ var o=JSON.parse(localStorage.getItem(PROD_COMMITTED_LS)||'null'); if(o&&typeof o==='object') return o; }catch(e){} var s=prodCommittedSeed(); try{ localStorage.setItem(PROD_COMMITTED_LS, JSON.stringify(s)); }catch(e){} return s; }
+function prodCommittedSave(o){ try{ localStorage.setItem(PROD_COMMITTED_LS, JSON.stringify(o||{})); }catch(e){} }
+function prodCommittedTotal(p,origin){
+  var st=prodCommittedState();
+  if(!origin || origin==='all'){ var t=0; Object.keys(st).forEach(function(k){ if(k.split('|')[0]===p) t+=(parseFloat(st[k])||0); }); return t; }
+  return parseFloat(st[p+'|'+origin])||0;
+}
+function invmProdSetCommitted(p,origin,v){ var st=prodCommittedState(); st[p+'|'+origin]=Math.max(0,parseFloat(v)||0); prodCommittedSave(st); invmReRender(); }
 function invmProductStats(p,origin){
   var meta=(typeof PRODUCTS==='object'&&PRODUCTS[p])||{};
   var caseLb=(typeof productCaseLb==='function')?productCaseLb(p):30;
@@ -14448,16 +14460,25 @@ function invmProductStats(p,origin){
   var svc=(store.serviceLevel!=null)?store.serviceLevel:95, z=invmZFromService(svc);
   var safetyWks=(cv>0&&leadWks>0)?z*cv*Math.sqrt(leadWks):0;
   var targetWks=leadWks+safetyWks;
-  var coverWks=(weeklyLbs>0)?onHandLbs/weeklyLbs:(onHandLbs>0?Infinity:0);
-  var orderCases=Math.ceil(Math.max(0,(targetWks*weeklyLbs)-onHandLbs)/caseLb);
+  // Shrinkage: a % of stock lost before it sells (weight loss / spoilage) — never over-estimate usable inventory.
+  var shrinkPct=(store.shrinkPct!=null)?store.shrinkPct:((meta.shrinkPct!=null)?meta.shrinkPct:0);
+  var shrinkF=1-Math.max(0,Math.min(60,shrinkPct))/100;
+  var effOnHandCases=onHandCases*shrinkF, effOnHandLbs=onHandLbs*shrinkF;
+  // Committed / unshipped sales (already sold, not yet shipped) reduce what's really available to sell again.
+  var committedCases=(typeof prodCommittedTotal==='function')?prodCommittedTotal(p,origin):0;
+  var availCases=Math.max(0, effOnHandCases-committedCases), availLbs=availCases*caseLb;
+  var coverWks=(weeklyLbs>0)?availLbs/weeklyLbs:(availLbs>0?Infinity:0);
+  var orderCases=Math.ceil(Math.max(0,(targetWks*weeklyLbs)-availLbs)/caseLb);
   var status='ok';
   if(weeklyLbs>0){ if(coverWks<leadWks) status='ur'; else if(coverWks<targetWks) status='re'; }
   return {p:p,meta:meta,label:meta.label||p,caseLb:caseLb,lots:lots,allLots:allLots,onHandCases:onHandCases,onHandLbs:onHandLbs,costVal:costVal,
     origin:origin,origins:origins,supList:supList,
-    hasModel:!!m,rr13:rr13,weeklyLbs:weeklyLbs,weeklyCases:weeklyCases,demandOverride:ovr,cv:cv,nWeeks:vals.length,
+    shrinkPct:shrinkPct,effOnHandCases:effOnHandCases,effOnHandLbs:effOnHandLbs,committedCases:committedCases,availCases:availCases,availLbs:availLbs,
+    hasModel:!!m,rr13:rr13,presMix:(m&&m.presMix)||[],weeklyLbs:weeklyLbs,weeklyCases:weeklyCases,demandOverride:ovr,cv:cv,nWeeks:vals.length,
     lead:lead,leadWks:leadWks,z:z,serviceLevel:svc,safetyWks:safetyWks,targetWks:targetWks,coverWks:coverWks,orderCases:orderCases,status:status};
 }
 function invmProdSetService(p,v){ var st=prodInvState(); if(!st[p]) st[p]={lots:[]}; st[p].serviceLevel=Math.max(50,Math.min(99.5,parseFloat(v)||95)); prodInvSave(st); invmReRender(); }
+function invmProdSetShrink(p,v){ var st=prodInvState(); if(!st[p]) st[p]={lots:[]}; st[p].shrinkPct=Math.max(0,Math.min(60,parseFloat(v)||0)); prodInvSave(st); invmReRender(); }
 function invmProdSetDemand(p,v){ var st=prodInvState(); if(!st[p]) st[p]={lots:[]}; st[p].demandOverride=(v===''||v==null)?null:Math.max(0,parseFloat(v)||0); prodInvSave(st); invmReRender(); }
 function invmProdClearDemand(p){ var st=prodInvState(); if(st[p]){ st[p].demandOverride=null; prodInvSave(st); invmReRender(); } }
 function invmProdSetLotCases(p,i,v){ var st=prodInvState(); if(st[p]&&st[p].lots&&st[p].lots[i]){ st[p].lots[i].cases=Math.max(0,parseFloat(v)||0); prodInvSave(st); invmReRender(); } }
@@ -14515,7 +14536,7 @@ function invmProjectionHTML(s){
   var base=new Date();
   var baseMon; try{ baseMon=(typeof dmWeekKey==='function')?dmWeekKey(base):null; }catch(e){ baseMon=null; }
   var baseDate=baseMon?new Date(baseMon+'T12:00:00'):base;
-  var weeks=[], start=s.onHandCases, firstShort=null;
+  var weeks=[], start=(s.availCases!=null?s.availCases:s.onHandCases), firstShort=null;
   for(var i=0;i<N;i++){
     var dd=new Date(baseDate.getTime()+i*7*86400000);
     var wkISO; try{ wkISO=(typeof dmWeekKey==='function')?dmWeekKey(dd):dd.toISOString().slice(0,10); }catch(e){ wkISO=dd.toISOString().slice(0,10); }
@@ -14566,7 +14587,7 @@ function invmProjectionHTML(s){
     +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11px">'
     +'<thead><tr><th style="'+th+';text-align:left">Week</th><th style="'+th+'">Start</th><th style="'+th+'">In</th><th style="'+th+'">Demand</th><th style="'+th+'">End</th></tr></thead>'
     +'<tbody>'+rows+'</tbody></table></div>'
-    +'<div style="font-size:10px;color:var(--gray-400);margin-top:8px">End = Start + In − Demand. <span style="color:#047857">green</span> ≥ target · <span style="color:#b45309">amber</span> &lt; safety · <span style="color:#b91c1c">red</span> &lt; 0. Highlighted row = first drop below safety.</div>'
+    +'<div style="font-size:10px;color:var(--gray-400);margin-top:8px">Start (now) = <b>available</b> (on-hand − shrink − committed). End = Start + In − Demand. <span style="color:#047857">green</span> ≥ target · <span style="color:#b45309">amber</span> &lt; safety · <span style="color:#b91c1c">red</span> &lt; 0. Highlighted row = first drop below safety.</div>'
     +'</div></div>';
 }
 function invmRenderProduct(p){
@@ -14662,24 +14683,28 @@ function invmAnalysisHTML(s){
   var cvTxt = (s.nWeeks>1) ? (Math.round(s.cv*100)+'% ('+s.nWeeks+' wk)') : 'insufficient history';
   var supNames = esc((s.supList&&s.supList.map(function(x){return x.name;}).join(', '))||'—');
   var supOrigins = esc((s.supList&&s.supList.map(function(x){return x.origin;}).filter(function(v,i,a){return a.indexOf(v)===i;}).join(' / '))||'');
-  var html='<div class="ipv-assume">'
+  var availNote = f(s.onHandCases)+' on-hand'+(s.shrinkPct>0?(' · −'+f1(s.shrinkPct)+'% shrink'):'')+(s.committedCases>0?(' · −'+f(s.committedCases)+' committed'):'');
+  var html='<div class="ipv-assume" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">'
       + '<div class="ipv-af"><label>Weekly demand</label><div class="val"><input type="number" step="1" value="'+demandVal+'" placeholder="—" onchange="invmProdSetDemand(\''+s.p+'\',this.value)"> <small>cs</small></div><div class="src">'+demandSrc+'</div></div>'
       + '<div class="ipv-af"><label>Service level</label><div class="val"><input type="number" step="1" min="80" max="99" value="'+s.serviceLevel+'" onchange="invmProdSetService(\''+s.p+'\',this.value)"> <small>% · z='+s.z.toFixed(2)+'</small></div><div class="src">stockout risk you accept</div></div>'
+      + '<div class="ipv-af"><label>Shrink</label><div class="val"><input type="number" step="1" min="0" max="40" value="'+f1(s.shrinkPct)+'" onchange="invmProdSetShrink(\''+s.p+'\',this.value)"> <small>%</small></div><div class="src">weight loss / spoilage</div></div>'
       + '<div class="ipv-af"><label>Lead time</label><div class="val">'+f1(s.leadWks)+' <small>wk · '+f(s.lead)+' d</small></div><div class="src">max supplier · '+supNames+'</div></div>'
       + '<div class="ipv-af"><label>Purchase pack</label><div class="val">'+f(s.caseLb)+' <small>lb/case</small></div><div class="src">'+supOrigins+'</div></div>'
     + '</div>'
+    + (s.weeklyLbs>0 ? dmSoldAsHTML(s.weeklyLbs, s.caseLb, s.presMix) : '')
     + '<div class="ipv-kpis">'
-      + '<div class="ipv-kpi"><div class="lbl">On-hand</div><div class="big">'+f(s.onHandCases)+' <small>cs</small></div><div class="note">'+f(s.onHandLbs)+' lb · '+s.lots.length+' lots</div></div>'
-      + '<div class="ipv-kpi"><div class="lbl">Current cover</div><div class="big">'+covTxt+'</div><div class="note">on-hand ÷ demand/wk</div></div>'
+      + '<div class="ipv-kpi"><div class="lbl">Available to sell</div><div class="big">'+f(s.availCases)+' <small>cs</small></div><div class="note">'+availNote+'</div></div>'
+      + '<div class="ipv-kpi"><div class="lbl">Current cover</div><div class="big">'+covTxt+'</div><div class="note">available ÷ demand/wk</div></div>'
       + '<div class="ipv-kpi"><div class="lbl">Target cover</div><div class="big">'+tgtTxt+'</div><div class="note">lead '+f1(s.leadWks)+' + safety '+f1(s.safetyWks)+'</div></div>'
       + '<div class="ipv-kpi"><div class="lbl">Suggested order</div><div class="big" style="color:'+(s.orderCases>0?'var(--jlz)':'var(--gray-400)')+'">'+ordTxt+'</div><div><span class="ipv-st '+stCls+'">'+stTxt+'</span></div></div>'
     + '</div>';
   if(s.weeklyLbs>0 && s.leadWks>0){
     html += '<div class="ipv-formula">'
-      + '<b>current cover</b> = '+f(s.onHandLbs)+' lb ÷ '+f(s.weeklyLbs)+' lb/wk = <b>'+f1(s.coverWks)+' wk</b><br>'
+      + '<b>available</b> = '+f(s.onHandCases)+' on-hand'+(s.shrinkPct>0?(' × (1−'+f1(s.shrinkPct)+'%)'):'')+(s.committedCases>0?(' − '+f(s.committedCases)+' committed'):'')+' = <b>'+f(s.availCases)+' cs</b> ('+f(s.availLbs)+' lb)<br>'
+      + '<b>current cover</b> = '+f(s.availLbs)+' lb ÷ '+f(s.weeklyLbs)+' lb/wk = <b>'+f1(s.coverWks)+' wk</b><br>'
       + '<b>variability</b> (CV of your sales) = '+cvTxt+' · <b>safety</b> = z('+s.z.toFixed(2)+' @'+s.serviceLevel+'%) × CV × √lead = <b>'+f1(s.safetyWks)+' wk</b><br>'
       + '<b>target cover</b> = lead '+f1(s.leadWks)+' + safety '+f1(s.safetyWks)+' = <b>'+f1(s.targetWks)+' wk</b><br>'
-      + '<b>order</b> = max(0, target×demand − on-hand) ÷ '+f(s.caseLb)+' lb = <b>'+f(s.orderCases)+' cs</b>'
+      + '<b>order</b> = max(0, target×demand − available) ÷ '+f(s.caseLb)+' lb = <b>'+f(s.orderCases)+' cs</b>'
       + '</div>';
   } else if(!s.hasModel){
     html += '<div class="ipv-formula" style="color:var(--amber-700);border-color:var(--amber-200);background:var(--amber-50)">No sales loaded to compute demand / target. Load the sales report (Demand tab) or set weekly demand manually above.</div>';
@@ -21934,6 +21959,17 @@ function classifyProductFromItem(item){
   if (s.indexOf('shallot')  > -1) return 'shallots';
   return null;
 }
+// Origin from the ITEM name (reliable), for per-origin analytics. The Sales report's Origin
+// column is inconsistent (a "Fijian" item can be tagged Fiji, Peru, USA or blank) — the item
+// name is authoritative. Returns '' when the name carries no origin (e.g. "9oz Retail").
+function dmOriginFromItem(item){
+  const s = String(item || '').toLowerCase();
+  if (/fiji/.test(s)) return 'Fiji';
+  if (/hawaii/.test(s)) return 'Hawaii';
+  if (/peruvian|\bperu\b/.test(s)) return 'Peru';
+  if (/california|\bgilroy\b/.test(s)) return 'California';
+  return '';
+}
 function productCaseLb(k){ return (PRODUCTS[k] && PRODUCTS[k].caseLb) || DM_CASE_LB; }
 function productLabel(k){ return k === 'all' ? 'All products' : ((PRODUCTS[k] && PRODUCTS[k].label) || k); }
 // Persisted active product. Defaults to 'ginger' so the app is byte-identical
@@ -22052,6 +22088,14 @@ function dmLbsPerCase(item){
   if (m) return parseFloat(m[1]);
   return null;
 }
+// Short sales-presentation label from the Item name (e.g. "30 lb", "9 oz"), for the buy-vs-sell breakdown.
+function dmPackLabel(item){
+  const s = String(item || '');
+  let m = s.match(/(\d+(?:\.\d+)?)\s*L?bs?\b/i); if (m) return (+m[1]) + ' lb';
+  m = s.match(/(\d+(?:\.\d+)?)\s*oz\b/i);         if (m) return (+m[1]) + ' oz';
+  m = s.match(/-(\d+(?:\.\d+)?)$/);               if (m) return (+m[1]) + ' lb';
+  return '?';
+}
 function dmToDate(v){
   if (v instanceof Date && !isNaN(v)) return v;
   const s = String(v || '').trim();
@@ -22145,6 +22189,9 @@ function dmParseWorkbook(buf){
       gs: gsv,                                 // = units * FOB
       gp: num(r['Gross Profit']),              // = units * (FOB - Full Cost); excl. pallet/freight
       origin: _org,
+      oitem: dmOriginFromItem(item),           // origin from the Item name (reliable) — used by per-origin views
+      pack: dmPackLabel(item),                  // sales presentation label (e.g. "5 lb", "9 oz") for buy-vs-sell breakdown
+      packLb: lbpc,                             // lb per sold unit of that presentation
       type
     });
     const rc = recAdd(prod); rc.kept++; rc.lbs += lbsv; rc.gross += gsv;
@@ -22159,7 +22206,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
   caseLb = caseLb || DM_CASE_LB;   // lbs->cases conversion for the focused product
   const anchor = new Date();
   const curWeekKey = dmWeekKey(anchor);
-  const wkCust = {}, custDates = {}, custLifetime = {};
+  const wkCust = {}, custDates = {}, custLifetime = {}, presWk = {};
   let dataMax = '';
   raw.forEach(r => {
     if (r.d > dataMax) dataMax = r.d;                  // latest data date spans all row types
@@ -22169,8 +22216,17 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
     wkCust[wk][r.c] = (wkCust[wk][r.c] || 0) + r.lbs;
     (custDates[r.c] = custDates[r.c] || []).push(r.d);
     custLifetime[r.c] = (custLifetime[r.c] || 0) + r.lbs;
+    // sales-presentation mix (lbs by presentation, per week) — for the buy-vs-sell breakdown
+    var _pk = r.pack || '?'; (presWk[wk] = presWk[wk] || {});
+    var _pe = presWk[wk][_pk] || (presWk[wk][_pk] = { lbs:0, packLb:r.packLb||0 });
+    _pe.lbs += r.lbs; if(!_pe.packLb && r.packLb) _pe.packLb = r.packLb;
   });
   const allWeeks = Object.keys(wkCust).filter(w => w < curWeekKey).sort();  // complete weeks only
+  // Presentation mix over the last 13 complete weeks (fractions are window-stable, applied to any run-rate).
+  const _presAgg = {};
+  allWeeks.slice(-13).forEach(function(w){ var pw=presWk[w]; if(!pw) return; Object.keys(pw).forEach(function(k){ var e=pw[k]; var a=_presAgg[k]||(_presAgg[k]={lbs:0,packLb:e.packLb}); a.lbs+=e.lbs; if(!a.packLb) a.packLb=e.packLb; }); });
+  const _presTot = Object.keys(_presAgg).reduce(function(t,k){ return t+_presAgg[k].lbs; }, 0);
+  const presMix = Object.keys(_presAgg).map(function(k){ var e=_presAgg[k]; return { label:k, packLb:e.packLb, lbs:e.lbs, frac:_presTot?e.lbs/_presTot:0 }; }).filter(function(x){ return x.lbs>0; }).sort(function(a,b){ return b.lbs-a.lbs; });
   const lastN = (n) => allWeeks.slice(-n);
   const weekTotal = {};
   allWeeks.forEach(w => { weekTotal[w] = Object.values(wkCust[w]).reduce((s,v)=>s+v,0); });
@@ -22355,6 +22411,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
            active, dormant, demandRows, custDetail, customers, concTop2, blendMg,
            weekly: allWeeks.map(w => ({ week:w, lbs:Math.round(weekTotal[w]||0) })),
            weeklyReliable: (reliableWeeks.length ? reliableWeeks : allWeeks).map(w => ({ week:w, lbs:Math.round(weekTotal[w]||0) })),
+           presMix,
            dataMax, weeksCovered:allWeeks.length, weeklyOnly:!!weeklyOnly };
 }
 
@@ -22427,6 +22484,24 @@ function dmEffectiveRunRateLbs(){
   qaQuietList().forEach(x => { ex += (x.rrLbs || 0) * (1 - qaPct(x.c) / 100); });
   return Math.max(0, base - ex);
 }
+// Buy-vs-sell breakdown for a run-rate in lbs. The headline (cs/wk) is the BUY unit (caseLb-lb packs);
+// this line adds the raw volume + how that volume actually sells, by presentation (the sales team's language).
+function dmSoldAsHTML(rrLbs, caseLb, presMix){
+  if(!(rrLbs>0)) return '';
+  caseLb = caseLb || DM_CASE_LB;
+  var f = function(n){ return Math.round(n||0).toLocaleString('en-US'); };
+  var mix = '';
+  if(presMix && presMix.length){
+    var shown = presMix.filter(function(p){ return p.packLb>0 && p.frac>0; });
+    var top = shown.slice(0,4).map(function(p){ var boxes=rrLbs*p.frac/p.packLb; return '<b style="color:var(--gray-700)">'+f(boxes)+'</b> <span style="color:var(--gray-400)">'+p.label+'</span>'; });
+    if(shown.length>4){ var restLbs=0; shown.slice(4).forEach(function(p){ restLbs+=rrLbs*p.frac; }); top.push('<span style="color:var(--gray-400)">+'+(shown.length-4)+' more</span>'); }
+    mix = top.join(' &nbsp;·&nbsp; ');
+  }
+  return '<div style="font-family:var(--fm);font-size:11px;color:var(--gray-500);margin:-4px 0 10px;line-height:1.7">'
+    + '= <b style="color:var(--gray-700)">'+f(rrLbs)+' lb/wk</b> <span style="color:var(--gray-300)">·</span> headline = <b style="color:var(--jlz,#0d5026)">'+f(rrLbs/caseLb)+'</b> buy packs of '+f(caseLb)+' lb'
+    + (mix?('<br>🛒 <span style="text-transform:uppercase;letter-spacing:.04em;font-size:9px;color:var(--gray-400);font-weight:700;font-family:var(--fb)">sold as</span> &nbsp;'+mix):'')
+    + '</div>';
+}
 function renderDmRunRate(){
   var host = document.getElementById('dm-runrate'); if(!host) return;
   var m = (typeof _dmModel !== 'undefined' && _dmModel) ? _dmModel : null;
@@ -22469,6 +22544,7 @@ function renderDmRunRate(){
   host.innerHTML = '<div class="card dmrr">'
     + '<div class="dmrr-top"><div class="dmrr-k">Run-rate · what they buy per week</div>'+seg+'</div>'
     + '<div class="dmrr-bigrow"><div class="dmrr-big">'+bigRR.toLocaleString()+'</div><div class="dmrr-u">cs/wk</div><div class="dmrr-role">'+(win===13?'13-week base':win===6?'6-week momentum':'3-week spot')+'</div></div>'
+    + dmSoldAsHTML(bigRR*cl, cl, m.presMix)
     + '<div class="dmrr-rib '+rc+'">'+rt+'</div>'
     + '<div class="dmrr-step"><div class="dmrr-h">Average of the '+win+' weeks it uses</div><div class="dmrr-wks">'+wksHtml+'</div><div class="dmrr-math">'+mathHtml+'</div></div>'
     + '<div class="dmrr-step"><div class="dmrr-h">Built from these customers <span class="dmrr-hs">— each account’s run-rate in the window</span></div><table class="dmrr-tbl"><tbody>'+rows+'</tbody></table>'
