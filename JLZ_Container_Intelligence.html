@@ -22269,14 +22269,25 @@ let _dmDiag   = null;    // {subCategory: count} census from the last upload (fo
 let _dmRecon  = null;    // {product: {kept,lbs,gross,dropWeight,...}} reconciliation from the last upload
 
 // Rows from the last upload, filtered by the active product + origin.
+// Canonical origin of a demand row — derived from the ITEM (oitem), NOT the unreliable Origin column (which
+// shows bogus México/Argentina/Perú for products that are really California/Fiji/Hawaii). Mirrors the Buy
+// Planner's invmOriginMatch: garlic/shallots are always California; turmeric/ginger use the item-derived origin.
+function dmRowOrigin(r){
+  var p=r&&r.prod;
+  if(p==='garlic'||p==='shallots') return 'California';
+  var o=(r&&r.oitem) || (typeof prodHomeOrigin==='function'?prodHomeOrigin(p):'');
+  if(o) return o;
+  var n=(typeof dmNormalizeOrigin==='function')?dmNormalizeOrigin(r&&r.origin):{origin:(r&&r.origin)||''};
+  return n.mixed?'':(n.origin||'');
+}
 function dmFilteredRows(){
   if (!_dmRawAll) return [];
   const p = getActiveProduct();
   return _dmRawAll.filter(r => {
     if (!(p === 'all' || (r.prod || 'ginger') === p)) return false;
-    const n = dmNormalizeOrigin(r.origin);
-    if (n.mixed) return false;
-    return (_dmOrigin === 'All' || n.origin === _dmOrigin);
+    const o = dmRowOrigin(r);
+    if (!o) return false;
+    return (_dmOrigin === 'All' || o === _dmOrigin);
   });
 }
 function dmFocusCaseLb(){ const p = getActiveProduct(); return p === 'all' ? DM_CASE_LB : productCaseLb(p); }
@@ -22285,7 +22296,7 @@ function dmFocusCaseLb(){ const p = getActiveProduct(); return p === 'all' ? DM_
 function dmOriginsForActive(){
   const p = getActiveProduct(), set = new Set();
   (_dmRawAll || []).forEach(r => {
-    if (p === 'all' || (r.prod || 'ginger') === p){ const n = dmNormalizeOrigin(r.origin); if (n.mixed) return; if (n.origin) set.add(n.origin); }
+    if (p === 'all' || (r.prod || 'ginger') === p){ const o = dmRowOrigin(r); if (o) set.add(o); }
   });
   return ['All'].concat(Array.from(set).sort());
 }
