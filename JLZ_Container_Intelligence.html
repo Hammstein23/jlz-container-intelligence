@@ -14524,8 +14524,9 @@ function nowcastProductModel(m, p, origin){
   if(!incWeeks.length) return m;
   var series=m.weeklyReliable.map(function(w){ return {week:w.week, lbs:w.lbs}; }), added=false;
   incWeeks.forEach(function(k){
-    var commLbs=(cbw[k]||0)*caseLb;
-    if(commLbs>0){ series.push({week:k, lbs:Math.round((partial[k]||0)+commLbs), now:true}); added=true; }   // (invoiced so far) + booked orders for that week
+    var commLbs=(cbw[k]||0)*caseLb, part=partial[k]||0;
+    if(commLbs>0){ series.push({week:k, lbs:Math.round(part+commLbs), now:true}); added=true; }        // has booked → (invoiced so far) + booked
+    else if(part>0){ series.push({week:k, lbs:Math.round(part), prelim:true}); added=true; }           // invoiced-only, still lagging → counted but flagged preliminary
   });
   if(!added) return m;
   var mean=function(a){ return a.length? a.reduce(function(s,x){return s+(x.lbs||0);},0)/a.length : 0; };
@@ -22821,9 +22822,13 @@ function renderDmRunRate(){
   else if(rk==='mixed'){ rc='amb'; rt='<b>Mixed signal.</b> The short windows disagree — 3w '+fp(s.d3)+', 6w '+fp(s.d6)+' — typical of lumpy weeks. No clear trend; plan on 13 wk.'; }
   else { rc='grn'; rt='<b>Steady.</b> The three windows agree — demand firm on the quarter. Plan on 13 wk.'; }
   var wk = m.weeklyReliable.slice(-win);
-  var wc = wk.map(function(w){ return { l:wkNo(w.week), v:Math.round((w.lbs||0)/cl), now:!!w.now }; });
+  var wc = wk.map(function(w){ return { l:wkNo(w.week), v:Math.round((w.lbs||0)/cl), now:!!w.now, prelim:!!w.prelim }; });
   var mx = Math.max.apply(null, wc.map(function(x){ return x.v; })) || 1;
-  var wksHtml = wc.map(function(x){ return '<div class="dmrr-wk"><div class="v"'+(x.now?' style="color:#7c3aed"':'')+'>'+x.v.toLocaleString()+(x.now?' 📋':'')+'</div><div class="bar" style="height:'+Math.round(x.v/mx*54+5)+'px'+(x.now?';background:#ddd6fe':'')+'"></div><div class="l"'+(x.now?' style="color:#7c3aed;font-weight:700"':'')+'>'+x.l+'</div></div>'; }).join('');
+  var wksHtml = wc.map(function(x){
+    var col=x.now?'#7c3aed':(x.prelim?'#b45309':''), mk=x.now?' 📋':(x.prelim?' ⏳':''), bg=x.now?';background:#ddd6fe':(x.prelim?';background:#fde68a':'');
+    return '<div class="dmrr-wk"><div class="v"'+(col?' style="color:'+col+'"':'')+'>'+x.v.toLocaleString()+mk+'</div><div class="bar" style="height:'+Math.round(x.v/mx*54+5)+'px'+bg+'"></div><div class="l"'+(col?' style="color:'+col+';font-weight:700"':'')+'>'+x.l+'</div></div>';
+  }).join('');
+  var _hasNow=wc.some(function(x){return x.now;}), _hasPrelim=wc.some(function(x){return x.prelim;});
   var sumC = wc.reduce(function(a,b){ return a+b.v; }, 0);
   var avgC = wc.length ? Math.round(sumC / wc.length) : 0;      // exact average of the weeks SHOWN — the on-screen math always reconciles
   var adj = rr[win] - avgC;                                     // gap to the plan number = manual run-rate override (0 in the common case; <=1 is rounding)
@@ -22844,7 +22849,7 @@ function renderDmRunRate(){
     + dmSoldAsHTML(bigRR*cl, cl, m.presMix)
     + (dsCases>=1 ? ('<div style="font-family:var(--fm);font-size:11px;line-height:1.5;margin:-2px 0 10px;color:#7c3aed">＋ <b>~'+Math.round(dsCases).toLocaleString()+' cs/wk</b> Sol-ti direct-ship <span style="color:var(--gray-400)">— order-driven, ships from supplier · excluded from this run-rate (never touches stock)</span></div>') : '')
     + '<div class="dmrr-rib '+rc+'">'+rt+'</div>'
-    + '<div class="dmrr-step"><div class="dmrr-h">Average of the '+win+' weeks it uses</div><div class="dmrr-wks">'+wksHtml+'</div><div class="dmrr-math">'+mathHtml+'</div>'+(m.nowcast?'<div style="font-size:10px;color:#7c3aed;margin-top:5px">📋 recent week completed with its confirmed orders (booked, not yet invoiced) — most current read</div>':'')+'</div>'
+    + '<div class="dmrr-step"><div class="dmrr-h">Average of the '+win+' weeks it uses</div><div class="dmrr-wks">'+wksHtml+'</div><div class="dmrr-math">'+mathHtml+'</div>'+(m.nowcast?('<div style="font-size:10px;margin-top:5px;line-height:1.5">'+(_hasPrelim?'<span style="color:#b45309">⏳ preliminary (invoicing still catching up)</span>':'')+(_hasPrelim&&_hasNow?' &nbsp;·&nbsp; ':'')+(_hasNow?'<span style="color:#7c3aed">📋 booked orders (not yet invoiced)</span>':'')+' — most current read</div>'):'')+'</div>'
     + '<div class="dmrr-step"><div class="dmrr-h">Built from these customers <span class="dmrr-hs">— each account’s run-rate in the window</span></div><table class="dmrr-tbl"><tbody>'+rows+'</tbody></table>'
     + '<div class="dmrr-link" onclick="if(typeof switchTab===\'function\')switchTab(\'customers\')">See customer detail → <span class="dmrr-hs">margin, cadence, chart, overrides</span></div></div>'
     + '</div>';
