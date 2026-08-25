@@ -14506,6 +14506,37 @@ function invmDirectShipCases(p,origin){
   var sum=weeks.reduce(function(t,k){ return t+(wk[k]||0); },0);
   return (sum/weeks.length)/caseLb;                        // lbs/wk averaged over 13 calendar weeks → cases/wk
 }
+// NOWCAST the trailing incomplete week (turmeric/garlic/shallots only — ginger keeps its own engine).
+// The run-rate drops the dataMax week because invoicing lags (it's only partly billed). But that week has
+// essentially happened; we complete it with its confirmed orders (committed/unshipped for that week) so the
+// run-rate reflects the most recent read. Only completes a week when we HAVE booked data for it (otherwise a
+// partial week would drag the average down — the exact thing the lag rule avoids). Marks the week (now:true).
+function nowcastProductModel(m, p, origin){
+  if(!m || p==='ginger') return m;
+  if(!Array.isArray(m.weekly) || !Array.isArray(m.weeklyReliable) || !m.weeklyReliable.length) return m;
+  var cbw=(typeof invmCommittedByWeek==='function')?invmCommittedByWeek(p, origin):{};
+  if(!cbw || !Object.keys(cbw).length) return m;
+  var caseLb=(typeof productCaseLb==='function')?productCaseLb(p):30;
+  var lastReliable=m.weeklyReliable[m.weeklyReliable.length-1].week;
+  var partial={}; m.weekly.forEach(function(w){ if(w.week>lastReliable) partial[w.week]=w.lbs||0; });   // invoiced-so-far past the reliable edge
+  var wkset={}; Object.keys(partial).forEach(function(k){ wkset[k]=1; }); Object.keys(cbw).forEach(function(k){ if(k>lastReliable) wkset[k]=1; });
+  var incWeeks=Object.keys(wkset).sort();
+  if(!incWeeks.length) return m;
+  var series=m.weeklyReliable.map(function(w){ return {week:w.week, lbs:w.lbs}; }), added=false;
+  incWeeks.forEach(function(k){
+    var commLbs=(cbw[k]||0)*caseLb;
+    if(commLbs>0){ series.push({week:k, lbs:Math.round((partial[k]||0)+commLbs), now:true}); added=true; }   // (invoiced so far) + booked orders for that week
+  });
+  if(!added) return m;
+  var mean=function(a){ return a.length? a.reduce(function(s,x){return s+(x.lbs||0);},0)/a.length : 0; };
+  var out=Object.assign({}, m);
+  out.weeklyReliable=series;
+  out.runRate13=Math.round(mean(series.slice(-13)));
+  out.runRate6=Math.round(mean(series.slice(-6)));
+  out.runRate3=Math.round(mean(series.slice(-3)));
+  out.nowcast=true;
+  return out;
+}
 // Demand model for any product (ginger via prod model; focused product live; else built on-demand from raw rows).
 function invmProductModel(p,origin){
   origin=origin||'all';
@@ -14514,7 +14545,8 @@ function invmProductModel(p,origin){
     if(typeof productFocus==='function' && productFocus()===p && typeof _dmModel!=='undefined' && _dmModel) return _dmModel;
   }
   if(typeof _dmRawAll!=='undefined' && Array.isArray(_dmRawAll) && typeof dmBuild==='function'){
-    try{ return dmBuild(_dmRawAll.filter(function(r){ return (r.prod||'ginger')===p && invmOriginMatch(r,origin) && !isDirectShipRow(r); }), false, p); }catch(e){ return null; }
+    try{ var _m=dmBuild(_dmRawAll.filter(function(r){ return (r.prod||'ginger')===p && invmOriginMatch(r,origin) && !isDirectShipRow(r); }), false, p);
+      return (typeof nowcastProductModel==='function')?nowcastProductModel(_m, p, origin):_m; }catch(e){ return null; }
   }
   return null;
 }
@@ -22765,6 +22797,13 @@ function renderDmRunRate(){
       }
     }
   }catch(e){}
+  // Nowcast the trailing incomplete week (turmeric/garlic/shallots) — completes the dataMax week with its
+  // booked orders so the run-rate reflects the most recent read. Ginger untouched.
+  try{ var _np=(typeof getActiveProduct==='function')?getActiveProduct():null;
+    if(_np && _np!=='ginger' && typeof nowcastProductModel==='function'){
+      var _no=(typeof _dmOrigin!=='undefined' && _dmOrigin && _dmOrigin!=='All')?_dmOrigin:'all';
+      m=nowcastProductModel(m, _np, _no);
+    } }catch(e){}
   var win = (typeof dmWindow === 'function') ? dmWindow() : 13;
   var mode = (typeof dmWindowMode === 'function') ? dmWindowMode() : 'auto';
   var rrLbs = { 3:(m.runRate3||m.runRate13), 6:(m.runRate6||m.runRate13), 13:m.runRate13 };
@@ -22782,9 +22821,9 @@ function renderDmRunRate(){
   else if(rk==='mixed'){ rc='amb'; rt='<b>Mixed signal.</b> The short windows disagree — 3w '+fp(s.d3)+', 6w '+fp(s.d6)+' — typical of lumpy weeks. No clear trend; plan on 13 wk.'; }
   else { rc='grn'; rt='<b>Steady.</b> The three windows agree — demand firm on the quarter. Plan on 13 wk.'; }
   var wk = m.weeklyReliable.slice(-win);
-  var wc = wk.map(function(w){ return { l:wkNo(w.week), v:Math.round((w.lbs||0)/cl) }; });
+  var wc = wk.map(function(w){ return { l:wkNo(w.week), v:Math.round((w.lbs||0)/cl), now:!!w.now }; });
   var mx = Math.max.apply(null, wc.map(function(x){ return x.v; })) || 1;
-  var wksHtml = wc.map(function(x){ return '<div class="dmrr-wk"><div class="v">'+x.v.toLocaleString()+'</div><div class="bar" style="height:'+Math.round(x.v/mx*54+5)+'px"></div><div class="l">'+x.l+'</div></div>'; }).join('');
+  var wksHtml = wc.map(function(x){ return '<div class="dmrr-wk"><div class="v"'+(x.now?' style="color:#7c3aed"':'')+'>'+x.v.toLocaleString()+(x.now?' 📋':'')+'</div><div class="bar" style="height:'+Math.round(x.v/mx*54+5)+'px'+(x.now?';background:#ddd6fe':'')+'"></div><div class="l"'+(x.now?' style="color:#7c3aed;font-weight:700"':'')+'>'+x.l+'</div></div>'; }).join('');
   var sumC = wc.reduce(function(a,b){ return a+b.v; }, 0);
   var avgC = wc.length ? Math.round(sumC / wc.length) : 0;      // exact average of the weeks SHOWN — the on-screen math always reconciles
   var adj = rr[win] - avgC;                                     // gap to the plan number = manual run-rate override (0 in the common case; <=1 is rounding)
@@ -22805,7 +22844,7 @@ function renderDmRunRate(){
     + dmSoldAsHTML(bigRR*cl, cl, m.presMix)
     + (dsCases>=1 ? ('<div style="font-family:var(--fm);font-size:11px;line-height:1.5;margin:-2px 0 10px;color:#7c3aed">＋ <b>~'+Math.round(dsCases).toLocaleString()+' cs/wk</b> Sol-ti direct-ship <span style="color:var(--gray-400)">— order-driven, ships from supplier · excluded from this run-rate (never touches stock)</span></div>') : '')
     + '<div class="dmrr-rib '+rc+'">'+rt+'</div>'
-    + '<div class="dmrr-step"><div class="dmrr-h">Average of the '+win+' weeks it uses</div><div class="dmrr-wks">'+wksHtml+'</div><div class="dmrr-math">'+mathHtml+'</div></div>'
+    + '<div class="dmrr-step"><div class="dmrr-h">Average of the '+win+' weeks it uses</div><div class="dmrr-wks">'+wksHtml+'</div><div class="dmrr-math">'+mathHtml+'</div>'+(m.nowcast?'<div style="font-size:10px;color:#7c3aed;margin-top:5px">📋 last week completed with its confirmed orders (still to invoice) — most current read</div>':'')+'</div>'
     + '<div class="dmrr-step"><div class="dmrr-h">Built from these customers <span class="dmrr-hs">— each account’s run-rate in the window</span></div><table class="dmrr-tbl"><tbody>'+rows+'</tbody></table>'
     + '<div class="dmrr-link" onclick="if(typeof switchTab===\'function\')switchTab(\'customers\')">See customer detail → <span class="dmrr-hs">margin, cadence, chart, overrides</span></div></div>'
     + '</div>';
