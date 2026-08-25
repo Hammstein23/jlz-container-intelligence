@@ -14790,7 +14790,8 @@ function bpRenderProduct(p){
     bar='<div style="display:flex;gap:6px;align-items:center;margin-bottom:12px;flex-wrap:wrap"><span style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-right:4px">Origin</span>'+origins.map(function(o){ return pill(o); }).join('')+'</div>';
   }
   return '<div style="margin-bottom:8px;font-size:11px;color:var(--gray-400);font-family:var(--fm)">Buy Planner · '+esc(s.label)+(BP_ORIGIN?(' · '+esc(BP_ORIGIN)):'')+' — when &amp; how much to order</div>'
-    + bar + invmAnalysisHTML(s) + invmProjectionHTML(s) + whatifCardHTML(s.p, s.origin, 'bpwi');
+    + bar + invmAnalysisHTML(s) + invmProjectionHTML(s)
+    + '<div style="font-size:11px;color:var(--gray-400);font-family:var(--fm);margin:-4px 0 8px">Test hypothetical buys in the <b style="color:#7c3aed">Simulator</b> tab.</div>';
 }
 // Simulator product view (turmeric/garlic/shallots + ginger-Hawaii): projection + what-if, per product+origin.
 var SIM_PRODUCT='ginger', SIM_ORIGIN='';
@@ -22053,6 +22054,14 @@ function dmOriginFromItem(item){
   if (/california|\bgilroy\b/.test(s)) return 'California';
   return '';
 }
+// Home origin of a product when the item/SKU carries none — so single-origin products
+// (garlic/shallots = California) are never dropped by the per-origin filter.
+function prodHomeOrigin(prod){
+  if (prod === 'garlic' || prod === 'shallots') return 'California';
+  if (prod === 'ginger')   return 'Peru';
+  if (prod === 'turmeric') return 'Fiji';
+  return '';
+}
 function productCaseLb(k){ return (PRODUCTS[k] && PRODUCTS[k].caseLb) || DM_CASE_LB; }
 function productLabel(k){ return k === 'all' ? 'All products' : ((PRODUCTS[k] && PRODUCTS[k].label) || k); }
 // Persisted active product. Defaults to 'ginger' so the app is byte-identical
@@ -22272,7 +22281,7 @@ function dmParseWorkbook(buf){
       gs: gsv,                                 // = units * FOB
       gp: num(r['Gross Profit']),              // = units * (FOB - Full Cost); excl. pallet/freight
       origin: _org,
-      oitem: dmOriginFromItem(item),           // origin from the Item name (reliable) — used by per-origin views
+      oitem: dmOriginFromItem(item) || prodHomeOrigin(prod),   // origin from the Item; else the product's home origin (single-origin products never dropped)
       pack: dmPackLabel(item),                  // sales presentation label (e.g. "5 lb", "9 oz") for buy-vs-sell breakdown
       packLb: lbpc,                             // lb per sold unit of that presentation
       type
