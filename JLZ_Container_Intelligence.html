@@ -14533,9 +14533,14 @@ function invmProductStats(p,origin){
   if(origins.length && (origin==='all' || origins.indexOf(origin)<0)) origin=origins[0];
   var allLots=store.lots||[];
   var lots=(!origin||origin==='all')?allLots:allLots.filter(function(l){ return invmOriginMatch(l,origin); });
-  var onHandCases=lots.reduce(function(s,l){ return s+(parseFloat(l.cases)||0); },0);
+  // Excluded lots = physically gone but kept on record; subtracted from planned on-hand so they never
+  // auto-feed the Buy Planner / Simulator. Still shown in the Inventory table (marked).
+  var counted=lots.filter(function(l){ return !(l&&l.excluded); });
+  var onHandCases=counted.reduce(function(s,l){ return s+(parseFloat(l.cases)||0); },0);
   var onHandLbs=onHandCases*caseLb;
-  var costVal=lots.reduce(function(s,l){ return s+(parseFloat(l.cases)||0)*(parseFloat(l.avgCost)||0); },0);
+  var costVal=counted.reduce(function(s,l){ return s+(parseFloat(l.cases)||0)*(parseFloat(l.avgCost)||0); },0);
+  var excludedCases=lots.reduce(function(s,l){ return s+((l&&l.excluded)?(parseFloat(l.cases)||0):0); },0);
+  var excludedLbs=excludedCases*caseLb;
   var m=invmProductModel(p,origin);
   var rr13=(m&&m.runRate13>0)?m.runRate13:0;                              // lbs/wk (13-wk structural, for CV/reference)
   // Demand uses the SELECTED reaction window (3/6/13), shared per-product with the Demand tab + Simulator so
