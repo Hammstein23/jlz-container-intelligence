@@ -4724,6 +4724,17 @@ function authInjectLogo() {
     </div>
   </div>
 
+  <!-- Product selector — the Simulator is per-product. Ginger keeps its full simulator; other products use the projection + what-if. -->
+  <div class="invm-prodbar" id="sim-prodbar" style="margin:4px 0 6px">
+    <button class="invm-ptab on" id="sim-pt-ginger"   onclick="simSetProduct('ginger')">Ginger</button>
+    <button class="invm-ptab"    id="sim-pt-turmeric" onclick="simSetProduct('turmeric')">Turmeric</button>
+    <button class="invm-ptab"    id="sim-pt-garlic"   onclick="simSetProduct('garlic')">Garlic</button>
+    <button class="invm-ptab"    id="sim-pt-shallots" onclick="simSetProduct('shallots')">Shallots</button>
+  </div>
+  <div class="invm-prodbar" id="sim-ginger-origin" style="display:none;gap:6px;align-items:center;margin:2px 0 12px"></div>
+  <div id="sim-product-view" style="display:none"></div>
+  <div id="sim-ginger-body">
+
   <!-- ── 1. ASSUMPTIONS BANNER (read-only from Buy Planner) ── -->
   <div class="card mb-4" style="border-left:4px solid var(--gray-300)">
     <div class="card-body" style="padding:12px 16px;display:flex;align-items:center;gap:18px;flex-wrap:wrap;font-size:var(--text-12)">
@@ -5052,6 +5063,7 @@ function authInjectLogo() {
     </div>
   </div>
 
+  </div><!-- end sim-ginger-body -->
 </div><!-- end tab-simulator -->
 
 
@@ -14385,6 +14397,8 @@ function invmReRender(){
   if(typeof renderInventory==='function') renderInventory();
   var bpv=document.getElementById('bp-product-view');
   if(bpv && bpv.style.display!=='none' && typeof renderBuyPlanner==='function') renderBuyPlanner();
+  var spv=document.getElementById('sim-product-view');
+  if(spv && spv.style.display!=='none' && typeof renderSimulator==='function') renderSimulator();
 }
 // Distinct origins present in a product's on-hand lots (for the origin sub-filter).
 function invmOriginsFor(p){ var seen={}, out=[]; (prodInvFor(p).lots||[]).forEach(function(l){ var o=(l.origin||'').trim(); if(o && !seen[o]){ seen[o]=1; out.push(o); } }); return out; }
@@ -14529,14 +14543,36 @@ function _whKey(p,origin){ return String(p||'')+'|'+String(origin||'all'); }
 function whatifState(){ try{ var o=JSON.parse(localStorage.getItem(PROD_WHATIF_LS)||'{}'); return (o&&typeof o==='object')?o:{}; }catch(e){ return {}; } }
 function whatifSave(o){ try{ localStorage.setItem(PROD_WHATIF_LS, JSON.stringify(o||{})); }catch(e){} }
 function getWhatif(p,origin){ return whatifState()[_whKey(p,origin)]||[]; }
-function addWhatif(p,origin){
-  var cs=Math.round(parseFloat((document.getElementById('bpwi-cases')||{}).value)||0);
-  var arr=((document.getElementById('bpwi-date')||{}).value)||'';
+function _whatifRefresh(){ try{ if(typeof renderBuyPlanner==='function') renderBuyPlanner(); }catch(e){} try{ if(typeof renderSimulator==='function') renderSimulator(); }catch(e){} }
+function addWhatif(p,origin,idp){
+  idp = idp || 'bpwi';
+  var cs=Math.round(parseFloat((document.getElementById(idp+'-cases')||{}).value)||0);
+  var arr=((document.getElementById(idp+'-date')||{}).value)||'';
   if(cs<=0 || !arr){ if(typeof showBar==='function') showBar('Enter cases + arrival date','warn'); return; }
   var o=whatifState(), k=_whKey(p,origin); (o[k]=o[k]||[]).push({cases:cs, arrival:arr}); whatifSave(o);
-  if(typeof renderBuyPlanner==='function') renderBuyPlanner();
+  _whatifRefresh();
 }
-function removeWhatif(p,origin,i){ var o=whatifState(), k=_whKey(p,origin); if(o[k]){ o[k].splice(i,1); whatifSave(o); if(typeof renderBuyPlanner==='function') renderBuyPlanner(); } }
+function removeWhatif(p,origin,i){ var o=whatifState(), k=_whKey(p,origin); if(o[k]){ o[k].splice(i,1); whatifSave(o); _whatifRefresh(); } }
+// Reusable what-if card (Buy Planner + Simulator). idp = input-id prefix so both can coexist in the DOM.
+function whatifCardHTML(p, origin, idp){
+  idp = idp || 'bpwi';
+  var esc=(typeof libEsc==='function')?libEsc:function(x){ return String(x==null?'':x); };
+  var f=function(n){ return Math.round(n||0).toLocaleString('en-US'); };
+  var lbl=function(iso){ return (typeof dmcDateLabel==='function' && dmcDateLabel(iso)) || String(iso).slice(5); };
+  var wf=getWhatif(p,origin);
+  var inp='font-family:var(--fm);font-size:12px;border:1px solid var(--gray-200);border-radius:6px;padding:5px 8px;color:var(--gray-900)';
+  var chips = wf.length ? wf.map(function(w,i){ return '<div style="display:inline-flex;align-items:center;gap:6px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:999px;padding:4px 6px 4px 11px;font-size:11px;color:#6b21a8;font-family:var(--fm)">🧪 '+f(w.cases)+' cs · arrives '+lbl(w.arrival)+'<button onclick="removeWhatif(\''+esc(p)+'\',\''+esc(origin)+'\','+i+')" title="Remove" style="border:none;background:none;color:#a78bda;cursor:pointer;font-size:15px;line-height:1;padding:0 2px">×</button></div>'; }).join('') : '<span style="color:var(--gray-300);font-size:11px">No scenarios yet — add one to test a hypothetical buy.</span>';
+  return '<div style="background:var(--white);border:1px solid #e9d5ff;border-radius:10px;padding:12px 14px;margin-bottom:14px">'
+    + '<div style="font-size:12px;font-weight:700;color:#7c3aed;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">🧪 What-if scenario</div>'
+    + '<div style="font-size:11px;color:var(--gray-500);margin-bottom:11px">Add a hypothetical order to see how it changes the projection above — <b>not</b> saved to real Orders.</div>'
+    + '<div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:11px">'
+      + '<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-bottom:3px">Cases</div><input id="'+idp+'-cases" type="number" step="1" placeholder="e.g. 200" style="'+inp+';width:96px"></div>'
+      + '<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-bottom:3px">Arrival date</div><input id="'+idp+'-date" type="date" style="'+inp+'"></div>'
+      + '<button onclick="addWhatif(\''+esc(p)+'\',\''+esc(origin)+'\',\''+idp+'\')" style="font-family:var(--fb);font-size:12px;font-weight:600;padding:7px 14px;border:none;border-radius:6px;background:#7c3aed;color:#fff;cursor:pointer">+ Add scenario</button>'
+    + '</div>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+chips+'</div>'
+    + '</div>';
+}
 function whatifArrivals(p,origin){
   var out={};
   getWhatif(p,origin).forEach(function(w){
@@ -14584,31 +14620,38 @@ function invmProjectionHTML(s){
     verdict='<b>'+((s.status==='ur')?'Urgent.':'Reorder.')+'</b> Drops below safety ('+f(safetyCases)+' cs) on <b>'+lbl(shortWk.wkISO)+'</b> (week +'+firstShort+'). '
       +'Lead '+f1(s.leadWks)+' wk → place the order by <b>'+lbl(orderByISO)+'</b> at the latest. Suggested: <b>'+f(s.orderCases)+' cs</b> to reach target.';
   }
-  // table
-  var th='text-align:right;font-family:var(--fb);font-size:9px;text-transform:uppercase;letter-spacing:.03em;color:var(--gray-400);font-weight:700;padding:6px 10px;background:var(--gray-50);border-bottom:1px solid var(--gray-200)';
+  // table — same shape as the ginger Buy Planner projection (Starting stock / Arrivals / Demand / Ending stock / Cover / Status)
+  var th='text-align:right;font-family:var(--fb);font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);font-weight:600;padding:9px 12px;background:var(--gray-50);border-bottom:2px solid var(--gray-200)';
+  var badge=function(txt,bg,fg){ return '<span style="padding:2px 8px;border-radius:8px;background:'+bg+';color:'+fg+';font-size:9px;font-weight:700;white-space:nowrap">'+txt+'</span>'; };
+  var wkNo=function(iso){ return (typeof cxWeekNo==='function' && cxWeekNo(iso)) ? ('Wk '+cxWeekNo(iso)+' ') : ''; };
   var rows='';
   weeks.forEach(function(w){
-    var col=(w.end<0)?'#b91c1c':(w.end<safetyCases)?'#b45309':(w.end<targetCases)?'var(--gray-700)':'#047857';
-    var bg=(w.i===firstShort)?'background:#fffbeb;':(w.scen>0?'background:#faf5ff;':'');
-    var inCell = (w.arr>0?'<span style="color:#047857">+'+f(w.arr)+'</span>':'')
-      + (w.arr>0&&w.scen>0?' ':'')
-      + (w.scen>0?'<span style="color:#7c3aed">🧪+'+f(w.scen)+'</span>':'')
-      + (w.arr<=0&&w.scen<=0?'<span style="color:var(--gray-300)">·</span>':'');
-    rows+='<tr style="'+bg+'">'
-      +'<td style="text-align:left;padding:5px 10px;border-bottom:1px solid var(--gray-100);color:var(--gray-600)">'+(w.i===0?'now':lbl(w.wkISO))+'</td>'
-      +'<td style="text-align:right;padding:5px 10px;border-bottom:1px solid var(--gray-100);color:var(--gray-500)">'+f(w.start)+'</td>'
-      +'<td style="text-align:right;padding:5px 10px;border-bottom:1px solid var(--gray-100)">'+inCell+'</td>'
-      +'<td style="text-align:right;padding:5px 10px;border-bottom:1px solid var(--gray-100);color:var(--gray-400)">−'+f(weeklyCases)+'</td>'
-      +'<td style="text-align:right;padding:5px 10px;border-bottom:1px solid var(--gray-100);font-weight:700;color:'+col+'">'+f(w.end)+'</td>'
+    var cover=(weeklyCases>0)?w.end/weeklyCases:(w.end>0?Infinity:0);
+    var stB, rowBg=(w.scen>0?'background:#faf5ff':'');
+    if(w.end<=0){ stB=badge('🛑 STOCKOUT','#FEE2E2','#991B1B'); rowBg='background:#FEF2F2'; }
+    else if(cover<1){ stB=badge('⚡ CRITICAL','#FED7AA','#9A3412'); rowBg='background:#FFF7ED'; }
+    else if(w.end<safetyCases){ stB=badge('⚠ LOW','#FEF3C7','#92400E'); rowBg='background:#FFFBEB'; }
+    else { stB=badge('OK','#D1FAE5','#065F46'); }
+    var endColor=(w.end<=0)?'#b91c1c':'var(--gray-800)';
+    var covColor=(cover>=3)?'#047857':(cover>=1.5)?'#b45309':'#b91c1c';
+    var inCell=(w.arr>0?'<span style="color:#047857;font-weight:600">+'+f(w.arr)+'</span>':'')+(w.arr>0&&w.scen>0?' ':'')+(w.scen>0?'<span style="color:#7c3aed;font-weight:600">🧪+'+f(w.scen)+'</span>':'')+(w.arr<=0&&w.scen<=0?'<span style="color:var(--gray-300)">—</span>':'');
+    rows+='<tr style="border-bottom:1px solid var(--gray-100);'+rowBg+'">'
+      +'<td style="text-align:left;padding:8px 12px;color:var(--gray-700);font-weight:600">'+(w.i===0?'now ':wkNo(w.wkISO))+'<span style="color:var(--gray-400);font-weight:400;font-size:10px">'+lbl(w.wkISO)+'</span></td>'
+      +'<td style="text-align:right;padding:8px 12px;color:var(--gray-500);font-size:11px">'+(w.start>0?f(w.start):'—')+'</td>'
+      +'<td style="text-align:right;padding:8px 12px">'+inCell+'</td>'
+      +'<td style="text-align:right;padding:8px 12px;color:#b91c1c">−'+f(weeklyCases)+'</td>'
+      +'<td style="text-align:right;padding:8px 12px;font-weight:700;color:'+endColor+'">'+f(w.end)+'</td>'
+      +'<td style="text-align:right;padding:8px 12px;font-weight:600;color:'+covColor+'">'+f1(cover)+'w</td>'
+      +'<td style="padding:8px 12px">'+stB+'</td>'
       +'</tr>';
   });
   return '<div style="background:var(--white);border:1px solid var(--gray-200);border-radius:10px;overflow:hidden;margin-bottom:14px">'
     +'<div style="padding:11px 14px;border-bottom:1px solid var(--gray-100)"><span style="font-size:12px;font-weight:700;color:var(--jlz);text-transform:uppercase;letter-spacing:.05em">'+N+'-week projection</span> <span style="font-size:10.5px;color:var(--gray-400)">· cases · arrivals from the Orders pipeline'+(hasScen?' <span style="color:#7c3aed">+ 🧪 scenarios</span>':'')+'</span></div>'
     +'<div style="padding:11px 14px"><div class="ipv-st '+vcls+'" style="display:block;margin-bottom:10px;line-height:1.55">'+verdict+'</div>'
-    +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11px">'
-    +'<thead><tr><th style="'+th+';text-align:left">Week</th><th style="'+th+'">Start</th><th style="'+th+'">In</th><th style="'+th+'">Demand</th><th style="'+th+'">End</th></tr></thead>'
+    +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11px;min-width:640px">'
+    +'<thead><tr><th style="'+th+';text-align:left">Week</th><th style="'+th+'">Starting stock</th><th style="'+th+'">Arrivals</th><th style="'+th+'">Demand</th><th style="'+th+'">Ending stock</th><th style="'+th+'">Cover</th><th style="'+th+';text-align:left">Status</th></tr></thead>'
     +'<tbody>'+rows+'</tbody></table></div>'
-    +'<div style="font-size:10px;color:var(--gray-400);margin-top:8px">Start (now) = <b>available</b> (on-hand − shrink − committed). End = Start + In − Demand. <span style="color:#047857">green</span> ≥ target · <span style="color:#b45309">amber</span> &lt; safety · <span style="color:#b91c1c">red</span> &lt; 0. Highlighted row = first drop below safety.</div>'
+    +'<div style="font-size:10px;color:var(--gray-400);margin-top:8px">Starting stock (now) = <b>available</b> (on-hand − shrink − committed). Ending = Start + Arrivals − Demand. Cover = ending ÷ demand/wk. Status: OK ≥ safety · ⚠ LOW &lt; safety · ⚡ CRITICAL &lt; 1 wk · 🛑 STOCKOUT ≤ 0.</div>'
     +'</div></div>';
 }
 function invmRenderProduct(p){
@@ -14746,24 +14789,25 @@ function bpRenderProduct(p){
     var pill=function(val){ var on=(BP_ORIGIN===val); return '<button onclick="bpSetOrigin(\''+val+'\')" style="font-family:var(--fb);font-size:12px;font-weight:600;padding:5px 13px;border-radius:999px;border:1px solid '+(on?'var(--jlz)':'var(--gray-200)')+';background:'+(on?'var(--jlz)':'var(--white)')+';color:'+(on?'#fff':'var(--gray-600)')+';cursor:pointer">'+esc(val)+'</button>'; };
     bar='<div style="display:flex;gap:6px;align-items:center;margin-bottom:12px;flex-wrap:wrap"><span style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-right:4px">Origin</span>'+origins.map(function(o){ return pill(o); }).join('')+'</div>';
   }
-  // What-if / scenario card (Fase 3b)
-  var f=function(n){ return Math.round(n||0).toLocaleString('en-US'); };
-  var lbl=function(iso){ return (typeof dmcDateLabel==='function' && dmcDateLabel(iso)) || String(iso).slice(5); };
-  var wf=getWhatif(s.p, s.origin);
-  var inp='font-family:var(--fm);font-size:12px;border:1px solid var(--gray-200);border-radius:6px;padding:5px 8px;color:var(--gray-900)';
-  var chips = wf.length ? wf.map(function(w,i){ return '<div style="display:inline-flex;align-items:center;gap:6px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:999px;padding:4px 6px 4px 11px;font-size:11px;color:#6b21a8;font-family:var(--fm)">🧪 '+f(w.cases)+' cs · arrives '+lbl(w.arrival)+'<button onclick="removeWhatif(\''+esc(s.p)+'\',\''+esc(s.origin)+'\','+i+')" title="Remove" style="border:none;background:none;color:#a78bda;cursor:pointer;font-size:15px;line-height:1;padding:0 2px">×</button></div>'; }).join('') : '<span style="color:var(--gray-300);font-size:11px">No scenarios yet — add one to test a hypothetical buy.</span>';
-  var whatifCard = '<div style="background:var(--white);border:1px solid #e9d5ff;border-radius:10px;padding:12px 14px;margin-bottom:14px">'
-    + '<div style="font-size:12px;font-weight:700;color:#7c3aed;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">🧪 What-if scenario</div>'
-    + '<div style="font-size:11px;color:var(--gray-500);margin-bottom:11px">Add a hypothetical order to see how it changes the projection above — <b>not</b> saved to real Orders.</div>'
-    + '<div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:11px">'
-      + '<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-bottom:3px">Cases</div><input id="bpwi-cases" type="number" step="1" placeholder="e.g. 200" style="'+inp+';width:96px"></div>'
-      + '<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-bottom:3px">Arrival date</div><input id="bpwi-date" type="date" style="'+inp+'"></div>'
-      + '<button onclick="addWhatif(\''+esc(s.p)+'\',\''+esc(s.origin)+'\')" style="font-family:var(--fb);font-size:12px;font-weight:600;padding:7px 14px;border:none;border-radius:6px;background:#7c3aed;color:#fff;cursor:pointer">+ Add scenario</button>'
-    + '</div>'
-    + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+chips+'</div>'
-    + '</div>';
   return '<div style="margin-bottom:8px;font-size:11px;color:var(--gray-400);font-family:var(--fm)">Buy Planner · '+esc(s.label)+(BP_ORIGIN?(' · '+esc(BP_ORIGIN)):'')+' — when &amp; how much to order</div>'
-    + bar + invmAnalysisHTML(s) + invmProjectionHTML(s) + whatifCard;
+    + bar + invmAnalysisHTML(s) + invmProjectionHTML(s) + whatifCardHTML(s.p, s.origin, 'bpwi');
+}
+// Simulator product view (turmeric/garlic/shallots + ginger-Hawaii): projection + what-if, per product+origin.
+var SIM_PRODUCT='ginger', SIM_ORIGIN='';
+function simSetProduct(p){ SIM_PRODUCT=p; var og=invmOriginsFor(p); SIM_ORIGIN=(p==='ginger')?'Peru':((og&&og[0])||''); if(typeof renderSimulator==='function') renderSimulator(); }
+function simSetOrigin(o){ SIM_ORIGIN=o||''; if(typeof renderSimulator==='function') renderSimulator(); }
+function simRenderProduct(p){
+  var origins=invmOriginsFor(p);
+  if(origins.length && origins.indexOf(SIM_ORIGIN)<0) SIM_ORIGIN=origins[0];
+  var s=invmProductStats(p, SIM_ORIGIN||'all');
+  var esc=(typeof libEsc==='function')?libEsc:function(x){ return String(x==null?'':x); };
+  var bar='';
+  if(p!=='ginger' && origins.length>=1){
+    var pill=function(val){ var on=(SIM_ORIGIN===val); return '<button onclick="simSetOrigin(\''+val+'\')" style="font-family:var(--fb);font-size:12px;font-weight:600;padding:5px 13px;border-radius:999px;border:1px solid '+(on?'var(--jlz)':'var(--gray-200)')+';background:'+(on?'var(--jlz)':'var(--white)')+';color:'+(on?'#fff':'var(--gray-600)')+';cursor:pointer">'+esc(val)+'</button>'; };
+    bar='<div style="display:flex;gap:6px;align-items:center;margin-bottom:12px;flex-wrap:wrap"><span style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-right:4px">Origin</span>'+origins.map(function(o){ return pill(o); }).join('')+'</div>';
+  }
+  return '<div style="margin-bottom:8px;font-size:11px;color:var(--gray-400);font-family:var(--fm)">Simulator · '+esc(s.label)+(SIM_ORIGIN?(' · '+esc(SIM_ORIGIN)):'')+' — test hypothetical buys against the projection</div>'
+    + bar + invmProjectionHTML(s) + whatifCardHTML(s.p, s.origin, 'simwi');
 }
 function invmSetDays(x){ INVM_DAYSMODE=x; renderInventory(); }
 function invmSetRate(x){ INVM_RATEKEY=x; renderInventory(); }
@@ -19931,6 +19975,24 @@ function winSetGinger(v){
 }
 // ── MAIN RENDER ──
 function renderSimulator() {
+  // Product selector: ginger keeps the full simulator below; other products use the projection + what-if.
+  try{
+    var _sp=(typeof SIM_PRODUCT!=='undefined')?SIM_PRODUCT:'ginger';
+    (typeof ORDER_PRODUCTS!=='undefined'?ORDER_PRODUCTS:['ginger']).forEach(function(x){ var b=document.getElementById('sim-pt-'+x); if(b) b.classList.toggle('on', x===_sp); });
+    var _spv=document.getElementById('sim-product-view'), _sgb=document.getElementById('sim-ginger-body'), _sgo=document.getElementById('sim-ginger-origin');
+    if(_sp!=='ginger'){
+      if(_sgo) _sgo.style.display='none';
+      if(_sgb) _sgb.style.display='none';
+      if(_spv){ _spv.style.display=''; _spv.innerHTML=simRenderProduct(_sp); }
+      return;   // non-ginger: no pipeline/quote machinery needed
+    }
+    // ginger — Peru (full simulator) / Hawaii (projection view)
+    var _gO=(SIM_ORIGIN==='Hawaii')?'Hawaii':'Peru';
+    if(_sgo){ _sgo.style.display=''; _sgo.innerHTML='<span style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-right:4px;font-family:var(--fb)">Origin</span>'
+      + ['Peru','Hawaii'].map(function(o){ return '<button class="invm-ptab'+(_gO===o?' on':'')+'" onclick="simSetOrigin(\''+o+'\')">'+o+'</button>'; }).join(''); }
+    if(_gO==='Hawaii'){ if(_sgb) _sgb.style.display='none'; if(_spv){ _spv.style.display=''; _spv.innerHTML=simRenderProduct('ginger'); } return; }
+    if(_sgb) _sgb.style.display=''; if(_spv){ _spv.style.display='none'; _spv.innerHTML=''; }
+  }catch(e){ console.warn('sim product view', e); }
   const state = simGetState();
 
   // Get active pipeline from real Orders module
