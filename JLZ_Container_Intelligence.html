@@ -14438,6 +14438,30 @@ function prodInvSeed(){ return {
 function prodInvState(){ try{ var o=JSON.parse(localStorage.getItem(PROD_INV_LS)||'null'); if(o&&typeof o==='object') return o; }catch(e){} var s=prodInvSeed(); try{ localStorage.setItem(PROD_INV_LS, JSON.stringify(s)); }catch(e){} return s; }
 function prodInvSave(st){ try{ localStorage.setItem(PROD_INV_LS, JSON.stringify(st)); }catch(e){} }
 function prodInvFor(p){ var st=prodInvState(); if(!st[p]) st[p]={serviceLevel:95,demandOverride:null,lots:[]}; return st[p]; }
+// ── DIRECT-SHIP / MADE-TO-ORDER accounts ──────────────────────────────────────
+// An account whose PO is placed with the supplier only once the customer confirms,
+// and shipped straight from the supplier's warehouse — JLZ never holds the stock,
+// so it carries NO inventory risk. These sales are excluded from the stock-buy
+// run-rate (else the planner tells you to stock volume already covered made-to-order)
+// and shown separately as pass-through. Scoped by customer + product: Sol-ti's
+// TURMERIC is direct-ship (Fiji, ~83% of Fiji volume); Sol-ti's GINGER comes from
+// normal Peru stock, so it stays in demand. Add more accounts here as needed.
+var DIRECT_SHIP=[{customer:'sol-ti', product:'turmeric'}];
+function isDirectShipRow(r){
+  if(!r) return false;
+  var c=String(r.c||'').trim().toLowerCase(), p=(r.prod||'ginger');
+  return DIRECT_SHIP.some(function(d){ return d.product===p && c.indexOf(d.customer)>-1; });
+}
+// Direct-ship (pass-through) run-rate in cases/wk for a product+origin — shown separately, never buys stock.
+function invmDirectShipCases(p,origin){
+  if(!(typeof _dmRawAll!=='undefined' && Array.isArray(_dmRawAll) && typeof dmBuild==='function')) return 0;
+  var rows=_dmRawAll.filter(function(r){ return (r.prod||'ginger')===p && invmOriginMatch(r,origin) && isDirectShipRow(r); });
+  if(!rows.length) return 0;
+  var m; try{ m=dmBuild(rows, false, p); }catch(e){ return 0; }
+  if(!m||!(m.runRate13>0)) return 0;
+  var caseLb=(typeof productCaseLb==='function')?productCaseLb(p):30;
+  return m.runRate13/caseLb;
+}
 // Demand model for any product (ginger via prod model; focused product live; else built on-demand from raw rows).
 function invmProductModel(p,origin){
   origin=origin||'all';
@@ -14446,7 +14470,7 @@ function invmProductModel(p,origin){
     if(typeof productFocus==='function' && productFocus()===p && typeof _dmModel!=='undefined' && _dmModel) return _dmModel;
   }
   if(typeof _dmRawAll!=='undefined' && Array.isArray(_dmRawAll) && typeof dmBuild==='function'){
-    try{ return dmBuild(_dmRawAll.filter(function(r){ return (r.prod||'ginger')===p && invmOriginMatch(r,origin); }), false, p); }catch(e){ return null; }
+    try{ return dmBuild(_dmRawAll.filter(function(r){ return (r.prod||'ginger')===p && invmOriginMatch(r,origin) && !isDirectShipRow(r); }), false, p); }catch(e){ return null; }
   }
   return null;
 }
@@ -14508,13 +14532,14 @@ function invmProductStats(p,origin){
   // Committed / unshipped sales (already sold, not yet shipped) reduce what's really available to sell again.
   var committedCases=(typeof prodCommittedTotal==='function')?prodCommittedTotal(p,origin):0;
   var availCases=Math.max(0, effOnHandCases-committedCases), availLbs=availCases*caseLb;
+  var directShipCases=(typeof invmDirectShipCases==='function')?invmDirectShipCases(p,origin):0;   // Sol-ti turmeric etc. — pass-through, shown separately
   var coverWks=(weeklyLbs>0)?availLbs/weeklyLbs:(availLbs>0?Infinity:0);
   var orderCases=Math.ceil(Math.max(0,(targetWks*weeklyLbs)-availLbs)/caseLb);
   var status='ok';
   if(weeklyLbs>0){ if(coverWks<leadWks) status='ur'; else if(coverWks<targetWks) status='re'; }
   return {p:p,meta:meta,label:meta.label||p,caseLb:caseLb,lots:lots,allLots:allLots,onHandCases:onHandCases,onHandLbs:onHandLbs,costVal:costVal,
     origin:origin,origins:origins,supList:supList,
-    shrinkPct:shrinkPct,effOnHandCases:effOnHandCases,effOnHandLbs:effOnHandLbs,committedCases:committedCases,availCases:availCases,availLbs:availLbs,
+    shrinkPct:shrinkPct,effOnHandCases:effOnHandCases,effOnHandLbs:effOnHandLbs,committedCases:committedCases,availCases:availCases,availLbs:availLbs,directShipCases:directShipCases,
     hasModel:!!m,rr13:rr13,presMix:(m&&m.presMix)||[],weeklyLbs:weeklyLbs,weeklyCases:weeklyCases,demandOverride:ovr,cv:cv,nWeeks:vals.length,
     lead:lead,leadWks:leadWks,z:z,serviceLevel:svc,safetyWks:safetyWks,targetWks:targetWks,coverWks:coverWks,orderCases:orderCases,status:status};
 }
@@ -14747,7 +14772,7 @@ function invmAnalysisHTML(s){
   var stCls=s.status, stTxt=(s.status==='ur')?'● Urgent':(s.status==='re')?'● Reorder':'● OK';
   var demandVal = s.weeklyLbs>0 ? f(s.weeklyCases) : '';
   var demandSrc = s.weeklyLbs<=0 ? '<span style="color:var(--amber-700)">load sales or set manually</span>'
-                : (s.demandOverride!=null ? 'manual · <a href="javascript:invmProdClearDemand(\''+s.p+'\')" style="color:var(--jlz)">use run-rate</a>' : '◆ live run-rate · 13 wk');
+                : (s.demandOverride!=null ? 'manual · <a href="javascript:invmProdClearDemand(\''+s.p+'\')" style="color:var(--jlz)">use run-rate</a>' : (s.directShipCases>0 ? '◆ stock-buy run-rate · 13 wk' : '◆ live run-rate · 13 wk'));
   var covTxt = s.weeklyLbs>0 ? f1(s.coverWks)+' <small>wk</small>' : '—';
   var tgtTxt = (s.weeklyLbs>0 && s.leadWks>0) ? f1(s.targetWks)+' <small>wk</small>' : '—';
   var ordTxt = s.weeklyLbs>0 ? f(s.orderCases)+' <small>cs</small>' : '—';
@@ -14763,6 +14788,12 @@ function invmAnalysisHTML(s){
       + '<div class="ipv-af"><label>Purchase pack</label><div class="val">'+f(s.caseLb)+' <small>lb/case</small></div><div class="src">'+supOrigins+'</div></div>'
     + '</div>'
     + (s.weeklyLbs>0 ? dmSoldAsHTML(s.weeklyLbs, s.caseLb, s.presMix) : '')
+    + (s.directShipCases>0 ? ('<div style="margin:6px 0 2px;padding:8px 11px;border:1px solid var(--gray-200);border-radius:8px;background:var(--gray-50);font-family:var(--fm);font-size:11.5px;line-height:1.55">'
+        + '<div style="font-weight:700;color:var(--gray-600);text-transform:uppercase;letter-spacing:.04em;font-size:10px;margin-bottom:3px">Demand split · this origin</div>'
+        + '<div><span style="color:var(--jlz);font-weight:700">'+f(s.weeklyCases)+' cs/wk</span> stock-buy <span style="color:var(--gray-400)">— drives the order below</span></div>'
+        + '<div><span style="color:#7c3aed;font-weight:700">+'+f(s.directShipCases)+' cs/wk</span> direct-ship (Sol-ti) <span style="color:var(--gray-400)">— made-to-order, ships from supplier, no stock held</span></div>'
+        + '<div style="margin-top:2px;color:var(--gray-500)">Total business ≈ <b>'+f(s.weeklyCases+s.directShipCases)+' cs/wk</b></div>'
+      + '</div>') : '')
     + '<div class="ipv-kpis">'
       + '<div class="ipv-kpi"><div class="lbl">Available to sell</div><div class="big">'+f(s.availCases)+' <small>cs</small></div><div class="note">'+availNote+'</div></div>'
       + '<div class="ipv-kpi"><div class="lbl">Current cover</div><div class="big">'+covTxt+'</div><div class="note">available ÷ demand/wk</div></div>'
