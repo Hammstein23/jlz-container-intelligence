@@ -11541,11 +11541,13 @@ function saveCommitted(arr) {
 // default: the ginger buy plan depends on legacy rows still counting as ginger.
 function _cmProd(c) { return (c && c.product) || 'ginger'; }
 // Add a warehouse-committed order. cases coerced to a positive integer.
-function addCommitted(customer, wk, cases, product, date) {
+// Origin of a committed entry (Fiji/Hawaii/California/Peru...). Absent = '' (product-level, back-compat).
+function _cmOrigin(c) { return (c && c.origin) || ''; }
+function addCommitted(customer, wk, cases, product, date, origin) {
   var n = Math.round(Number(cases) || 0);
   if(!customer || !wk || n <= 0) return getCommitted();
   var all = getCommitted();
-  all.push({ customer: String(customer), wk: String(wk), cases: n, type: 'inv', source: 'manual', product: product || 'ginger', date: date || '' });
+  all.push({ customer: String(customer), wk: String(wk), cases: n, type: 'inv', source: 'manual', product: product || 'ginger', date: date || '', origin: origin || '' });
   saveCommitted(all);
   return all;
 }
@@ -11660,6 +11662,16 @@ function ooClassifySku(sku) {
   if (!product || !(packLbs > 0)) return null;
   return { product: product, packLbs: packLbs };
 }
+// Origin from the Unshipped SKU suffix (reliable): -FJ→Fiji, -HI→Hawaii; else the product's home origin.
+function ooOriginFromSku(sku, product){
+  var s = String(sku || '').toUpperCase();
+  if(/-FJ$/.test(s)) return 'Fiji';
+  if(/-HI$/.test(s)) return 'Hawaii';
+  if(product === 'garlic' || product === 'shallots') return 'California';
+  if(product === 'ginger') return 'Peru';
+  if(product === 'turmeric') return 'Fiji';   // Fijian is the default turmeric line when no suffix
+  return '';
+}
 function parseOpenOrders(rows, fulfilledMax) {
   var out = [], seen = {}, st = { total: (rows || []).length, kept: 0, nonProduct: 0, pending: 0, stale: 0, dup: 0, badRow: 0, byProduct: {} };
   // Open orders ship (and invoice) eventually, so they STAY in demand — never dropped for being at/under
@@ -11689,7 +11701,7 @@ function parseOpenOrders(rows, fulfilledMax) {
     var stale = !!(staleISO && iso < staleISO);
     var pending = !stale && !!(fulfilledMax && iso <= fulfilledMax);
     if(stale) st.stale++; else if(pending) st.pending++;
-    out.push({ customer: cust, wk: wk, date: iso, cases: cases, type: 'inv', source: 'import', orderNo: String(r['Order No'] || ''), sku: sku, pending: pending, stale: stale, product: cls.product });
+    out.push({ customer: cust, wk: wk, date: iso, cases: cases, type: 'inv', source: 'import', orderNo: String(r['Order No'] || ''), sku: sku, pending: pending, stale: stale, product: cls.product, origin: ooOriginFromSku(sku, cls.product) });
     st.kept++;
     st.byProduct[cls.product] = (st.byProduct[cls.product] || 0) + 1;
   });
@@ -14425,8 +14437,17 @@ function prodCommittedSeed(){ return { 'turmeric|Fiji':71, 'turmeric|Hawaii':1, 
 function prodCommittedState(){ try{ var o=JSON.parse(localStorage.getItem(PROD_COMMITTED_LS)||'null'); if(o&&typeof o==='object') return o; }catch(e){} var s=prodCommittedSeed(); try{ localStorage.setItem(PROD_COMMITTED_LS, JSON.stringify(s)); }catch(e){} return s; }
 function prodCommittedSave(o){ try{ localStorage.setItem(PROD_COMMITTED_LS, JSON.stringify(o||{})); }catch(e){} }
 function prodCommittedTotal(p,origin){
+  // Canonical source: the committed store (populated by the Unshipped import), product + origin tagged.
+  var all=(typeof getCommitted==='function'?getCommitted():[]).filter(function(c){ return c && c.type==='inv' && _cmProd(c)===p; });
+  var sum=function(a){ return a.reduce(function(t,c){ return t+(c.cases||0); }, 0); };
+  if(!origin || origin==='all'){ if(all.length) return sum(all); }
+  else {
+    var tagged=all.filter(function(c){ return _cmOrigin(c); });     // origin-carrying entries (from the import)
+    if(tagged.length) return sum(tagged.filter(function(c){ return _cmOrigin(c)===origin; }));
+    // else: entries exist but none carry origin (old import) → can't split, fall back to the seed snapshot below
+  }
   var st=prodCommittedState();
-  if(!origin || origin==='all'){ var t=0; Object.keys(st).forEach(function(k){ if(k.split('|')[0]===p) t+=(parseFloat(st[k])||0); }); return t; }
+  if(!origin || origin==='all'){ var s=0; Object.keys(st).forEach(function(k){ if(k.split('|')[0]===p) s+=(parseFloat(st[k])||0); }); return s; }
   return parseFloat(st[p+'|'+origin])||0;
 }
 function invmProdSetCommitted(p,origin,v){ var st=prodCommittedState(); st[p+'|'+origin]=Math.max(0,parseFloat(v)||0); prodCommittedSave(st); invmReRender(); }
@@ -22764,18 +22785,21 @@ function dmMondayISO(ds) {
 // Future weeks carrying committed / direct-ship cases, sorted, only weeks strictly
 // after `afterWk` (last realized week on the chart). Ginger only for v1 — the
 // committed store is not product-tagged and mirrors the ginger buy plan.
-function dmForwardWeeks(afterWk) {
+function dmForwardWeeks(afterWk, product) {
+  var _p = product || ((typeof productFocus === 'function') ? productFocus() : 'ginger');
   var byWk = {};
   (typeof getCommitted === 'function' ? getCommitted() : []).forEach(function(c) {
-    if(!c || c.type !== 'inv' || !c.wk || _cmProd(c) !== 'ginger') return;
+    if(!c || c.type !== 'inv' || !c.wk || _cmProd(c) !== _p) return;
     (byWk[c.wk] = byWk[c.wk] || { committed:0, direct:0 }).committed += (c.cases || 0);
   });
-  (typeof getOrders === 'function' ? getOrders() : []).forEach(function(o) {
-    if(!o || _ordProd(o) !== 'ginger' || !Array.isArray(o.directShip)) return;
-    var wk = dmMondayISO(o.arrivalEstimated || o.arrivalActual); if(!wk) return;
-    var tot = o.directShip.reduce(function(s, d){ return s + (d.cases || 0); }, 0);
-    if(tot > 0) (byWk[wk] = byWk[wk] || { committed:0, direct:0 }).direct += tot;
-  });
+  if(_p === 'ginger'){   // direct-ship (port container → customer) is a ginger-only concept
+    (typeof getOrders === 'function' ? getOrders() : []).forEach(function(o) {
+      if(!o || _ordProd(o) !== 'ginger' || !Array.isArray(o.directShip)) return;
+      var wk = dmMondayISO(o.arrivalEstimated || o.arrivalActual); if(!wk) return;
+      var tot = o.directShip.reduce(function(s, d){ return s + (d.cases || 0); }, 0);
+      if(tot > 0) (byWk[wk] = byWk[wk] || { committed:0, direct:0 }).direct += tot;
+    });
+  }
   return Object.keys(byWk).filter(function(w){ return !afterWk || w > afterWk; }).sort()
     .map(function(w){ return { week:w, cases:0, px:0, inc:false, isFuture:true, committed:byWk[w].committed, direct:byWk[w].direct }; });
 }
@@ -22876,13 +22900,16 @@ function dmRenderTrendPrice(){
     +'<div class="dm-ro"><div class="rl">$/lb sell price</div><div class="rv">'+dmMoney2(cmp.pxNow)+' '+dmDeltaTag(cmp.dPx)+'</div><div class="rcmp">prior '+dmMoney2(cmp.pxPrior)+' \u00b7 vol-weighted</div></div>'
     +'<div class="dm-ro"><div class="rl">Implied $ / wk</div><div class="rv">$'+dmFmt0(cmp.casesNow*cl*cmp.pxNow)+'</div><div class="rcmp">cases \u00d7 '+cl+'lb \u00d7 $/lb</div></div>';
   const comp=series.filter(s=>!s.inc), lastComp=comp.slice(-_dmWin), tail=series.filter(s=>s.inc), show=lastComp.concat(tail);
-  // B1: append forward committed / direct-ship weeks (ginger only — the committed store mirrors the ginger buy plan)
+  // B1: append forward committed (+ ginger direct-ship) weeks — now per product, from each product's committed.
   let combined=show, dmOpts=null;
-  if(show.length && (typeof productFocus!=='function' || productFocus()==='ginger') && typeof dmForwardWeeks==='function'){
-    const _fwd=dmForwardWeeks(show[show.length-1].week);
+  if(show.length && typeof dmForwardWeeks==='function'){
+    const _fp=(typeof productFocus==='function')?productFocus():'ginger';
+    const _fwd=dmForwardWeeks(show[show.length-1].week, _fp);
     if(_fwd.length){
       combined=show.concat(_fwd);
-      const _rrLbs=(typeof dmEffectiveRunRateLbs==='function')?dmEffectiveRunRateLbs():null;
+      // run-rate reference line: ginger uses its plan run-rate; other products use the focused model's.
+      let _rrLbs=(_fp==='ginger' && typeof dmEffectiveRunRateLbs==='function') ? dmEffectiveRunRateLbs()
+               : ((typeof _dmModel!=='undefined' && _dmModel && _dmModel.runRate13>0) ? _dmModel.runRate13 : null);
       dmOpts={firstFutureIdx:show.length, rrCases:(_rrLbs>0?_rrLbs/cl:0)};
     }
   }
