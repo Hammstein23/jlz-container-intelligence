@@ -14402,7 +14402,13 @@ function invmReRender(){
 }
 // Distinct origins present in a product's on-hand lots (for the origin sub-filter).
 function invmOriginsFor(p){ var seen={}, out=[]; (prodInvFor(p).lots||[]).forEach(function(l){ var o=(l.origin||'').trim(); if(o && !seen[o]){ seen[o]=1; out.push(o); } }); return out; }
-function invmOriginMatch(r,origin){ if(!origin||origin==='all') return true; var ro=(r&&r.oitem)?r.oitem:((r&&r.origin)||''); return String(ro).toLowerCase().indexOf(String(origin).toLowerCase())>-1; }
+function invmOriginMatch(r,origin){
+  if(!origin||origin==='all') return true;
+  var prod=r&&r.prod, ro;
+  if(prod==='garlic'||prod==='shallots') ro='California';   // single-origin: authoritative, ignore the messy Origin column
+  else ro=(r&&r.oitem)||(r&&r.origin)||(prod&&typeof prodHomeOrigin==='function'?prodHomeOrigin(prod):'');
+  return String(ro||'').toLowerCase().indexOf(String(origin).toLowerCase())>-1;
+}
 // Service level → z (one-sided normal). Default 95% → 1.65.
 function invmZFromService(pct){ pct=+pct||95; if(pct>=99)return 2.33; if(pct>=98)return 2.05; if(pct>=97)return 1.88; if(pct>=95)return 1.65; if(pct>=90)return 1.28; if(pct>=85)return 1.04; if(pct>=80)return 0.84; return 1.65; }
 function invmStdev(a){ if(!a||a.length<2)return 0; var mn=a.reduce(function(x,y){return x+y;},0)/a.length; var v=a.reduce(function(s,x){return s+(x-mn)*(x-mn);},0)/(a.length-1); return Math.sqrt(v); }
@@ -14522,12 +14528,13 @@ function invmProdRemoveLot(p,i){ var st=prodInvState(); if(st[p]&&st[p].lots){ s
 function invmProdAddLot(p){ var st=prodInvState(); if(!st[p]) st[p]={serviceLevel:95,demandOverride:null,lots:[]}; if(!st[p].lots) st[p].lots=[]; var sup=(PRODUCTS[p]&&PRODUCTS[p].suppliers&&PRODUCTS[p].suppliers[0])||{}; st[p].lots.push({lot:'NEW',origin:sup.origin||'',supplier:sup.name||'',cases:0,avgCost:0,received:''}); prodInvSave(st); invmReRender(); }
 // FEFO order: oldest received first (soonest-expiring, since a product's lots share one shelf life). Undated lots go last.
 function invmFefoSort(lots){ return lots.slice().sort(function(a,b){ var ra=(a&&a.received)||'', rb=(b&&b.received)||''; if(ra&&rb) return ra<rb?-1:(ra>rb?1:0); if(ra&&!rb) return -1; if(!ra&&rb) return 1; return 0; }); }
-// Incoming supply per product from the Fase 1 Orders pipeline (Contracted / In Transit), by arrival week.
-function invmProductArrivals(p){
+// Incoming supply per product+origin from the Fase 1 Orders pipeline (Contracted / In Transit), by arrival week.
+function invmProductArrivals(p, origin){
   var out={};
   var orders=(typeof getOrders==='function')?getOrders():[];
   orders.forEach(function(o){
     if(_ordProd(o)!==p) return;
+    if(origin && origin!=='all' && (o.origin||'') && (o.origin||'')!==origin) return;  // per-origin (orders without origin count in any)
     if(!(o.status==='Contracted'||o.status==='In Transit')) return;
     var eta=o.arrivalActual||o.arrivalEstimated||o.etaActual||o.etaEstimated; if(!eta) return;
     var cs=parseFloat(o.cases)||0; if(cs<=0) return;
@@ -14589,7 +14596,7 @@ function invmProjectionHTML(s){
   var f1=function(n){ return (!isFinite(n))?'∞':(Math.round((n||0)*10)/10).toFixed(1); };
   if(!(s.weeklyLbs>0)) return '';   // no demand → cannot project
   var weeklyCases=s.weeklyCases, safetyCases=s.safetyWks*weeklyCases, targetCases=s.targetWks*weeklyCases;
-  var arrivals=invmProductArrivals(p), scen=whatifArrivals(s.p, s.origin), hasArr=false, hasScen=false;
+  var arrivals=invmProductArrivals(s.p, s.origin), scen=whatifArrivals(s.p, s.origin), hasArr=false, hasScen=false;
   var base=new Date();
   var baseMon; try{ baseMon=(typeof dmWeekKey==='function')?dmWeekKey(base):null; }catch(e){ baseMon=null; }
   var baseDate=baseMon?new Date(baseMon+'T12:00:00'):base;
@@ -18164,6 +18171,11 @@ async function pullOrdersFromSheet(silent) {
         if (o[f] === undefined && local[f] !== undefined) o[f] = local[f];
       });
     });
+    // Preserve LOCAL-ONLY ORDERS whose PO is not in the Sheet (e.g. non-ginger POs loaded locally
+    // that Code.gs doesn't carry yet). Without this, the auto-pull would silently wipe them.
+    const _sheetHas = {};
+    orders.forEach(o => { if (o && o.jlzPo != null) _sheetHas[String(o.jlzPo).trim()] = true; });
+    Object.keys(localByPo).forEach(po => { if (!_sheetHas[String(po).trim()]) orders.push(localByPo[po]); });
     saveOrders(orders);
     window._ordersData = orders;
     if (typeof renderOrders === 'function') renderOrders();
