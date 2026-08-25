@@ -11524,6 +11524,22 @@ function saveOrders(arr) {
 // this default: every existing ginger supply/analytic depends on legacy orders still
 // counting as ginger. Mirror of _cmProd() for the committed store.
 function _ordProd(o) { return (o && o.product) || 'ginger'; }
+// Origin of an order: the explicit field, else derived from its supplier via the product's supplier→origin
+// map. The Sheet sync doesn't carry an origin column, so orders can come back with the field blank — the
+// supplier (e.g. "SBimal LLC" → Fiji) still pins the origin, keeping per-origin arrivals correct.
+function _ordOrigin(o) {
+  if (o && o.origin) return o.origin;
+  if (!o) return '';
+  var meta = (typeof PRODUCTS === 'object' && PRODUCTS[_ordProd(o)]) || {}, sup = String(o.supplier || o.vendor || '').toLowerCase();
+  if (sup && meta.suppliers) {
+    for (var i = 0; i < meta.suppliers.length; i++) {
+      var sp = meta.suppliers[i]; if (!sp || !sp.name || !sp.origin) continue;
+      var key = String(sp.name).toLowerCase().split(/[\s,]+/)[0];
+      if (key && sup.indexOf(key) > -1) return sp.origin;
+    }
+  }
+  return '';
+}
 // Canonical list of products that can flow through the pipeline. Ginger first (legacy).
 var ORDER_PRODUCTS = ['ginger','turmeric','garlic','shallots'];
 
@@ -14574,7 +14590,7 @@ function invmProductStats(p,origin){
   var orderCases=Math.ceil(Math.max(0,(targetWks*weeklyLbs)-availLbs)/caseLb);
   var status='ok';
   if(weeklyLbs>0){ if(coverWks<leadWks) status='ur'; else if(coverWks<targetWks) status='re'; }
-  return {p:p,meta:meta,label:meta.label||p,caseLb:caseLb,lots:lots,allLots:allLots,onHandCases:onHandCases,onHandLbs:onHandLbs,costVal:costVal,
+  return {p:p,meta:meta,label:meta.label||p,caseLb:caseLb,lots:lots,allLots:allLots,onHandCases:onHandCases,onHandLbs:onHandLbs,costVal:costVal,excludedCases:excludedCases,excludedLbs:excludedLbs,
     origin:origin,origins:origins,supList:supList,
     shrinkPct:shrinkPct,effOnHandCases:effOnHandCases,effOnHandLbs:effOnHandLbs,committedCases:committedCases,availCases:availCases,availLbs:availLbs,directShipCases:directShipCases,
     hasModel:!!m,rr13:rr13,win:win,presMix:(m&&m.presMix)||[],weeklyLbs:weeklyLbs,weeklyCases:weeklyCases,demandOverride:ovr,cv:cv,nWeeks:vals.length,
@@ -14586,6 +14602,9 @@ function invmProdSetDemand(p,v){ var st=prodInvState(); if(!st[p]) st[p]={lots:[
 function invmProdClearDemand(p){ var st=prodInvState(); if(st[p]){ st[p].demandOverride=null; prodInvSave(st); invmReRender(); } }
 function invmProdSetLotCases(p,i,v){ var st=prodInvState(); if(st[p]&&st[p].lots&&st[p].lots[i]){ st[p].lots[i].cases=Math.max(0,parseFloat(v)||0); prodInvSave(st); invmReRender(); } }
 function invmProdSetLotReceived(p,i,v){ var st=prodInvState(); if(st[p]&&st[p].lots&&st[p].lots[i]){ st[p].lots[i].received=v||''; prodInvSave(st); invmReRender(); } }
+// Toggle a lot's "excluded from planning" flag: kept on record + visible, but subtracted from the on-hand
+// that feeds the Buy Planner / Simulator (a lot that's physically gone but still in the system).
+function invmProdToggleLotExcl(p,i){ var st=prodInvState(); if(st[p]&&st[p].lots&&st[p].lots[i]){ st[p].lots[i].excluded=!st[p].lots[i].excluded; prodInvSave(st); invmReRender(); } }
 function invmProdRemoveLot(p,i){ var st=prodInvState(); if(st[p]&&st[p].lots){ st[p].lots.splice(i,1); prodInvSave(st); invmReRender(); } }
 function invmProdAddLot(p){ var st=prodInvState(); if(!st[p]) st[p]={serviceLevel:95,demandOverride:null,lots:[]}; if(!st[p].lots) st[p].lots=[]; var sup=(PRODUCTS[p]&&PRODUCTS[p].suppliers&&PRODUCTS[p].suppliers[0])||{}; st[p].lots.push({lot:'NEW',origin:sup.origin||'',supplier:sup.name||'',cases:0,avgCost:0,received:''}); prodInvSave(st); invmReRender(); }
 // FEFO order: oldest received first (soonest-expiring, since a product's lots share one shelf life). Undated lots go last.
@@ -14596,7 +14615,7 @@ function invmProductArrivals(p, origin){
   var orders=(typeof getOrders==='function')?getOrders():[];
   orders.forEach(function(o){
     if(_ordProd(o)!==p) return;
-    if(origin && origin!=='all' && (o.origin||'') && (o.origin||'')!==origin) return;  // per-origin (orders without origin count in any)
+    if(origin && origin!=='all'){ var _oo=(typeof _ordOrigin==='function')?_ordOrigin(o):(o.origin||''); if(_oo && _oo!==origin) return; }  // per-origin; origin derived from supplier when the field is blank
     if(!(o.status==='Contracted'||o.status==='In Transit')) return;
     var eta=o.arrivalActual||o.arrivalEstimated||o.etaActual||o.etaEstimated; if(!eta) return;
     var cs=parseFloat(o.cases)||0; if(cs<=0) return;
@@ -14776,7 +14795,7 @@ function invmRenderProduct(p){
   }
   // on-hand summary — the buy analysis + forward projection now live in the Buy Planner (per product).
   html += '<div class="ipv-kpis" style="grid-template-columns:repeat(3,1fr)">'
-      + '<div class="ipv-kpi"><div class="lbl">On-hand'+oScope+'</div><div class="big">'+f(s.onHandCases)+' <small>cs</small></div><div class="note">'+f(s.onHandLbs)+' lb</div></div>'
+      + '<div class="ipv-kpi"><div class="lbl">On-hand'+oScope+'</div><div class="big">'+f(s.onHandCases)+' <small>cs</small></div><div class="note">'+f(s.onHandLbs)+' lb'+(s.excludedCases>0?(' · <span style="color:var(--amber-700)">−'+f(s.excludedCases)+' excluded</span>'):'')+'</div></div>'
       + '<div class="ipv-kpi"><div class="lbl">Lots</div><div class="big">'+s.lots.length+'</div><div class="note">excl. W / vLot</div></div>'
       + '<div class="ipv-kpi"><div class="lbl">Inventory value</div><div class="big" style="font-size:20px">$'+f(s.costVal)+'</div><div class="note">at avg cost</div></div>'
     + '</div>';
@@ -14787,14 +14806,14 @@ function invmRenderProduct(p){
   var fefo=(typeof invmFefoSort==='function')?invmFefoSort(s.lots):s.lots;
   var storedOf=function(l){ return (l&&l.received)?((typeof bpDaysSince==='function')?bpDaysSince(l.received):0):null; };
   var oldest=0, sumAge=0, sumC=0, undated=0;
-  fefo.forEach(function(l){ var d=storedOf(l); var c=parseFloat(l.cases)||0; if(d==null){ undated++; } else { if(d>oldest) oldest=d; sumAge+=d*c; sumC+=c; } });
+  fefo.forEach(function(l){ if(l&&l.excluded) return; var d=storedOf(l); var c=parseFloat(l.cases)||0; if(d==null){ undated++; } else { if(d>oldest) oldest=d; sumAge+=d*c; sumC+=c; } });
   var avgAge=sumC>0?Math.round(sumAge/sumC):null;
   var ageBadge=function(d){ if(d==null) return '<span style="color:var(--gray-300)">—</span>'; var c=(d>=45)?'#b91c1c':(d>=30)?'#b45309':'var(--gray-700)'; return '<span style="color:'+c+';font-weight:700">'+d+'d</span>'; };
   var dinp='font-family:var(--fm);font-size:10.5px;border:1px solid var(--gray-200);border-radius:5px;padding:2px 5px;color:var(--gray-700)';
   html += '<div class="card" style="background:var(--white);border:1px solid var(--gray-200);border-radius:10px;overflow:hidden;margin-bottom:14px">'
     + '<div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--gray-100)"><span style="font-size:12px;font-weight:700;color:var(--jlz);text-transform:uppercase;letter-spacing:.05em">Lots on hand — '+esc(s.label)+oScope+' <span style="font-weight:500;color:var(--gray-400);text-transform:none;letter-spacing:0">· FEFO</span></span>'
       + '<button onclick="invmProdAddLot(\''+p+'\')" style="font-family:var(--fb);font-size:11px;font-weight:600;padding:5px 11px;border:1px solid var(--gray-200);border-radius:6px;background:var(--white);color:var(--gray-600);cursor:pointer">+ Add lot</button></div>'
-    + '<div style="padding:9px 14px;font-size:11px;color:var(--gray-600);font-family:var(--fm);border-bottom:1px solid var(--gray-100);background:var(--gray-50)">Oldest first (soonest to move) · avg age <b>'+(avgAge==null?'—':avgAge+'d')+'</b> · oldest <b>'+(oldest?oldest+'d':'—')+'</b>'+(undated?(' · <span style="color:var(--amber-700)">'+undated+' lot(s) missing received date</span>'):'')+'</div>';
+    + '<div style="padding:9px 14px;font-size:11px;color:var(--gray-600);font-family:var(--fm);border-bottom:1px solid var(--gray-100);background:var(--gray-50)">Oldest first (soonest to move) · avg age <b>'+(avgAge==null?'—':avgAge+'d')+'</b> · oldest <b>'+(oldest?oldest+'d':'—')+'</b>'+(undated?(' · <span style="color:var(--amber-700)">'+undated+' lot(s) missing received date</span>'):'')+(s.excludedCases>0?(' · <span style="color:var(--amber-700)">'+f(s.excludedCases)+' cs excluded from plan</span>'):'')+'</div>';
   if(s.lots.length){
     html += '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11.5px"><thead><tr>'
       + '<th style="'+thL+'">Lot</th><th style="'+thL+'">Origin</th><th style="'+thL+'">Supplier</th><th style="'+thL+'">Received</th><th style="'+thR+'">Stored</th>'
@@ -14802,16 +14821,22 @@ function invmRenderProduct(p){
       + '<th style="background:var(--gray-50);border-bottom:1px solid var(--gray-200)"></th></tr></thead><tbody>';
     fefo.forEach(function(l){
       var idx=s.allLots.indexOf(l);   // true index in the store (list may be origin-filtered / re-sorted)
-      html += '<tr>'
-        + '<td style="'+td+';color:var(--gray-800)">'+esc(l.lot)+'</td>'
+      var exc=!!(l&&l.excluded);
+      var rowStyle=exc?'background:repeating-linear-gradient(45deg,var(--gray-50),var(--gray-50) 5px,#fff 5px,#fff 10px)':'';
+      var strike=exc?'text-decoration:line-through;color:var(--gray-400) !important;':'';
+      var exBtn=exc
+        ? '<button onclick="invmProdToggleLotExcl(\''+p+'\','+idx+')" title="Count this lot in the plan again" style="border:1px solid var(--amber-200);background:var(--amber-50);color:var(--amber-700);border-radius:5px;font-family:var(--fm);font-size:9px;font-weight:700;padding:2px 6px;cursor:pointer;white-space:nowrap">excluded ✕</button>'
+        : '<button onclick="invmProdToggleLotExcl(\''+p+'\','+idx+')" title="Exclude from Buy Planner / Simulator (keeps the record, subtracts from planned on-hand)" style="border:1px solid var(--gray-200);background:var(--white);color:var(--gray-400);border-radius:5px;font-family:var(--fm);font-size:9px;font-weight:600;padding:2px 6px;cursor:pointer;white-space:nowrap">exclude</button>';
+      html += '<tr style="'+rowStyle+'">'
+        + '<td style="'+td+';color:var(--gray-800);'+strike+'">'+esc(l.lot)+'</td>'
         + '<td style="'+td+';color:var(--gray-700)">'+esc(l.origin)+'</td>'
         + '<td style="'+td+';color:var(--gray-700)">'+esc(l.supplier)+'</td>'
         + '<td style="padding:6px 14px;border-bottom:1px solid var(--gray-100)"><input type="date" value="'+(l.received||'')+'" onchange="invmProdSetLotReceived(\''+p+'\','+idx+',this.value)" style="'+dinp+'"></td>'
         + '<td style="'+td+';text-align:right">'+ageBadge(storedOf(l))+'</td>'
-        + '<td style="padding:6px 14px;border-bottom:1px solid var(--gray-100);text-align:right"><input type="number" step="1" value="'+(parseFloat(l.cases)||0)+'" onchange="invmProdSetLotCases(\''+p+'\','+idx+',this.value)" style="width:60px;text-align:right;font-family:var(--fm);font-size:11.5px;border:1px solid var(--gray-200);border-radius:5px;padding:2px 6px;color:var(--gray-900)"></td>'
-        + '<td style="'+td+';text-align:right;color:var(--gray-700)">'+f((parseFloat(l.cases)||0)*s.caseLb)+'</td>'
+        + '<td style="padding:6px 14px;border-bottom:1px solid var(--gray-100);text-align:right"><input type="number" step="1" value="'+(parseFloat(l.cases)||0)+'" onchange="invmProdSetLotCases(\''+p+'\','+idx+',this.value)" style="width:60px;text-align:right;font-family:var(--fm);font-size:11.5px;border:1px solid var(--gray-200);border-radius:5px;padding:2px 6px;color:var(--gray-900);'+strike+'"></td>'
+        + '<td style="'+td+';text-align:right;color:var(--gray-700);'+strike+'">'+f((parseFloat(l.cases)||0)*s.caseLb)+'</td>'
         + '<td style="'+td+';text-align:right;color:var(--gray-700)">$'+f(l.avgCost)+'</td>'
-        + '<td style="'+td+';text-align:right"><button onclick="invmProdRemoveLot(\''+p+'\','+idx+')" title="Remove" style="border:none;background:none;color:var(--gray-300);cursor:pointer;font-size:15px;line-height:1">×</button></td>'
+        + '<td style="'+td+';text-align:right;white-space:nowrap">'+exBtn+' <button onclick="invmProdRemoveLot(\''+p+'\','+idx+')" title="Remove" style="border:none;background:none;color:var(--gray-300);cursor:pointer;font-size:15px;line-height:1;vertical-align:middle">×</button></td>'
         + '</tr>';
     });
     html += '<tr><td colspan="5" style="padding:9px 14px;background:var(--gray-50);font-weight:700;color:var(--gray-900)">Total (excl. W / vLot lots)</td>'
@@ -18273,7 +18298,7 @@ async function pullOrdersFromSheet(silent) {
     // Without this, values entered locally (like the FOB-conversion cost estimates)
     // would be silently wiped on every startup by the auto-pull.
     // TODO: when Code.gs adds columns for these fields, this preservation can be removed.
-    const LOCAL_ONLY_ORDER_FIELDS = ['insuranceUsd', 'customsUsd', 'destHandlingUsd', 'directShip', 'product'];
+    const LOCAL_ONLY_ORDER_FIELDS = ['insuranceUsd', 'customsUsd', 'destHandlingUsd', 'directShip', 'product', 'origin'];
     const localByPo = {};
     (getOrders() || []).forEach(o => { if (o.jlzPo) localByPo[o.jlzPo] = o; });
     orders.forEach(o => {
