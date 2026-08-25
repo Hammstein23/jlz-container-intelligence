@@ -22669,9 +22669,26 @@ function dmSoldAsHTML(rrLbs, caseLb, presMix){
 }
 function renderDmRunRate(){
   var host = document.getElementById('dm-runrate'); if(!host) return;
-  var m = (typeof _dmModel !== 'undefined' && _dmModel) ? _dmModel : null;
-  if(!m || !(m.runRate13 > 0) || !Array.isArray(m.weeklyReliable)){ host.innerHTML = ''; return; }   // shows for every focused product (sales layer)
-  var cl = m.caseLb || DM_CASE_LB;
+  var mTotal = (typeof _dmModel !== 'undefined' && _dmModel) ? _dmModel : null;
+  if(!mTotal || !(mTotal.runRate13 > 0) || !Array.isArray(mTotal.weeklyReliable)){ host.innerHTML = ''; return; }   // shows for every focused product (sales layer)
+  var cl = mTotal.caseLb || DM_CASE_LB;
+  // Run-rate = STOCKABLE demand: strip direct-ship (Sol-ti pass-through) so a lumpy account that never
+  // touches inventory can't contaminate the number. Direct-ship shown as a separate line below. The Buy
+  // Planner already excludes it; this keeps the Demand-tab run-rate consistent. Customer Intelligence and
+  // revenue read _dmModel directly (untouched) so Sol-ti stays visible there.
+  var m = mTotal, dsCases = 0;
+  try{
+    if(typeof dmFilteredRows==='function' && typeof isDirectShipRow==='function' && typeof dmBuildModel==='function'){
+      var _rows = dmFilteredRows();
+      if(_rows.some(isDirectShipRow)){
+        var _ms = dmBuildModel(_rows.filter(function(r){ return !isDirectShipRow(r); }), false, cl);
+        if(_ms && _ms.runRate13>0 && Array.isArray(_ms.weeklyReliable)) m = _ms;
+        var _p=(typeof getActiveProduct==='function')?getActiveProduct():null;
+        var _o=(typeof _dmOrigin!=='undefined' && _dmOrigin && _dmOrigin!=='All')?_dmOrigin:'all';
+        if(_p && typeof invmDirectShipCases==='function') dsCases = invmDirectShipCases(_p, _o);
+      }
+    }
+  }catch(e){}
   var win = (typeof dmWindow === 'function') ? dmWindow() : 13;
   var mode = (typeof dmWindowMode === 'function') ? dmWindowMode() : 'auto';
   var rrLbs = { 3:(m.runRate3||m.runRate13), 6:(m.runRate6||m.runRate13), 13:m.runRate13 };
@@ -22707,9 +22724,10 @@ function renderDmRunRate(){
   if(rest > 0){ var rv=0; custs.slice(8).forEach(function(c){ rv += Math.round(c[key]||0); }); rows += '<tr><td class="l" style="color:var(--gray-400)">+ '+rest+' smaller</td><td style="color:var(--gray-400)">'+rv.toLocaleString()+'</td><td></td></tr>'; }
   rows += '<tr class="tot"><td class="l">Total</td><td>'+tot.toLocaleString()+'</td><td></td></tr>';
   host.innerHTML = '<div class="card dmrr">'
-    + '<div class="dmrr-top"><div class="dmrr-k">Run-rate · what they buy per week</div>'+seg+'</div>'
+    + '<div class="dmrr-top"><div class="dmrr-k">Run-rate · what they buy per week'+(dsCases>=1?' <span style="color:var(--gray-400);font-weight:400;text-transform:none">· stockable (Sol-ti shown apart)</span>':'')+'</div>'+seg+'</div>'
     + '<div class="dmrr-bigrow"><div class="dmrr-big">'+bigRR.toLocaleString()+'</div><div class="dmrr-u">cs/wk</div><div class="dmrr-role">'+(win===13?'13-week base':win===6?'6-week momentum':'3-week spot')+'</div></div>'
     + dmSoldAsHTML(bigRR*cl, cl, m.presMix)
+    + (dsCases>=1 ? ('<div style="font-family:var(--fm);font-size:11px;line-height:1.5;margin:-2px 0 10px;color:#7c3aed">＋ <b>~'+Math.round(dsCases).toLocaleString()+' cs/wk</b> Sol-ti direct-ship <span style="color:var(--gray-400)">— order-driven, ships from supplier · excluded from this run-rate (never touches stock)</span></div>') : '')
     + '<div class="dmrr-rib '+rc+'">'+rt+'</div>'
     + '<div class="dmrr-step"><div class="dmrr-h">Average of the '+win+' weeks it uses</div><div class="dmrr-wks">'+wksHtml+'</div><div class="dmrr-math">'+mathHtml+'</div></div>'
     + '<div class="dmrr-step"><div class="dmrr-h">Built from these customers <span class="dmrr-hs">— each account’s run-rate in the window</span></div><table class="dmrr-tbl"><tbody>'+rows+'</tbody></table>'
