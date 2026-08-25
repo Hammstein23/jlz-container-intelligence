@@ -14499,7 +14499,7 @@ function invmDirectShipCases(p,origin){
   if(!Object.keys(wk).length) return 0;
   var dmax=(typeof dmGlobalDataMax==='function')?dmGlobalDataMax():'';
   var anchor=dmax?new Date(dmax):new Date();
-  var N=(typeof dsWindow==='function')?dsWindow():26;
+  var N=(typeof dmWindow==='function')?dmWindow(p):13;   // Sol-ti direct-ship follows the same demand window
   var weeks=[], seen={};
   for(var i=0;i<N;i++){ var d=new Date(anchor); d.setDate(d.getDate()-7*i); var k=(typeof dmWeekKey==='function')?dmWeekKey(d):null; if(k&&!seen[k]){ seen[k]=1; weeks.push(k); } }
   if(!weeks.length) return 0;
@@ -14595,7 +14595,12 @@ function invmProductStats(p,origin){
   // Demand uses the SELECTED reaction window (3/6/13), shared per-product with the Demand tab + Simulator so
   // all three stay aligned and the plan reacts when you move the toggle. Same windowing the Demand hero uses.
   var win=(typeof dmWindow==='function')?dmWindow(p):13;
-  var rrWin=m?(win===3?(m.runRate3||m.runRate13):win===6?(m.runRate6||m.runRate13):m.runRate13):0; rrWin=rrWin||0;
+  // Windowed run-rate = mean of the last `win` reliable weeks (generalizes to 3/6/13/26; the model only
+  // pre-computes 3/6/13, so compute from the series — also picks up the nowcasted weeks).
+  var rrWin=0;
+  if(m){ var _wr=Array.isArray(m.weeklyReliable)?m.weeklyReliable:[]; var _sl=_wr.slice(-win);
+    rrWin=_sl.length ? _sl.reduce(function(s,w){ return s+(w.lbs||0); },0)/_sl.length
+                     : ((win===3?(m.runRate3||m.runRate13):win===6?(m.runRate6||m.runRate13):m.runRate13)||0); }
   var ovr=(store.demandOverride!=null&&store.demandOverride!=='')?parseFloat(store.demandOverride):null;
   var weeklyLbs=(ovr!=null&&ovr>0)?ovr*caseLb:rrWin;                      // windowed run-rate; override is entered in cases
   var weeklyCases=weeklyLbs>0?weeklyLbs/caseLb:0;
@@ -14909,17 +14914,12 @@ function invmAnalysisHTML(s){
       + '<div class="ipv-af"><label>Purchase pack</label><div class="val">'+f(s.caseLb)+' <small>lb/case</small></div><div class="src">'+supOrigins+'</div></div>'
     + '</div>'
     + (s.weeklyLbs>0 ? dmSoldAsHTML(s.weeklyLbs, s.caseLb, s.presMix) : '')
-    + (s.directShipCases>0 ? (function(){
-        var dsw=(typeof dsWindow==='function')?dsWindow():26;
-        var dsTgl='<span style="display:inline-flex;border:1px solid var(--gray-200);border-radius:5px;overflow:hidden;margin-left:6px;vertical-align:middle">'
-          + [3,6,13,26].map(function(n,i){ var on=(dsw===n); return '<button type="button" onclick="dsSetWindow('+n+')" style="border:0;'+(i?'border-left:1px solid var(--gray-200);':'')+'padding:1px 6px;font-family:var(--fm);font-size:10px;font-weight:'+(on?'700':'500')+';cursor:pointer;background:'+(on?'#7c3aed':'var(--white)')+';color:'+(on?'#fff':'var(--gray-500)')+'">'+n+'w</button>'; }).join('')
-          + '</span>';
-        return '<div style="margin:6px 0 2px;padding:8px 11px;border:1px solid var(--gray-200);border-radius:8px;background:var(--gray-50);font-family:var(--fm);font-size:11.5px;line-height:1.55">'
+    + (s.directShipCases>0 ? ('<div style="margin:6px 0 2px;padding:8px 11px;border:1px solid var(--gray-200);border-radius:8px;background:var(--gray-50);font-family:var(--fm);font-size:11.5px;line-height:1.55">'
         + '<div style="font-weight:700;color:var(--gray-600);text-transform:uppercase;letter-spacing:.04em;font-size:10px;margin-bottom:3px">Business split · this origin</div>'
         + '<div><span style="color:var(--jlz);font-weight:700">'+f(s.weeklyCases)+' cs/wk</span> stock-buy <span style="color:var(--gray-400)">— drives the order below</span></div>'
-        + '<div><span style="color:#7c3aed;font-weight:700">~'+f(s.directShipCases)+' cs/wk</span> Sol-ti direct-ship <span style="color:var(--gray-400)">— order-driven, ships on confirmation · no stock, doesn\'t drive the buy</span> '+dsTgl+'</div>'
-        + '<div style="margin-top:2px;color:var(--gray-500)">Total business ≈ <b>'+f(s.weeklyCases+s.directShipCases)+' cs/wk</b> <span style="color:var(--gray-400)">· direct-ship = '+dsw+'-wk avg</span></div>'
-      + '</div>'; })() : '')
+        + '<div><span style="color:#7c3aed;font-weight:700">~'+f(s.directShipCases)+' cs/wk</span> Sol-ti direct-ship <span style="color:var(--gray-400)">— order-driven, ships on confirmation · no stock, doesn\'t drive the buy</span></div>'
+        + '<div style="margin-top:2px;color:var(--gray-500)">Total business ≈ <b>'+f(s.weeklyCases+s.directShipCases)+' cs/wk</b> <span style="color:var(--gray-400)">· both on the '+(s.win||13)+'-wk window</span></div>'
+      + '</div>') : '')
     + '<div class="ipv-kpis">'
       + '<div class="ipv-kpi"><div class="lbl">Available to sell</div><div class="big">'+f(s.availCases)+' <small>cs</small></div><div class="note">'+availNote+'</div></div>'
       + '<div class="ipv-kpi"><div class="lbl">Current cover</div><div class="big">'+covTxt+'</div><div class="note">available ÷ demand/wk</div></div>'
@@ -14944,7 +14944,7 @@ function invmAnalysisHTML(s){
 function invmWindowToggle(p){
   var wn=(typeof dmWindow==='function')?dmWindow(p):13;
   var mode=(typeof dmWindowMode==='function')?dmWindowMode(p):'auto';
-  var btns=[['auto','Auto'],['3','3w'],['6','6w'],['13','13w']].map(function(mm,i){ var on=(mode===mm[0]);
+  var btns=[['auto','Auto'],['3','3w'],['6','6w'],['13','13w'],['26','26w']].map(function(mm,i){ var on=(mode===mm[0]);
     return '<button type="button" onclick="dmSetWindow(\''+mm[0]+'\',\''+p+'\')" style="border:0;'+(i?'border-left:1px solid var(--gray-200);':'')+'padding:2px 9px;font-family:var(--fm);font-size:10px;font-weight:'+(on?'700':'500')+';cursor:pointer;background:'+(on?'var(--jlz)':'var(--white)')+';color:'+(on?'#fff':'var(--gray-500)')+'">'+mm[1]+((mm[0]==='auto'&&on)?('→'+wn):'')+'</button>';
   }).join('');
   return '<div style="display:flex;gap:8px;align-items:center;margin:2px 0 12px;flex-wrap:wrap">'
@@ -22729,11 +22729,11 @@ function dmWindowModelFor(p){
   if(typeof productFocus === 'function' && productFocus() === p) return (typeof _dmModel !== 'undefined') ? _dmModel : null;
   return null;
 }
-function dmWindowMode(p){ p = _dmWinProd(p); var m = _dmWinMap()[p]; return (m === '3' || m === '6' || m === '13') ? m : 'auto'; }
+function dmWindowMode(p){ p = _dmWinProd(p); var m = _dmWinMap()[p]; return (m === '3' || m === '6' || m === '13' || m === '26') ? m : 'auto'; }
 function dmWindow(p){
   p = _dmWinProd(p);
   var v = dmWindowMode(p);
-  if(v === '3' || v === '6' || v === '13') return +v;
+  if(v === '3' || v === '6' || v === '13' || v === '26') return +v;
   var mdl = dmWindowModelFor(p);                             // auto: cooling → 6w (safe to under-buy), else 13w
   var st = mdl ? dmShiftState(mdl) : null;
   return (st && st.k === 'cool') ? 6 : 13;
@@ -22807,13 +22807,14 @@ function renderDmRunRate(){
     } }catch(e){}
   var win = (typeof dmWindow === 'function') ? dmWindow() : 13;
   var mode = (typeof dmWindowMode === 'function') ? dmWindowMode() : 'auto';
-  var rrLbs = { 3:(m.runRate3||m.runRate13), 6:(m.runRate6||m.runRate13), 13:m.runRate13 };
-  var rr = { 3:Math.round(rrLbs[3]/cl), 6:Math.round(rrLbs[6]/cl), 13:Math.round(rrLbs[13]/cl) };
+  var _rr26=(function(){ var sl=(m.weeklyReliable||[]).slice(-26); return sl.length? sl.reduce(function(s,w){return s+(w.lbs||0);},0)/sl.length : m.runRate13; })();
+  var rrLbs = { 3:(m.runRate3||m.runRate13), 6:(m.runRate6||m.runRate13), 13:m.runRate13, 26:_rr26 };
+  var rr = { 3:Math.round(rrLbs[3]/cl), 6:Math.round(rrLbs[6]/cl), 13:Math.round(rrLbs[13]/cl), 26:Math.round(rrLbs[26]/cl) };
   var s = (typeof dmShiftState === 'function') ? dmShiftState(m) : null;
   var esc = (typeof dmEsc === 'function') ? dmEsc : function(x){ return String(x); };
   var fp = function(x){ return (x>=0?'+':'') + Math.round(x*100) + '%'; };
   var wkNo = function(w){ return (typeof cxWeekNo === 'function') ? ('W'+cxWeekNo(w)) : String(w).slice(5); };
-  var modes = [['auto','Auto'],['3','3 wk'],['6','6 wk'],['13','13 wk']];
+  var modes = [['auto','Auto'],['3','3 wk'],['6','6 wk'],['13','13 wk'],['26','26 wk']];
   var seg = '<div class="dmrr-seg">' + modes.map(function(mm){ var on=(mode===mm[0]); return '<button type="button" onclick="dmSetWindow(\''+mm[0]+'\')" class="'+(on?'on':'')+'">'+mm[1]+(mm[0]==='auto'&&on?(' →'+win):'')+'</button>'; }).join('') + '</div>';
   var rk = s ? s.k : 'steady', rc, rt;
   if(rk==='accel'){ rc='amb'; rt='<b>Accelerating — confirmed.</b> 3-wk and 6-wk agree ('+fp(s.d3)+' / '+fp(s.d6)+'). Recommend planning on <b>6 wk</b> ('+rr[6].toLocaleString()+' cs). '+(win===6?'<b>✓ applied</b>':'<button type="button" class="dmrr-apply" onclick="dmSetWindow(\'6\')">Apply 6 wk</button>'); }
@@ -22845,7 +22846,7 @@ function renderDmRunRate(){
   rows += '<tr class="tot"><td class="l">Total</td><td>'+tot.toLocaleString()+'</td><td></td></tr>';
   host.innerHTML = '<div class="card dmrr">'
     + '<div class="dmrr-top"><div class="dmrr-k">Run-rate · what they buy per week'+(dsCases>=1?' <span style="color:var(--gray-400);font-weight:400;text-transform:none">· stockable (Sol-ti shown apart)</span>':'')+'</div>'+seg+'</div>'
-    + '<div class="dmrr-bigrow"><div class="dmrr-big">'+bigRR.toLocaleString()+'</div><div class="dmrr-u">cs/wk</div><div class="dmrr-role">'+(win===13?'13-week base':win===6?'6-week momentum':'3-week spot')+'</div></div>'
+    + '<div class="dmrr-bigrow"><div class="dmrr-big">'+bigRR.toLocaleString()+'</div><div class="dmrr-u">cs/wk</div><div class="dmrr-role">'+(win===26?'26-week smooth':win===13?'13-week base':win===6?'6-week momentum':'3-week spot')+'</div></div>'
     + dmSoldAsHTML(bigRR*cl, cl, m.presMix)
     + (dsCases>=1 ? ('<div style="font-family:var(--fm);font-size:11px;line-height:1.5;margin:-2px 0 10px;color:#7c3aed">＋ <b>~'+Math.round(dsCases).toLocaleString()+' cs/wk</b> Sol-ti direct-ship <span style="color:var(--gray-400)">— order-driven, ships from supplier · excluded from this run-rate (never touches stock)</span></div>') : '')
     + '<div class="dmrr-rib '+rc+'">'+rt+'</div>'
