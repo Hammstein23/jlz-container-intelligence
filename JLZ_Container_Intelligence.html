@@ -11555,6 +11555,9 @@ function _cmProd(c) { return (c && c.product) || 'ginger'; }
 // Add a warehouse-committed order. cases coerced to a positive integer.
 // Origin of a committed entry (Fiji/Hawaii/California/Peru...). Absent = '' (product-level, back-compat).
 function _cmOrigin(c) { return (c && c.origin) || ''; }
+// Origin resolved for a committed entry: the explicit field, else derived from its SKU (import rows written
+// before origin-tagging carry the SKU but no origin field). Lets per-origin views use them without re-import.
+function _cmOriginFor(c) { return _cmOrigin(c) || (c && c.sku && typeof ooOriginFromSku === 'function' ? ooOriginFromSku(c.sku, _cmProd(c)) : ''); }
 function addCommitted(customer, wk, cases, product, date, origin) {
   var n = Math.round(Number(cases) || 0);
   if(!customer || !wk || n <= 0) return getCommitted();
@@ -14511,8 +14514,8 @@ function prodCommittedTotal(p,origin){
   var sum=function(a){ return a.reduce(function(t,c){ return t+(c.cases||0); }, 0); };
   if(!origin || origin==='all'){ if(all.length) return sum(all); }
   else {
-    var tagged=all.filter(function(c){ return _cmOrigin(c); });     // origin-carrying entries (from the import)
-    if(tagged.length) return sum(tagged.filter(function(c){ return _cmOrigin(c)===origin; }));
+    var tagged=all.filter(function(c){ return _cmOriginFor(c); });     // origin-carrying (field or derived from SKU)
+    if(tagged.length) return sum(tagged.filter(function(c){ return _cmOriginFor(c)===origin; }));
     // else: entries exist but none carry origin (old import) → can't split, fall back to the seed snapshot below
   }
   var st=prodCommittedState();
@@ -14651,9 +14654,9 @@ function invmCommittedByWeek(p, origin){
   var out={};
   var all=(typeof getCommitted==='function'?getCommitted():[]).filter(function(c){ return c && c.type==='inv' && _cmProd(c)===p && c.wk; });
   if(origin && origin!=='all'){
-    var tagged=all.filter(function(c){ return _cmOrigin(c); });
-    if(!tagged.length) return {};                       // entries don't carry origin → can't attribute → lump fallback
-    all=tagged.filter(function(c){ return _cmOrigin(c)===origin; });
+    var tagged=all.filter(function(c){ return _cmOriginFor(c); });
+    if(!tagged.length) return {};                       // no origin field AND no SKU → can't attribute → lump fallback
+    all=tagged.filter(function(c){ return _cmOriginFor(c)===origin; });
   }
   all.forEach(function(c){ out[c.wk]=(out[c.wk]||0)+(parseFloat(c.cases)||0); });
   return out;
