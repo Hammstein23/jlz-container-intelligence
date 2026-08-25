@@ -14644,6 +14644,20 @@ function whatifArrivals(p,origin){
   return out;
 }
 // Forward 13-week coverage projection + time-aware buy verdict (Fase 3a). Ginger keeps its own Buy Planner.
+// Confirmed (committed/unshipped) orders per week for a product+origin, in cases — near-term demand already
+// booked but not yet invoiced. Keyed by dmWeekKey (same weeks as the projection). Only populated from the
+// canonical committed store when it carries per-week entries (the Unshipped import); the lump seed doesn't.
+function invmCommittedByWeek(p, origin){
+  var out={};
+  var all=(typeof getCommitted==='function'?getCommitted():[]).filter(function(c){ return c && c.type==='inv' && _cmProd(c)===p && c.wk; });
+  if(origin && origin!=='all'){
+    var tagged=all.filter(function(c){ return _cmOrigin(c); });
+    if(!tagged.length) return {};                       // entries don't carry origin → can't attribute → lump fallback
+    all=tagged.filter(function(c){ return _cmOrigin(c)===origin; });
+  }
+  all.forEach(function(c){ out[c.wk]=(out[c.wk]||0)+(parseFloat(c.cases)||0); });
+  return out;
+}
 function invmProjectionHTML(s){
   var p=s.p, N=13;
   var f=function(n){ return Math.round(n||0).toLocaleString('en-US'); };
@@ -14654,14 +14668,22 @@ function invmProjectionHTML(s){
   var base=new Date();
   var baseMon; try{ baseMon=(typeof dmWeekKey==='function')?dmWeekKey(base):null; }catch(e){ baseMon=null; }
   var baseDate=baseMon?new Date(baseMon+'T12:00:00'):base;
-  var weeks=[], start=(s.availCases!=null?s.availCases:s.onHandCases), firstShort=null;
+  // Confirmed orders (committed/unshipped) placed in their week — the near-term booked demand. When present,
+  // start from PHYSICAL on-hand and consume committed per week (max vs run-rate); no lump upfront subtraction.
+  // Without per-week committed (no import), fall back to the old behavior: start from available (lump-netted).
+  var cbw=(typeof invmCommittedByWeek==='function')?invmCommittedByWeek(s.p, s.origin):{};
+  var hasCommWk=false; for(var _ck in cbw){ if(cbw[_ck]>0){ hasCommWk=true; break; } }
+  var weeks=[], start=hasCommWk ? (s.effOnHandCases!=null?s.effOnHandCases:s.onHandCases) : (s.availCases!=null?s.availCases:s.onHandCases), firstShort=null;
   for(var i=0;i<N;i++){
     var dd=new Date(baseDate.getTime()+i*7*86400000);
     var wkISO; try{ wkISO=(typeof dmWeekKey==='function')?dmWeekKey(dd):dd.toISOString().slice(0,10); }catch(e){ wkISO=dd.toISOString().slice(0,10); }
     var arr=arrivals[wkISO]||0, sc=scen[wkISO]||0; if(arr>0) hasArr=true; if(sc>0) hasScen=true;
-    var end=start+arr+sc-weeklyCases;
+    var commW=cbw[wkISO]||0;
+    if(i===0 && hasCommWk){ Object.keys(cbw).forEach(function(k){ if(k<wkISO) commW+=cbw[k]; }); }   // overdue/backlog folds into now
+    var demW=hasCommWk ? Math.max(commW, weeklyCases) : weeklyCases;                                   // booked week uses its order; else run-rate
+    var end=start+arr+sc-demW;
     if(firstShort===null && end<safetyCases) firstShort=i;
-    weeks.push({i:i,wkISO:wkISO,start:start,arr:arr,scen:sc,end:end});
+    weeks.push({i:i,wkISO:wkISO,start:start,arr:arr,scen:sc,end:end,commW:commW,demW:demW});
     start=end;
   }
   var lbl=function(iso){ return (typeof dmcDateLabel==='function' && dmcDateLabel(iso)) || String(iso).slice(5); };
@@ -14700,19 +14722,23 @@ function invmProjectionHTML(s){
       +'<td style="text-align:left;padding:8px 12px;color:var(--gray-700);font-weight:600">'+(w.i===0?'now ':wkNo(w.wkISO))+'<span style="color:var(--gray-400);font-weight:400;font-size:10px">'+lbl(w.wkISO)+'</span></td>'
       +'<td style="text-align:right;padding:8px 12px;color:var(--gray-500);font-size:11px">'+(w.start>0?f(w.start):'—')+'</td>'
       +'<td style="text-align:right;padding:8px 12px">'+inCell+'</td>'
-      +'<td style="text-align:right;padding:8px 12px;color:#b91c1c">−'+f(weeklyCases)+'</td>'
+      +'<td style="text-align:right;padding:8px 12px;color:#b91c1c">−'+f(w.demW)+(w.commW>0?(' <span title="'+f(w.commW)+' cs already booked (unshipped, not yet invoiced)" style="color:#7c3aed;font-weight:700;font-size:9px">📋'+f(w.commW)+'</span>'):'')+'</td>'
       +'<td style="text-align:right;padding:8px 12px;font-weight:700;color:'+endColor+'">'+f(w.end)+'</td>'
       +'<td style="text-align:right;padding:8px 12px;font-weight:600;color:'+covColor+'">'+f1(cover)+'w</td>'
       +'<td style="padding:8px 12px">'+stB+'</td>'
       +'</tr>';
   });
   return '<div style="background:var(--white);border:1px solid var(--gray-200);border-radius:10px;overflow:hidden;margin-bottom:14px">'
-    +'<div style="padding:11px 14px;border-bottom:1px solid var(--gray-100)"><span style="font-size:12px;font-weight:700;color:var(--jlz);text-transform:uppercase;letter-spacing:.05em">'+N+'-week projection</span> <span style="font-size:10.5px;color:var(--gray-400)">· cases · arrivals from the Orders pipeline'+(hasScen?' <span style="color:#7c3aed">+ 🧪 scenarios</span>':'')+'</span></div>'
+    +'<div style="padding:11px 14px;border-bottom:1px solid var(--gray-100)"><span style="font-size:12px;font-weight:700;color:var(--jlz);text-transform:uppercase;letter-spacing:.05em">'+N+'-week projection</span> <span style="font-size:10.5px;color:var(--gray-400)">· cases · arrivals from the Orders pipeline'+(hasCommWk?' <span style="color:#7c3aed">· 📋 confirmed orders</span>':'')+(hasScen?' <span style="color:#7c3aed">+ 🧪 scenarios</span>':'')+'</span></div>'
     +'<div style="padding:11px 14px"><div class="ipv-st '+vcls+'" style="display:block;margin-bottom:10px;line-height:1.55">'+verdict+'</div>'
     +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11px;min-width:640px">'
     +'<thead><tr><th style="'+th+';text-align:left">Week</th><th style="'+th+'">Starting stock</th><th style="'+th+'">Arrivals</th><th style="'+th+'">Demand</th><th style="'+th+'">Ending stock</th><th style="'+th+'">Cover</th><th style="'+th+';text-align:left">Status</th></tr></thead>'
     +'<tbody>'+rows+'</tbody></table></div>'
-    +'<div style="font-size:10px;color:var(--gray-400);margin-top:8px">Starting stock (now) = <b>available</b> (on-hand − shrink − committed). Ending = Start + Arrivals − Demand. Cover = ending ÷ demand/wk. Status: OK ≥ safety · ⚠ LOW &lt; safety · ⚡ CRITICAL &lt; 1 wk · 🛑 STOCKOUT ≤ 0.</div>'
+    +'<div style="font-size:10px;color:var(--gray-400);margin-top:8px">'
+      +(hasCommWk
+        ? 'Starting stock (now) = <b>on-hand</b> (post-shrink). Demand = the <b>run-rate</b>, or <span style="color:#7c3aed">📋 confirmed orders</span> (unshipped, not yet invoiced) in weeks that have them — whichever is larger. '
+        : 'Starting stock (now) = <b>available</b> (on-hand − shrink − committed). Demand = run-rate. ')
+      +'Ending = Start + Arrivals − Demand. Cover = ending ÷ demand/wk. Status: OK ≥ safety · ⚠ LOW &lt; safety · ⚡ CRITICAL &lt; 1 wk · 🛑 STOCKOUT ≤ 0.</div>'
     +'</div></div>';
 }
 function invmRenderProduct(p){
