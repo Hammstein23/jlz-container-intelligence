@@ -22844,7 +22844,7 @@ function renderDmRunRate(){
     + dmSoldAsHTML(bigRR*cl, cl, m.presMix)
     + (dsCases>=1 ? ('<div style="font-family:var(--fm);font-size:11px;line-height:1.5;margin:-2px 0 10px;color:#7c3aed">＋ <b>~'+Math.round(dsCases).toLocaleString()+' cs/wk</b> Sol-ti direct-ship <span style="color:var(--gray-400)">— order-driven, ships from supplier · excluded from this run-rate (never touches stock)</span></div>') : '')
     + '<div class="dmrr-rib '+rc+'">'+rt+'</div>'
-    + '<div class="dmrr-step"><div class="dmrr-h">Average of the '+win+' weeks it uses</div><div class="dmrr-wks">'+wksHtml+'</div><div class="dmrr-math">'+mathHtml+'</div>'+(m.nowcast?'<div style="font-size:10px;color:#7c3aed;margin-top:5px">📋 last week completed with its confirmed orders (still to invoice) — most current read</div>':'')+'</div>'
+    + '<div class="dmrr-step"><div class="dmrr-h">Average of the '+win+' weeks it uses</div><div class="dmrr-wks">'+wksHtml+'</div><div class="dmrr-math">'+mathHtml+'</div>'+(m.nowcast?'<div style="font-size:10px;color:#7c3aed;margin-top:5px">📋 recent week completed with its confirmed orders (booked, not yet invoiced) — most current read</div>':'')+'</div>'
     + '<div class="dmrr-step"><div class="dmrr-h">Built from these customers <span class="dmrr-hs">— each account’s run-rate in the window</span></div><table class="dmrr-tbl"><tbody>'+rows+'</tbody></table>'
     + '<div class="dmrr-link" onclick="if(typeof switchTab===\'function\')switchTab(\'customers\')">See customer detail → <span class="dmrr-hs">margin, cadence, chart, overrides</span></div></div>'
     + '</div>';
