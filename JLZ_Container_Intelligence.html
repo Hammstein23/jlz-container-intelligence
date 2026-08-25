@@ -14534,9 +14534,13 @@ function invmProductStats(p,origin){
   var onHandLbs=onHandCases*caseLb;
   var costVal=lots.reduce(function(s,l){ return s+(parseFloat(l.cases)||0)*(parseFloat(l.avgCost)||0); },0);
   var m=invmProductModel(p,origin);
-  var rr13=(m&&m.runRate13>0)?m.runRate13:0;                              // lbs/wk (13-wk structural)
+  var rr13=(m&&m.runRate13>0)?m.runRate13:0;                              // lbs/wk (13-wk structural, for CV/reference)
+  // Demand uses the SELECTED reaction window (3/6/13), shared per-product with the Demand tab + Simulator so
+  // all three stay aligned and the plan reacts when you move the toggle. Same windowing the Demand hero uses.
+  var win=(typeof dmWindow==='function')?dmWindow(p):13;
+  var rrWin=m?(win===3?(m.runRate3||m.runRate13):win===6?(m.runRate6||m.runRate13):m.runRate13):0; rrWin=rrWin||0;
   var ovr=(store.demandOverride!=null&&store.demandOverride!=='')?parseFloat(store.demandOverride):null;
-  var weeklyLbs=(ovr!=null&&ovr>0)?ovr*caseLb:rr13;                       // override is entered in cases
+  var weeklyLbs=(ovr!=null&&ovr>0)?ovr*caseLb:rrWin;                      // windowed run-rate; override is entered in cases
   var weeklyCases=weeklyLbs>0?weeklyLbs/caseLb:0;
   var series=(m&&Array.isArray(m.weeklyReliable)&&m.weeklyReliable.length)?m.weeklyReliable:((m&&Array.isArray(m.weekly))?m.weekly:[]);
   var vals=series.map(function(w){ return (w&&w.lbs)||0; }).filter(function(x){ return x>0; }).slice(-13);
@@ -14565,7 +14569,7 @@ function invmProductStats(p,origin){
   return {p:p,meta:meta,label:meta.label||p,caseLb:caseLb,lots:lots,allLots:allLots,onHandCases:onHandCases,onHandLbs:onHandLbs,costVal:costVal,
     origin:origin,origins:origins,supList:supList,
     shrinkPct:shrinkPct,effOnHandCases:effOnHandCases,effOnHandLbs:effOnHandLbs,committedCases:committedCases,availCases:availCases,availLbs:availLbs,directShipCases:directShipCases,
-    hasModel:!!m,rr13:rr13,presMix:(m&&m.presMix)||[],weeklyLbs:weeklyLbs,weeklyCases:weeklyCases,demandOverride:ovr,cv:cv,nWeeks:vals.length,
+    hasModel:!!m,rr13:rr13,win:win,presMix:(m&&m.presMix)||[],weeklyLbs:weeklyLbs,weeklyCases:weeklyCases,demandOverride:ovr,cv:cv,nWeeks:vals.length,
     lead:lead,leadWks:leadWks,z:z,serviceLevel:svc,safetyWks:safetyWks,targetWks:targetWks,coverWks:coverWks,orderCases:orderCases,status:status};
 }
 function invmProdSetService(p,v){ var st=prodInvState(); if(!st[p]) st[p]={lots:[]}; st[p].serviceLevel=Math.max(50,Math.min(99.5,parseFloat(v)||95)); prodInvSave(st); invmReRender(); }
@@ -14797,7 +14801,7 @@ function invmAnalysisHTML(s){
   var stCls=s.status, stTxt=(s.status==='ur')?'● Urgent':(s.status==='re')?'● Reorder':'● OK';
   var demandVal = s.weeklyLbs>0 ? f(s.weeklyCases) : '';
   var demandSrc = s.weeklyLbs<=0 ? '<span style="color:var(--amber-700)">load sales or set manually</span>'
-                : (s.demandOverride!=null ? 'manual · <a href="javascript:invmProdClearDemand(\''+s.p+'\')" style="color:var(--jlz)">use run-rate</a>' : (s.directShipCases>0 ? '◆ stock-buy run-rate · 13 wk' : '◆ live run-rate · 13 wk'));
+                : (s.demandOverride!=null ? 'manual · <a href="javascript:invmProdClearDemand(\''+s.p+'\')" style="color:var(--jlz)">use run-rate</a>' : (s.directShipCases>0 ? ('◆ stock-buy run-rate · '+(s.win||13)+' wk') : ('◆ live run-rate · '+(s.win||13)+' wk')));
   var covTxt = s.weeklyLbs>0 ? f1(s.coverWks)+' <small>wk</small>' : '—';
   var tgtTxt = (s.weeklyLbs>0 && s.leadWks>0) ? f1(s.targetWks)+' <small>wk</small>' : '—';
   var ordTxt = s.weeklyLbs>0 ? f(s.orderCases)+' <small>cs</small>' : '—';
@@ -14843,6 +14847,19 @@ function invmAnalysisHTML(s){
   }
   return html;
 }
+// Reaction-window toggle (Auto/3/6/13 wk) for a product's Buy Planner / Simulator demand. Writes the shared
+// per-product window (dmSetWindow) so Buy Planner, Simulator and the Demand tab hero all stay aligned.
+function invmWindowToggle(p){
+  var wn=(typeof dmWindow==='function')?dmWindow(p):13;
+  var mode=(typeof dmWindowMode==='function')?dmWindowMode(p):'auto';
+  var btns=[['auto','Auto'],['3','3w'],['6','6w'],['13','13w']].map(function(mm,i){ var on=(mode===mm[0]);
+    return '<button type="button" onclick="dmSetWindow(\''+mm[0]+'\',\''+p+'\')" style="border:0;'+(i?'border-left:1px solid var(--gray-200);':'')+'padding:2px 9px;font-family:var(--fm);font-size:10px;font-weight:'+(on?'700':'500')+';cursor:pointer;background:'+(on?'var(--jlz)':'var(--white)')+';color:'+(on?'#fff':'var(--gray-500)')+'">'+mm[1]+((mm[0]==='auto'&&on)?('→'+wn):'')+'</button>';
+  }).join('');
+  return '<div style="display:flex;gap:8px;align-items:center;margin:2px 0 12px;flex-wrap:wrap">'
+    + '<span style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700">Demand window</span>'
+    + '<span style="display:inline-flex;border:1px solid var(--gray-200);border-radius:5px;overflow:hidden">'+btns+'</span>'
+    + '<span style="font-size:10px;color:var(--gray-400)">run-rate the plan uses</span></div>';
+}
 // Buy Planner product view (turmeric/garlic/shallots): analysis + forward projection. Ginger keeps its full planner.
 var BP_PRODUCT='ginger', BP_ORIGIN='';
 function bpSetProduct(p){ BP_PRODUCT=p; var og=invmOriginsFor(p); BP_ORIGIN=(p==='ginger')?'Peru':((og&&og[0])||''); if(typeof renderBuyPlanner==='function') renderBuyPlanner(); }
@@ -14858,7 +14875,7 @@ function bpRenderProduct(p){
     bar='<div style="display:flex;gap:6px;align-items:center;margin-bottom:12px;flex-wrap:wrap"><span style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-right:4px">Origin</span>'+origins.map(function(o){ return pill(o); }).join('')+'</div>';
   }
   return '<div style="margin-bottom:8px;font-size:11px;color:var(--gray-400);font-family:var(--fm)">Buy Planner · '+esc(s.label)+(BP_ORIGIN?(' · '+esc(BP_ORIGIN)):'')+' — when &amp; how much to order</div>'
-    + bar + invmAnalysisHTML(s) + invmProjectionHTML(s)
+    + bar + (s.hasModel?invmWindowToggle(p):'') + invmAnalysisHTML(s) + invmProjectionHTML(s)
     + '<div style="font-size:11px;color:var(--gray-400);font-family:var(--fm);margin:-4px 0 8px">Test hypothetical buys in the <b style="color:#7c3aed">Simulator</b> tab.</div>';
 }
 // Simulator product view (turmeric/garlic/shallots + ginger-Hawaii): projection + what-if, per product+origin.
@@ -14876,7 +14893,7 @@ function simRenderProduct(p){
     bar='<div style="display:flex;gap:6px;align-items:center;margin-bottom:12px;flex-wrap:wrap"><span style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-right:4px">Origin</span>'+origins.map(function(o){ return pill(o); }).join('')+'</div>';
   }
   return '<div style="margin-bottom:8px;font-size:11px;color:var(--gray-400);font-family:var(--fm)">Simulator · '+esc(s.label)+(SIM_ORIGIN?(' · '+esc(SIM_ORIGIN)):'')+' — test hypothetical buys against the projection</div>'
-    + bar + invmProjectionHTML(s) + whatifCardHTML(s.p, s.origin, 'simwi');
+    + bar + (s.hasModel?invmWindowToggle(p):'') + invmProjectionHTML(s) + whatifCardHTML(s.p, s.origin, 'simwi');
 }
 function invmSetDays(x){ INVM_DAYSMODE=x; renderInventory(); }
 function invmSetRate(x){ INVM_RATEKEY=x; renderInventory(); }
@@ -22629,16 +22646,16 @@ function dmWindow(p){
   var st = mdl ? dmShiftState(mdl) : null;
   return (st && st.k === 'cool') ? 6 : 13;
 }
-window.dmSetWindow = function(v){
-  var p = (typeof productFocus === 'function') ? productFocus() : 'ginger';
+window.dmSetWindow = function(v, pOverride){
+  var p = pOverride || ((typeof productFocus === 'function') ? productFocus() : 'ginger');
   var map = _dmWinMap(); map[p] = String(v);
   try{ localStorage.setItem(DM_WIN_LS, JSON.stringify(map)); }catch(e){}
   try{ if(typeof dmRebuildView === 'function') dmRebuildView(); }catch(e){}           // refresh the focused product’s demand view (the hero)
-  if(p === 'ginger'){                                                                  // only ginger’s window feeds the buy plan
-    try{ if(typeof renderBuyPlanner === 'function') renderBuyPlanner(); }catch(e){}
-    try{ if(typeof renderSimulator === 'function') renderSimulator(); }catch(e){}
-    try{ if(typeof renderBuildupPanel === 'function') renderBuildupPanel(); }catch(e){}
-  }
+  // The reaction window now feeds the product Buy Planner / Simulator for EVERY product (invmProductStats
+  // is window-aware), so refresh them for any product — keeps Demand tab, Buy Planner and Simulator aligned.
+  try{ if(typeof renderBuyPlanner === 'function') renderBuyPlanner(); }catch(e){}
+  try{ if(typeof renderSimulator === 'function') renderSimulator(); }catch(e){}
+  try{ if(typeof renderBuildupPanel === 'function') renderBuildupPanel(); }catch(e){}
 };
 function dmEffectiveRunRateLbs(){
   const m = qaModelG();
