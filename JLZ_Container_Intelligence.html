@@ -14452,15 +14452,40 @@ function isDirectShipRow(r){
   var c=String(r.c||'').trim().toLowerCase(), p=(r.prod||'ginger');
   return DIRECT_SHIP.some(function(d){ return d.product===p && c.indexOf(d.customer)>-1; });
 }
-// Direct-ship (pass-through) run-rate in cases/wk for a product+origin — shown separately, never buys stock.
+// Averaging window (weeks) for the direct-ship business figure. Default 26 — a lumpy order-driven
+// account only lands a few POs in 13 wks, so a longer window gives a steadier sizing number.
+// Selectable (3/6/13/26) mirroring the stock-buy demand window. Never affects the buy math.
+var DIRECTSHIP_WIN_LS='jlz_directship_window';
+function dsWindow(){ var v=parseInt(localStorage.getItem(DIRECTSHIP_WIN_LS)||'26',10); return (v===3||v===6||v===13||v===26)?v:26; }
+function dsSetWindow(v){ v=parseInt(v,10); if(!(v===3||v===6||v===13||v===26)) v=26; try{ localStorage.setItem(DIRECTSHIP_WIN_LS, String(v)); }catch(e){}
+  if(typeof invmReRender==='function') invmReRender(); else { try{ if(typeof renderBuyPlanner==='function') renderBuyPlanner(); }catch(e){} try{ if(typeof renderSimulator==='function') renderSimulator(); }catch(e){} } }
+// Direct-ship (pass-through) business volume in cases/wk for a product+origin — order-driven,
+// NOT a stock forecast. Deliberately a SIMPLE calendar-week average of that account's sales over
+// dsWindow() weeks (default 26; no reliability windows / reporting-lag correction — that machinery
+// is for stock reorder, and a made-to-order account is lumpy: some weeks zero). Divides by the
+// full window of CALENDAR weeks (incl. empty ones) so the weekly figure is honest, not overstated.
+// Shown separately; never feeds any buy math.
 function invmDirectShipCases(p,origin){
-  if(!(typeof _dmRawAll!=='undefined' && Array.isArray(_dmRawAll) && typeof dmBuild==='function')) return 0;
-  var rows=_dmRawAll.filter(function(r){ return (r.prod||'ginger')===p && invmOriginMatch(r,origin) && isDirectShipRow(r); });
-  if(!rows.length) return 0;
-  var m; try{ m=dmBuild(rows, false, p); }catch(e){ return 0; }
-  if(!m||!(m.runRate13>0)) return 0;
+  if(!(typeof _dmRawAll!=='undefined' && Array.isArray(_dmRawAll))) return 0;
   var caseLb=(typeof productCaseLb==='function')?productCaseLb(p):30;
-  return m.runRate13/caseLb;
+  var wk={};
+  _dmRawAll.forEach(function(r){
+    if((r.prod||'ginger')!==p) return;
+    if(!invmOriginMatch(r,origin)) return;
+    if(!isDirectShipRow(r)) return;
+    if(r.type && r.type!=='Sale') return;                 // volume = sales only (credits/returns net out of stock, not here)
+    var k; try{ k=(typeof dmWeekKey==='function')?dmWeekKey(new Date(r.d)):null; }catch(e){ k=null; }
+    if(k) wk[k]=(wk[k]||0)+(r.lbs||0);
+  });
+  if(!Object.keys(wk).length) return 0;
+  var dmax=(typeof dmGlobalDataMax==='function')?dmGlobalDataMax():'';
+  var anchor=dmax?new Date(dmax):new Date();
+  var N=(typeof dsWindow==='function')?dsWindow():26;
+  var weeks=[], seen={};
+  for(var i=0;i<N;i++){ var d=new Date(anchor); d.setDate(d.getDate()-7*i); var k=(typeof dmWeekKey==='function')?dmWeekKey(d):null; if(k&&!seen[k]){ seen[k]=1; weeks.push(k); } }
+  if(!weeks.length) return 0;
+  var sum=weeks.reduce(function(t,k){ return t+(wk[k]||0); },0);
+  return (sum/weeks.length)/caseLb;                        // lbs/wk averaged over 13 calendar weeks → cases/wk
 }
 // Demand model for any product (ginger via prod model; focused product live; else built on-demand from raw rows).
 function invmProductModel(p,origin){
@@ -14788,12 +14813,17 @@ function invmAnalysisHTML(s){
       + '<div class="ipv-af"><label>Purchase pack</label><div class="val">'+f(s.caseLb)+' <small>lb/case</small></div><div class="src">'+supOrigins+'</div></div>'
     + '</div>'
     + (s.weeklyLbs>0 ? dmSoldAsHTML(s.weeklyLbs, s.caseLb, s.presMix) : '')
-    + (s.directShipCases>0 ? ('<div style="margin:6px 0 2px;padding:8px 11px;border:1px solid var(--gray-200);border-radius:8px;background:var(--gray-50);font-family:var(--fm);font-size:11.5px;line-height:1.55">'
-        + '<div style="font-weight:700;color:var(--gray-600);text-transform:uppercase;letter-spacing:.04em;font-size:10px;margin-bottom:3px">Demand split · this origin</div>'
+    + (s.directShipCases>0 ? (function(){
+        var dsw=(typeof dsWindow==='function')?dsWindow():26;
+        var dsTgl='<span style="display:inline-flex;border:1px solid var(--gray-200);border-radius:5px;overflow:hidden;margin-left:6px;vertical-align:middle">'
+          + [3,6,13,26].map(function(n,i){ var on=(dsw===n); return '<button type="button" onclick="dsSetWindow('+n+')" style="border:0;'+(i?'border-left:1px solid var(--gray-200);':'')+'padding:1px 6px;font-family:var(--fm);font-size:10px;font-weight:'+(on?'700':'500')+';cursor:pointer;background:'+(on?'#7c3aed':'var(--white)')+';color:'+(on?'#fff':'var(--gray-500)')+'">'+n+'w</button>'; }).join('')
+          + '</span>';
+        return '<div style="margin:6px 0 2px;padding:8px 11px;border:1px solid var(--gray-200);border-radius:8px;background:var(--gray-50);font-family:var(--fm);font-size:11.5px;line-height:1.55">'
+        + '<div style="font-weight:700;color:var(--gray-600);text-transform:uppercase;letter-spacing:.04em;font-size:10px;margin-bottom:3px">Business split · this origin</div>'
         + '<div><span style="color:var(--jlz);font-weight:700">'+f(s.weeklyCases)+' cs/wk</span> stock-buy <span style="color:var(--gray-400)">— drives the order below</span></div>'
-        + '<div><span style="color:#7c3aed;font-weight:700">+'+f(s.directShipCases)+' cs/wk</span> direct-ship (Sol-ti) <span style="color:var(--gray-400)">— made-to-order, ships from supplier, no stock held</span></div>'
-        + '<div style="margin-top:2px;color:var(--gray-500)">Total business ≈ <b>'+f(s.weeklyCases+s.directShipCases)+' cs/wk</b></div>'
-      + '</div>') : '')
+        + '<div><span style="color:#7c3aed;font-weight:700">~'+f(s.directShipCases)+' cs/wk</span> Sol-ti direct-ship <span style="color:var(--gray-400)">— order-driven, ships on confirmation · no stock, doesn\'t drive the buy</span> '+dsTgl+'</div>'
+        + '<div style="margin-top:2px;color:var(--gray-500)">Total business ≈ <b>'+f(s.weeklyCases+s.directShipCases)+' cs/wk</b> <span style="color:var(--gray-400)">· direct-ship = '+dsw+'-wk avg</span></div>'
+      + '</div>'; })() : '')
     + '<div class="ipv-kpis">'
       + '<div class="ipv-kpi"><div class="lbl">Available to sell</div><div class="big">'+f(s.availCases)+' <small>cs</small></div><div class="note">'+availNote+'</div></div>'
       + '<div class="ipv-kpi"><div class="lbl">Current cover</div><div class="big">'+covTxt+'</div><div class="note">available ÷ demand/wk</div></div>'
