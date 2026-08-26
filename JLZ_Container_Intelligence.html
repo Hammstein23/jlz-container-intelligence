@@ -14499,7 +14499,7 @@ function invmDirectShipCases(p,origin){
   if(!Object.keys(wk).length) return 0;
   var dmax=(typeof dmGlobalDataMax==='function')?dmGlobalDataMax():'';
   var anchor=dmax?new Date(dmax):new Date();
-  var N=(typeof dmWindow==='function')?dmWindow(p):13;   // Sol-ti direct-ship follows the same demand window
+  var N=(typeof dmWindow==='function')?dmWindow(p,origin):13;   // Sol-ti direct-ship follows the same demand window
   var weeks=[], seen={};
   for(var i=0;i<N;i++){ var d=new Date(anchor); d.setDate(d.getDate()-7*i); var k=(typeof dmWeekKey==='function')?dmWeekKey(d):null; if(k&&!seen[k]){ seen[k]=1; weeks.push(k); } }
   if(!weeks.length) return 0;
@@ -14594,7 +14594,7 @@ function invmProductStats(p,origin){
   var rr13=(m&&m.runRate13>0)?m.runRate13:0;                              // lbs/wk (13-wk structural, for CV/reference)
   // Demand uses the SELECTED reaction window (3/6/13), shared per-product with the Demand tab + Simulator so
   // all three stay aligned and the plan reacts when you move the toggle. Same windowing the Demand hero uses.
-  var win=(typeof dmWindow==='function')?dmWindow(p):13;
+  var win=(typeof dmWindow==='function')?dmWindow(p,origin):13;
   // Windowed run-rate = mean of the last `win` reliable weeks (generalizes to 3/6/13/26; the model only
   // pre-computes 3/6/13, so compute from the series — also picks up the nowcasted weeks).
   var rrWin=0;
@@ -14784,7 +14784,7 @@ function invmProjectionHTML(s){
     var covColor=(cover>=3)?'#047857':(cover>=1.5)?'#b45309':'#b91c1c';
     var inCell=(w.arr>0?'<span style="color:#047857;font-weight:600">+'+f(w.arr)+'</span>':'')+(w.arr>0&&w.scen>0?' ':'')+(w.scen>0?'<span style="color:#7c3aed;font-weight:600">🧪+'+f(w.scen)+'</span>':'')+(w.arr<=0&&w.scen<=0?'<span style="color:var(--gray-300)">—</span>':'');
     rows+='<tr style="border-bottom:1px solid var(--gray-100);'+rowBg+'">'
-      +'<td style="text-align:left;padding:8px 12px;color:var(--gray-700);font-weight:600">'+(w.i===0?'now ':wkNo(w.wkISO))+'<span style="color:var(--gray-400);font-weight:400;font-size:10px">'+lbl(w.wkISO)+'</span></td>'
+      +'<td style="text-align:left;padding:8px 12px;color:var(--gray-700);font-weight:600;font-family:var(--fm)">'+(w.i===0?'<span style="color:var(--jlz)">now</span> · ':'')+((typeof dmWeekRange==='function')?dmWeekRange(w.wkISO):lbl(w.wkISO))+'</td>'
       +'<td style="text-align:right;padding:8px 12px;color:var(--gray-500);font-size:11px">'+(w.start>0?f(w.start):'—')+'</td>'
       +'<td style="text-align:right;padding:8px 12px">'+inCell+'</td>'
       +'<td style="text-align:right;padding:8px 12px;color:#b91c1c">−'+f(w.demW)+(w.commW>0?(' <span title="'+f(w.commW)+' cs already booked (unshipped, not yet invoiced)" style="color:#7c3aed;font-weight:700;font-size:9px">📋'+f(w.commW)+'</span>'):'')+'</td>'
@@ -14941,9 +14941,9 @@ function invmAnalysisHTML(s){
 }
 // Reaction-window toggle (Auto/3/6/13 wk) for a product's Buy Planner / Simulator demand. Writes the shared
 // per-product window (dmSetWindow) so Buy Planner, Simulator and the Demand tab hero all stay aligned.
-function invmWindowToggle(p){
-  var wn=(typeof dmWindow==='function')?dmWindow(p):13;
-  var mode=(typeof dmWindowMode==='function')?dmWindowMode(p):'auto';
+function invmWindowToggle(p, origin){
+  var wn=(typeof dmWindow==='function')?dmWindow(p,origin):13;
+  var mode=(typeof dmWindowMode==='function')?dmWindowMode(p,origin):'auto';
   var btns=[['auto','Auto'],['3','3w'],['6','6w'],['13','13w'],['26','26w']].map(function(mm,i){ var on=(mode===mm[0]);
     return '<button type="button" onclick="dmSetWindow(\''+mm[0]+'\',\''+p+'\')" style="border:0;'+(i?'border-left:1px solid var(--gray-200);':'')+'padding:2px 9px;font-family:var(--fm);font-size:10px;font-weight:'+(on?'700':'500')+';cursor:pointer;background:'+(on?'var(--jlz)':'var(--white)')+';color:'+(on?'#fff':'var(--gray-500)')+'">'+mm[1]+((mm[0]==='auto'&&on)?('→'+wn):'')+'</button>';
   }).join('');
@@ -14967,7 +14967,7 @@ function bpRenderProduct(p){
     bar='<div style="display:flex;gap:6px;align-items:center;margin-bottom:12px;flex-wrap:wrap"><span style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-right:4px">Origin</span>'+origins.map(function(o){ return pill(o); }).join('')+'</div>';
   }
   return '<div style="margin-bottom:8px;font-size:11px;color:var(--gray-400);font-family:var(--fm)">Buy Planner · '+esc(s.label)+(BP_ORIGIN?(' · '+esc(BP_ORIGIN)):'')+' — when &amp; how much to order</div>'
-    + bar + (s.hasModel?invmWindowToggle(p):'') + invmAnalysisHTML(s) + invmProjectionHTML(s)
+    + bar + (s.hasModel?invmWindowToggle(p,s.origin):'') + invmAnalysisHTML(s) + invmProjectionHTML(s)
     + '<div style="font-size:11px;color:var(--gray-400);font-family:var(--fm);margin:-4px 0 8px">Test hypothetical buys in the <b style="color:#7c3aed">Simulator</b> tab.</div>';
 }
 // Simulator product view (turmeric/garlic/shallots + ginger-Hawaii): projection + what-if, per product+origin.
@@ -14985,7 +14985,7 @@ function simRenderProduct(p){
     bar='<div style="display:flex;gap:6px;align-items:center;margin-bottom:12px;flex-wrap:wrap"><span style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-right:4px">Origin</span>'+origins.map(function(o){ return pill(o); }).join('')+'</div>';
   }
   return '<div style="margin-bottom:8px;font-size:11px;color:var(--gray-400);font-family:var(--fm)">Simulator · '+esc(s.label)+(SIM_ORIGIN?(' · '+esc(SIM_ORIGIN)):'')+' — test hypothetical buys against the projection</div>'
-    + bar + (s.hasModel?invmWindowToggle(p):'') + invmProjectionHTML(s) + whatifCardHTML(s.p, s.origin, 'simwi');
+    + bar + (s.hasModel?invmWindowToggle(p,s.origin):'') + invmProjectionHTML(s) + whatifCardHTML(s.p, s.origin, 'simwi');
 }
 function invmSetDays(x){ INVM_DAYSMODE=x; renderInventory(); }
 function invmSetRate(x){ INVM_RATEKEY=x; renderInventory(); }
@@ -22395,6 +22395,17 @@ function dmWeekKey(d){
   x.setUTCDate(x.getUTCDate() - (dow === 0 ? 6 : dow - 1));    // back to Monday — weeks start Monday
   return x.toISOString().slice(0,10);
 }
+// Human date range for a Monday-start week key (Mon–Sun) — e.g. "8/17–23" or "8/31–9/6". For readers who
+// don't think in ISO week numbers. Same-month collapses to just the end day.
+function dmWeekRange(mondayISO){
+  try{
+    var mon=new Date(String(mondayISO).slice(0,10)+'T12:00:00');
+    var sun=new Date(mon.getTime()+6*86400000);
+    var a=(mon.getMonth()+1)+'/'+mon.getDate();
+    var b=(mon.getMonth()===sun.getMonth())?String(sun.getDate()):((sun.getMonth()+1)+'/'+sun.getDate());
+    return a+'–'+b;
+  }catch(e){ return String(mondayISO).slice(5); }
+}
 
 // Parse workbook → [{d:'YYYY-MM-DD', c:customer, lbs}] for Peru organic ginger sales.
 // ---- Origin normalization: report COUNTRY only -----------------------------
@@ -22740,10 +22751,13 @@ function dmWindowModelFor(p){
   if(typeof productFocus === 'function' && productFocus() === p) return (typeof _dmModel !== 'undefined') ? _dmModel : null;
   return null;
 }
-function dmWindowMode(p){ p = _dmWinProd(p); var m = _dmWinMap()[p]; return (m === '3' || m === '6' || m === '13' || m === '26') ? m : 'auto'; }
-function dmWindow(p){
+// Per-product+origin DEFAULT reaction window (team preset): ginger-Peru = 6 wk; everything else
+// (turmeric, garlic, shallots, ginger-Hawaii) = 3 wk. Applies only until the user explicitly picks a window.
+function dmDefaultWindow(p, origin){ return (p === 'ginger' && origin !== 'Hawaii') ? '6' : '3'; }
+function dmWindowMode(p, origin){ p = _dmWinProd(p); var m = _dmWinMap()[p]; return (m === '3' || m === '6' || m === '13' || m === '26' || m === 'auto') ? m : dmDefaultWindow(p, origin); }
+function dmWindow(p, origin){
   p = _dmWinProd(p);
-  var v = dmWindowMode(p);
+  var v = dmWindowMode(p, origin);
   if(v === '3' || v === '6' || v === '13' || v === '26') return +v;
   var mdl = dmWindowModelFor(p);                             // auto: cooling → 6w (safe to under-buy), else 13w
   var st = mdl ? dmShiftState(mdl) : null;
@@ -22816,15 +22830,16 @@ function renderDmRunRate(){
       var _no=(typeof _dmOrigin!=='undefined' && _dmOrigin && _dmOrigin!=='All')?_dmOrigin:'all';
       m=nowcastProductModel(m, _np, _no);
     } }catch(e){}
-  var win = (typeof dmWindow === 'function') ? dmWindow() : 13;
-  var mode = (typeof dmWindowMode === 'function') ? dmWindowMode() : 'auto';
+  var _hp=(typeof getActiveProduct==='function')?getActiveProduct():null, _ho=(typeof _dmOrigin!=='undefined')?_dmOrigin:'';
+  var win = (typeof dmWindow === 'function') ? dmWindow(_hp,_ho) : 13;
+  var mode = (typeof dmWindowMode === 'function') ? dmWindowMode(_hp,_ho) : 'auto';
   var _rr26=(function(){ var sl=(m.weeklyReliable||[]).slice(-26); return sl.length? sl.reduce(function(s,w){return s+(w.lbs||0);},0)/sl.length : m.runRate13; })();
   var rrLbs = { 3:(m.runRate3||m.runRate13), 6:(m.runRate6||m.runRate13), 13:m.runRate13, 26:_rr26 };
   var rr = { 3:Math.round(rrLbs[3]/cl), 6:Math.round(rrLbs[6]/cl), 13:Math.round(rrLbs[13]/cl), 26:Math.round(rrLbs[26]/cl) };
   var s = (typeof dmShiftState === 'function') ? dmShiftState(m) : null;
   var esc = (typeof dmEsc === 'function') ? dmEsc : function(x){ return String(x); };
   var fp = function(x){ return (x>=0?'+':'') + Math.round(x*100) + '%'; };
-  var wkNo = function(w){ return (typeof cxWeekNo === 'function') ? ('W'+cxWeekNo(w)) : String(w).slice(5); };
+  var wkNo = function(w){ return (typeof dmWeekRange === 'function') ? dmWeekRange(w) : String(w).slice(5); };   // Mon–Sun date range instead of ISO week #
   var modes = [['auto','Auto'],['3','3 wk'],['6','6 wk'],['13','13 wk'],['26','26 wk']];
   var seg = '<div class="dmrr-seg">' + modes.map(function(mm){ var on=(mode===mm[0]); return '<button type="button" onclick="dmSetWindow(\''+mm[0]+'\')" class="'+(on?'on':'')+'">'+mm[1]+(mm[0]==='auto'&&on?(' →'+win):'')+'</button>'; }).join('') + '</div>';
   var rk = s ? s.k : 'steady', rc, rt;
