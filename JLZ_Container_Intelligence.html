@@ -14784,7 +14784,7 @@ function invmProjectionHTML(s){
     var covColor=(cover>=3)?'#047857':(cover>=1.5)?'#b45309':'#b91c1c';
     var inCell=(w.arr>0?'<span style="color:#047857;font-weight:600">+'+f(w.arr)+'</span>':'')+(w.arr>0&&w.scen>0?' ':'')+(w.scen>0?'<span style="color:#7c3aed;font-weight:600">🧪+'+f(w.scen)+'</span>':'')+(w.arr<=0&&w.scen<=0?'<span style="color:var(--gray-300)">—</span>':'');
     rows+='<tr style="border-bottom:1px solid var(--gray-100);'+rowBg+'">'
-      +'<td style="text-align:left;padding:8px 12px;color:var(--gray-700);font-weight:600;font-family:var(--fm)">'+(w.i===0?'<span style="color:var(--jlz)">now</span> · ':'')+((typeof dmWeekRange==='function')?dmWeekRange(w.wkISO):lbl(w.wkISO))+'</td>'
+      +'<td style="text-align:left;padding:8px 12px;color:var(--gray-700)">'+(w.i===0?'<span style="color:var(--jlz);font-weight:700">now</span> ':'')+'<b>'+String(wkNo(w.wkISO)).trim()+'</b> <span style="color:var(--gray-400);font-weight:400;font-size:10px;font-family:var(--fm)">'+((typeof dmWeekRange==='function')?dmWeekRange(w.wkISO):lbl(w.wkISO))+'</span></td>'
       +'<td style="text-align:right;padding:8px 12px;color:var(--gray-500);font-size:11px">'+(w.start>0?f(w.start):'—')+'</td>'
       +'<td style="text-align:right;padding:8px 12px">'+inCell+'</td>'
       +'<td style="text-align:right;padding:8px 12px;color:#b91c1c">−'+f(w.demW)+(w.commW>0?(' <span title="'+f(w.commW)+' cs already booked (unshipped, not yet invoiced)" style="color:#7c3aed;font-weight:700;font-size:9px">📋'+f(w.commW)+'</span>'):'')+'</td>'
@@ -22839,7 +22839,8 @@ function renderDmRunRate(){
   var s = (typeof dmShiftState === 'function') ? dmShiftState(m) : null;
   var esc = (typeof dmEsc === 'function') ? dmEsc : function(x){ return String(x); };
   var fp = function(x){ return (x>=0?'+':'') + Math.round(x*100) + '%'; };
-  var wkNo = function(w){ return (typeof dmWeekRange === 'function') ? dmWeekRange(w) : String(w).slice(5); };   // Mon–Sun date range instead of ISO week #
+  var wkNo = function(w){ return (typeof cxWeekNo === 'function' && cxWeekNo(w)) ? ('W'+cxWeekNo(w)) : String(w).slice(5); };
+  var wkRange = function(w){ return (typeof dmWeekRange==='function') ? dmWeekRange(w) : ''; };
   var modes = [['auto','Auto'],['3','3 wk'],['6','6 wk'],['13','13 wk'],['26','26 wk']];
   var seg = '<div class="dmrr-seg">' + modes.map(function(mm){ var on=(mode===mm[0]); return '<button type="button" onclick="dmSetWindow(\''+mm[0]+'\')" class="'+(on?'on':'')+'">'+mm[1]+(mm[0]==='auto'&&on?(' →'+win):'')+'</button>'; }).join('') + '</div>';
   var rk = s ? s.k : 'steady', rc, rt;
@@ -22849,11 +22850,11 @@ function renderDmRunRate(){
   else if(rk==='mixed'){ rc='amb'; rt='<b>Mixed signal.</b> The short windows disagree — 3w '+fp(s.d3)+', 6w '+fp(s.d6)+' — typical of lumpy weeks. No clear trend; plan on 13 wk.'; }
   else { rc='grn'; rt='<b>Steady.</b> The three windows agree — demand firm on the quarter. Plan on 13 wk.'; }
   var wk = m.weeklyReliable.slice(-win);
-  var wc = wk.map(function(w){ return { l:wkNo(w.week), v:Math.round((w.lbs||0)/cl), now:!!w.now, prelim:!!w.prelim }; });
+  var wc = wk.map(function(w){ return { l:wkNo(w.week), r:wkRange(w.week), v:Math.round((w.lbs||0)/cl), now:!!w.now, prelim:!!w.prelim }; });
   var mx = Math.max.apply(null, wc.map(function(x){ return x.v; })) || 1;
   var wksHtml = wc.map(function(x){
     var col=x.now?'#7c3aed':(x.prelim?'#b45309':''), mk=x.now?' 📋':(x.prelim?' ⏳':''), bg=x.now?';background:#ddd6fe':(x.prelim?';background:#fde68a':'');
-    return '<div class="dmrr-wk"><div class="v"'+(col?' style="color:'+col+'"':'')+'>'+x.v.toLocaleString()+mk+'</div><div class="bar" style="height:'+Math.round(x.v/mx*54+5)+'px'+bg+'"></div><div class="l"'+(col?' style="color:'+col+';font-weight:700"':'')+'>'+x.l+'</div></div>';
+    return '<div class="dmrr-wk"><div class="v"'+(col?' style="color:'+col+'"':'')+'>'+x.v.toLocaleString()+mk+'</div><div class="bar" style="height:'+Math.round(x.v/mx*54+5)+'px'+bg+'"></div><div class="l"'+(col?' style="color:'+col+';font-weight:700"':'')+'>'+x.l+'<div style="font-size:8px;color:var(--gray-400);font-weight:400;margin-top:1px;letter-spacing:-.02em">'+x.r+'</div></div></div>';
   }).join('');
   var _hasNow=wc.some(function(x){return x.now;}), _hasPrelim=wc.some(function(x){return x.prelim;});
   var sumC = wc.reduce(function(a,b){ return a+b.v; }, 0);
