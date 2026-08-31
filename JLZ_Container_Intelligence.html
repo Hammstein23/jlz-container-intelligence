@@ -4420,7 +4420,9 @@ function authInjectLogo() {
 
   <div id="bp-snapshot-banner" class="bp-status">
     <div class="bp-st-stat"><div class="bp-st-l">Snapshot</div><div class="bp-st-v" style="font-size:13px"><input type="date" id="bp-stock-date" oninput="renderBuyPlanner()" class="bp-st-date"/><span class="bp-st-sub" id="bp-stock-date-wk">—</span></div></div>
-    <div class="bp-st-stat"><div class="bp-st-l">On hand <span style="font-weight:400;color:var(--gray-400);font-size:9px">auto</span></div><div class="bp-st-v"><input type="number" id="bp-stock-lbs" value="56520" readonly title="Derived from your inventory lots - manage them in the Inventory module" class="bp-st-num" style="background:var(--gray-50);color:var(--gray-600);cursor:default"/><span class="bp-st-sub">lb · <span id="bp-stock-cases">— cases</span></span></div></div>
+    <div class="bp-st-stat"><div class="bp-st-l">On hand</div><div class="bp-st-v"><span id="bp-onhand-gross" class="bp-st-num" style="background:none;border:none;padding:0">—</span><span class="bp-st-sub">cs · gross</span></div></div>
+    <div class="bp-st-stat"><div class="bp-st-l">Committed</div><div class="bp-st-v"><span id="bp-committed-cs" class="bp-st-num" style="background:none;border:none;padding:0;color:#7c3aed">—</span><span class="bp-st-sub">reserved</span></div></div>
+    <div class="bp-st-stat"><div class="bp-st-l">Available <span style="font-weight:400;color:var(--gray-400);font-size:9px">free</span></div><div class="bp-st-v"><input type="number" id="bp-stock-lbs" value="56520" readonly title="Free to sell — derived from your inventory lots (manage them in the Inventory module)" class="bp-st-num" style="background:var(--gray-50);color:var(--gray-600);cursor:default"/><span class="bp-st-sub">lb · <span id="bp-stock-cases">— cases</span></span></div></div>
     <div class="bp-st-stat"><div class="bp-st-l">Coverage</div><div class="bp-st-v"><span id="bp-coverage" style="color:var(--green-700)">—</span><span class="bp-st-sub">wks</span></div></div>
     <div class="bp-st-stat" style="border-right:none"><div class="bp-st-l">Avg age</div><div class="bp-st-v"><span id="bp-status-age">—</span><span class="bp-st-sub">oldest <span id="bp-status-old">—</span></span></div></div>
     <div class="bp-st-flag" id="bp-status-flag"><span class="bp-st-ok">—</span></div>
@@ -15364,6 +15366,15 @@ function renderBuyPlanner() {
   }catch(e){}
   const stockLbs = parseFloat(document.getElementById('bp-stock-lbs')?.value) || 0;
   const stockCases = stockLbs / 30;
+  // ── Phase 2 · W-lot / committed unification ──────────────────────────────
+  // The projection starts from GROSS on-hand = free lots (stockCases) + the cases already
+  // reserved/picked this week (committed), and then consumes that committed in its own week —
+  // so a reserved order (e.g. Sol-ti) is netted ONCE, never twice. "Available" (= free lots =
+  // stockCases) still drives coverage. With no committed on file, gross === available and the
+  // behavior is identical to before.
+  const _bpNowWk = (typeof dmWeekKey === 'function') ? dmWeekKey(new Date()) : null;
+  const committedNowCases = (_bpNowWk && typeof committedInvForWeek === 'function') ? (committedInvForWeek(_bpNowWk, 'ginger') || 0) : 0;
+  const stockCasesGross = stockCases + committedNowCases;
   const baseline = parseInt(document.getElementById('bp-baseline')?.value || '8');
   // Shrink % is now an editable input (1-40), replacing the old yield on/off toggle.
   // Always applied — the question is the magnitude, not whether to apply it at all.
@@ -15446,6 +15457,11 @@ function renderBuyPlanner() {
   // Update cases sub-label inside the snapshot banner
   const stockCasesEl = document.getElementById('bp-stock-cases');
   if (stockCasesEl) stockCasesEl.textContent = Math.round(stockCases).toLocaleString() + ' cases';
+  // Phase 2: fill the gross-on-hand and committed summary boxes (Available = the input above).
+  const _ohgEl = document.getElementById('bp-onhand-gross');
+  if (_ohgEl) _ohgEl.textContent = Math.round(stockCasesGross).toLocaleString();
+  const _cmEl = document.getElementById('bp-committed-cs');
+  if (_cmEl) _cmEl.textContent = (committedNowCases > 0 ? '−' : '') + Math.round(committedNowCases).toLocaleString();
 
   const sales = bpGetSales();
   const avg4  = bpRollingAvg(sales, 4);
@@ -15528,7 +15544,7 @@ function renderBuyPlanner() {
   const pipelineByWeek = bpGetPipelineByWeek();
   const todayWk = (typeof isoWeek === 'function') ? isoWeek(new Date().toISOString().slice(0,10)) : snapWk;
   const weeksElapsed = (snapWk != null && todayWk != null) ? Math.max(0, todayWk - snapWk) : 0;
-  let runningStock = stockCases - (weeksElapsed * weeklyDemand);
+  let runningStock = stockCasesGross - (weeksElapsed * weeklyDemand);   // Phase 2: start from gross on-hand; committed is consumed per week below
   const rows = futureWeeks.map(fw => {
     const arrivals = pipelineByWeek[fw.week] || [];
     // Frente B: direct-ship cases go port -> customer, never entering the warehouse,
