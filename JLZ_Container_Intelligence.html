@@ -14557,7 +14557,7 @@ function invmDirectShipCases(p,origin){
 // run-rate reflects the most recent read. Only completes a week when we HAVE booked data for it (otherwise a
 // partial week would drag the average down — the exact thing the lag rule avoids). Marks the week (now:true).
 function nowcastProductModel(m, p, origin){
-  if(!m || p==='ginger') return m;
+  if(!m) return m;
   if(!Array.isArray(m.weekly) || !Array.isArray(m.weeklyReliable) || !m.weeklyReliable.length) return m;
   // Ask from just past the reliable edge (NOT the current week): the whole point is to complete the
   // recent weeks (e.g. W34/W35) with their booked orders. The default current-week bound would hide them.
@@ -14568,6 +14568,23 @@ function nowcastProductModel(m, p, origin){
   var cbw=(typeof invmCommittedByWeek==='function')?invmCommittedByWeek(p, origin, nextAfterReliable):{};
   if(!cbw || !Object.keys(cbw).length) return m;
   var caseLb=(typeof productCaseLb==='function')?productCaseLb(p):30;
+  // ORDER-DRIVEN accounts are excluded from the completion. Their orders are lumpy one-offs (e.g. Sol-ti's
+  // 1,000-case ginger container): folding one into a week would smear it across every future week of the
+  // run-rate — the exact over-buy the order-driven rule exists to prevent. The projection still books those
+  // orders in their own week via hybridSalesForWeek; they are simply not baked into the average.
+  var odCust={};
+  (Array.isArray(m.customers)?m.customers:[]).forEach(function(c){ if(c && c.c && c.sporadic) odCust[c.c]=1; });
+  if(Object.keys(odCust).length && typeof getCommitted==='function'){
+    var odByWk={};
+    getCommitted().forEach(function(c){
+      if(!c || c.type!=='inv' || !c.wk || _cmProd(c)!==p) return;
+      if(!odCust[c.customer]) return;
+      if(origin && origin!=='all' && typeof _cmOriginFor==='function'){ var o=_cmOriginFor(c); if(o && o!==origin) return; }
+      odByWk[c.wk]=(odByWk[c.wk]||0)+(parseFloat(c.cases)||0);
+    });
+    Object.keys(odByWk).forEach(function(k){ if(cbw[k]!=null){ cbw[k]=Math.max(0, cbw[k]-odByWk[k]); if(cbw[k]<=0) delete cbw[k]; } });
+    if(!Object.keys(cbw).length) return m;   // nothing left once order-driven volume is set aside
+  }
   var partial={}; m.weekly.forEach(function(w){ if(w.week>lastReliable) partial[w.week]=w.lbs||0; });   // invoiced-so-far past the reliable edge
   // Weeks to complete = those with partial invoicing OR with booked orders. A week that exists ONLY in
   // committed (nothing invoiced yet, e.g. the current week) is still included — it is real booked demand.
@@ -22434,7 +22451,7 @@ function dmRebuildView(){
     // the global model (which the Demand tab + build-up table read) consistent with them. Ginger untouched.
     try{
       var _npv = (typeof getActiveProduct === 'function') ? getActiveProduct() : null;
-      if (_dmModel && _npv && _npv !== 'ginger' && _npv !== 'all' && typeof nowcastProductModel === 'function'){
+      if (_dmModel && _npv && _npv !== 'all' && typeof nowcastProductModel === 'function'){
         var _nov = (typeof _dmOrigin !== 'undefined' && _dmOrigin && _dmOrigin !== 'All') ? _dmOrigin : 'all';
         _dmModel = nowcastProductModel(_dmModel, _npv, _nov);
       }
@@ -22945,10 +22962,11 @@ function renderDmRunRate(){
       }
     }
   }catch(e){}
-  // Nowcast the trailing incomplete week (turmeric/garlic/shallots) — completes the dataMax week with its
-  // booked orders so the run-rate reflects the most recent read. Ginger untouched.
+  // Nowcast the trailing incomplete weeks (all products) — completes the most recent weeks with their booked
+  // orders so the run-rate reflects the latest read. Order-driven accounts (e.g. Sol-ti) are held out of the
+  // completion inside nowcastProductModel, so a one-off container never smears into the weekly average.
   try{ var _np=(typeof getActiveProduct==='function')?getActiveProduct():null;
-    if(_np && _np!=='ginger' && typeof nowcastProductModel==='function'){
+    if(_np && typeof nowcastProductModel==='function'){
       var _no=(typeof _dmOrigin!=='undefined' && _dmOrigin && _dmOrigin!=='All')?_dmOrigin:'all';
       m=nowcastProductModel(m, _np, _no);
     } }catch(e){}
