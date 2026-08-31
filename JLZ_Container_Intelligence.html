@@ -22428,6 +22428,17 @@ function dmRebuildView(){
     } else if (getActiveProduct() !== 'ginger' && getActiveProduct() !== 'all'){
       _dmModel = dmBuildModel([], false, cl);   // no raw rows + a specific non-ginger product => empty
     }
+    // Nowcast the trailing incomplete weeks (turmeric/garlic/shallots): the raw model drops any week that
+    // is not fully invoiced, so the most recent weeks vanish even when their orders are already booked.
+    // This is the SAME completion the run-rate panel and the inventory stats apply — doing it here keeps
+    // the global model (which the Demand tab + build-up table read) consistent with them. Ginger untouched.
+    try{
+      var _npv = (typeof getActiveProduct === 'function') ? getActiveProduct() : null;
+      if (_dmModel && _npv && _npv !== 'ginger' && _npv !== 'all' && typeof nowcastProductModel === 'function'){
+        var _nov = (typeof _dmOrigin !== 'undefined' && _dmOrigin && _dmOrigin !== 'All') ? _dmOrigin : 'all';
+        _dmModel = nowcastProductModel(_dmModel, _npv, _nov);
+      }
+    }catch(e){ console.warn('nowcast (view model):', e); }
     if (_dmModel) _dmModel.caseLb = cl;
   }
   if (typeof renderDemand === 'function'){ try { renderDemand(); } catch(e){ console.warn('demand rerender:', e); } }
