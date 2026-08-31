@@ -23601,8 +23601,12 @@ function renderBuildupPanel(){
     (com[c.wk] = com[c.wk] || {})[c.customer] = (com[c.wk][c.customer] || 0) + (+c.cases || 0);
     if(!comLast[c.customer] || c.wk > comLast[c.customer]) comLast[c.customer] = c.wk;
   });
+  // Per-customer run-rate must use the SAME window as the column total (salesBase), else the
+  // total (window-3/6/13) and the rows (fixed 13) disagree and the gap lands in "Other" — a
+  // phantom that is really just a window mismatch. Pick the matching per-account field.
+  var _rrKey = (_win === 3) ? 'rr3Cases' : (_win === 6) ? 'rr6Cases' : 'rrCases';
   function cell(cust, wk){
-    var rr = Math.round(cust.rrCases || 0);
+    var rr = Math.round((cust[_rrKey] != null ? cust[_rrKey] : cust.rrCases) || 0);
     var cm = Math.round((com[wk] && com[wk][cust.c]) || 0);
     var last = comLast[cust.c];
     if(cust.sporadic){
@@ -23621,7 +23625,7 @@ function renderBuildupPanel(){
   var colTot = weeks.map(function(){ return 0; });
   var body = '';
   shown.forEach(function(c){
-    body += '<tr><td class="c"><span class="nm">' + esc(c.c) + '</span><span class="bd ' + (c.sporadic ? 'od' : 'st') + '">' + (c.sporadic ? 'OD' : 'ST') + '</span><div class="mt">rr ' + Math.round(c.rrCases || 0) + ' cs</div></td>';
+    body += '<tr><td class="c"><span class="nm">' + esc(c.c) + '</span><span class="bd ' + (c.sporadic ? 'od' : 'st') + '">' + (c.sporadic ? 'OD' : 'ST') + '</span><div class="mt">rr ' + Math.round((c[_rrKey] != null ? c[_rrKey] : c.rrCases) || 0) + ' cs</div></td>';
     weeks.forEach(function(w, i){ var cv = cell(c, w.weekStartISO); colTot[i] += cv.v; body += '<td class="' + cv.k + '">' + (cv.v > 0 ? cv.v.toLocaleString() : '0') + '</td>'; });
     body += '</tr>';
   });
