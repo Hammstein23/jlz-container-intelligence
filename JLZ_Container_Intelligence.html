@@ -14556,22 +14556,22 @@ function invmProductModel(p,origin){
 // ── COMMITTED / UNSHIPPED (already sold, not yet shipped) per product+origin, in 30lb-equiv cases.
 // Seeded from the WholesaleWare Unshipped Sales Order Report (PICKING status). Reduces available-to-sell.
 var PROD_COMMITTED_LS='jlz_prod_committed_v1';
-function prodCommittedSeed(){ return { 'turmeric|Fiji':71, 'turmeric|Hawaii':1, 'garlic|California':7, 'shallots|California':11, 'ginger|Hawaii':1 }; }
+function prodCommittedSeed(){ return {}; }   // No hard-coded committed. It comes from the Unshipped import (via the main store), filtered to the current week in prodCommittedTotal. A stale seed here is what made phantom committed reappear after clearing.
 function prodCommittedState(){ try{ var o=JSON.parse(localStorage.getItem(PROD_COMMITTED_LS)||'null'); if(o&&typeof o==='object') return o; }catch(e){} var s=prodCommittedSeed(); try{ localStorage.setItem(PROD_COMMITTED_LS, JSON.stringify(s)); }catch(e){} return s; }
 function prodCommittedSave(o){ try{ localStorage.setItem(PROD_COMMITTED_LS, JSON.stringify(o||{})); }catch(e){} }
 function prodCommittedTotal(p,origin){
   // Canonical source: the committed store (populated by the Unshipped import), product + origin tagged.
-  var all=(typeof getCommitted==='function'?getCommitted():[]).filter(function(c){ return c && c.type==='inv' && _cmProd(c)===p; });
+  // Count ONLY the current week onward: orders from past weeks are already shipped and must NOT keep
+  // reducing available (that double-counts against on-hand, which is loaded net of shipped orders —
+  // it was the root of the turmeric/garlic/shallots error). No seed fallback either: absent committed
+  // means 0, never a stale hard-coded snapshot that reappears after the store is cleared.
+  var nowWk=(typeof dmWeekKey==='function')?dmWeekKey(new Date()):'';
+  var all=(typeof getCommitted==='function'?getCommitted():[]).filter(function(c){ return c && c.type==='inv' && _cmProd(c)===p && (!nowWk || (c.wk && String(c.wk)>=nowWk)); });
   var sum=function(a){ return a.reduce(function(t,c){ return t+(c.cases||0); }, 0); };
-  if(!origin || origin==='all'){ if(all.length) return sum(all); }
-  else {
-    var tagged=all.filter(function(c){ return _cmOriginFor(c); });     // origin-carrying (field or derived from SKU)
-    if(tagged.length) return sum(tagged.filter(function(c){ return _cmOriginFor(c)===origin; }));
-    // else: entries exist but none carry origin (old import) → can't split, fall back to the seed snapshot below
-  }
-  var st=prodCommittedState();
-  if(!origin || origin==='all'){ var s=0; Object.keys(st).forEach(function(k){ if(k.split('|')[0]===p) s+=(parseFloat(st[k])||0); }); return s; }
-  return parseFloat(st[p+'|'+origin])||0;
+  if(!origin || origin==='all') return sum(all);
+  var tagged=all.filter(function(c){ return _cmOriginFor(c); });     // origin-carrying (field or derived from SKU)
+  if(tagged.length) return sum(tagged.filter(function(c){ return _cmOriginFor(c)===origin; }));
+  return 0;   // entries exist but none carry origin → can't split; do NOT fall back to a stale seed
 }
 function invmProdSetCommitted(p,origin,v){ var st=prodCommittedState(); st[p+'|'+origin]=Math.max(0,parseFloat(v)||0); prodCommittedSave(st); invmReRender(); }
 function invmProductStats(p,origin){
@@ -19995,7 +19995,11 @@ function simRenderProjection(realOrders, hypoOrders) {
   // Use the Demand module run-rate (Peru ginger, lbs→30-lb cases) to match Buy Planner; fall back to pasted-sales avg
   const _dmRR = (typeof dmEffectiveRunRateLbs === 'function') ? dmEffectiveRunRateLbs() : null;
   const salesDemand = (_dmRR != null) ? (_dmRR / 30) : baseAvgSim;
-  const weeklyDemand = salesDemand / (1 - shrinkPct);
+  // Use the Buy Planner's OWN weekly demand (its time-based shrink) so the two projections agree
+  // week for week; fall back to the fixed-% calc only if the Buy Planner digest isn't ready yet.
+  const weeklyDemand = (typeof window !== 'undefined' && window._bpDigest && window._bpDigest.weeklyDemand > 0)
+    ? window._bpDigest.weeklyDemand
+    : (salesDemand / (1 - shrinkPct));
   const safetyThreshold = weeklyDemand * safety;
 
   // Combine real + hypo into "arrivals by week" map
