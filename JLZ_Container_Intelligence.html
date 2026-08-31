@@ -22382,8 +22382,19 @@ function productFocus(){ const p = getActiveProduct(); return (p === 'all') ? 'g
 // Build a demand model for product key `k` and stamp its case weight on it.
 function dmBuild(rows, weeklyOnly, k){
   const cl = productCaseLb(k);
-  const m = dmBuildModel(rows, weeklyOnly, cl);
+  let m = dmBuildModel(rows, weeklyOnly, cl);
   if (m) m.caseLb = cl;
+  // Complete the trailing incomplete weeks with their booked orders (all products, ginger included): the raw
+  // model drops any week that isn't fully invoiced, so the latest weeks disappear even when their orders are
+  // already placed. Applied HERE because every _dmModelG build goes through dmBuild — the per-view calls
+  // elsewhere never touched this model. Order-driven accounts are held out inside nowcastProductModel, so a
+  // one-off container (Sol-ti) is never smeared into the weekly average.
+  try{
+    if (m && k && k !== 'all' && !weeklyOnly && typeof nowcastProductModel === 'function'){
+      const _nc = nowcastProductModel(m, k, 'all');
+      if (_nc){ _nc.caseLb = cl; m = _nc; }
+    }
+  }catch(e){ console.warn('nowcast (dmBuild):', e); }
   return m;
 }
 
