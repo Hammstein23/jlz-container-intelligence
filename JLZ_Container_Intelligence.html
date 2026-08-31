@@ -19973,6 +19973,11 @@ function simRenderProjection(realOrders, hypoOrders) {
   // Pull Buy Planner assumptions
   const stockLbs = parseFloat(document.getElementById('bp-stock-lbs')?.value) || 0;
   const stockCases = stockLbs / 30;
+  // Phase 2: mirror the Buy Planner — project from GROSS on-hand (free lots + committed picked this
+  // week) and consume the committed per week, so a reserved order is netted once. committed 0 → unchanged.
+  const _simNowWk = (typeof dmWeekKey === 'function') ? dmWeekKey(new Date()) : null;
+  const committedNowCasesSim = (_simNowWk && typeof committedInvForWeek === 'function') ? (committedInvForWeek(_simNowWk, 'ginger') || 0) : 0;
+  const stockCasesGross = stockCases + committedNowCasesSim;
   const baseline = parseInt(document.getElementById('bp-baseline')?.value || '8');
   const shrinkPctInput = parseFloat(document.getElementById('bp-shrink-pct')?.value);
   const shrinkPct = (isFinite(shrinkPctInput) && shrinkPctInput >= 0) ? shrinkPctInput / 100 : 0.14;
@@ -20029,7 +20034,7 @@ function simRenderProjection(realOrders, hypoOrders) {
   const todayWk = isoWeek(new Date().toISOString().slice(0,10));
   const snapWk = snapDateStr ? isoWeek(snapDateStr) : todayWk;
   const weeksElapsed = Math.max(0, todayWk - snapWk);
-  running = stockCases - (weeksElapsed * weeklyDemand);
+  running = stockCasesGross - (weeksElapsed * weeklyDemand);   // Phase 2: start from gross on-hand; committed consumed per week below
 
   let html = '<thead><tr style="background:var(--gray-50);border-bottom:2px solid var(--gray-200)">'
     + '<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em">Week</th>'
