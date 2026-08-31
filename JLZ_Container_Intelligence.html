@@ -4523,7 +4523,7 @@ function authInjectLogo() {
     </summary>
     <div class="card-body">
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px">
-        <div class="kpi-card"><div class="kpi-label">Weekly demand</div><div class="kpi-value"><span id="bp-demand-cs">—</span> <span style="font-size:12px;color:var(--gray-400);font-weight:600">cs</span></div><div class="kpi-sub"><span id="bp-demand-lbs">—</span> lb/wk · post-shrink</div></div>
+        <div class="kpi-card"><div class="kpi-label"><span class="jlz-gloss">Weekly demand<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Weekly demand · run-rate</span><span class="jlz-td">Average sales of the last N weeks (the 3 / 6 / 13 window you pick), inflated by shrink to reflect what leaves the cooler — more than what reaches the customer.</span><span class="jlz-tf">= avg(last N wks) ÷ (1 − shrink%)</span></span></span></div><div class="kpi-value"><span id="bp-demand-cs">—</span> <span style="font-size:12px;color:var(--gray-400);font-weight:600">cs</span></div><div class="kpi-sub"><span id="bp-demand-lbs">—</span> lb/wk · post-shrink</div></div>
         <div class="kpi-card"><div class="kpi-label">Demand source</div><div class="kpi-value" id="bp-demand-src" style="font-size:13px">—</div><div class="kpi-sub">feeds the plan</div></div>
         <div class="kpi-card"><div class="kpi-label">Demand window</div><div id="bp-winsel" style="display:inline-flex;border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;font-family:var(--fm);font-size:11px;margin-top:4px"></div><div class="kpi-sub">run-rate the plan uses</div></div>
       </div>
@@ -14599,12 +14599,7 @@ function invmProductStats(p,origin){
   // Excluded lots = physically gone but kept on record; subtracted from planned on-hand so they never
   // auto-feed the Buy Planner / Simulator. Still shown in the Inventory table (marked).
   var counted=lots.filter(function(l){ return !(l&&l.excluded); });
-  var onHandLotsCases=counted.reduce(function(s,l){ return s+(parseFloat(l.cases)||0); },0);   // free/sellable lots on hand
-  // GROSS on-hand = free lots + committed (reserved / unshipped), mirroring the ginger Buy Planner (Phase 2):
-  // the committed is ADDED here and SUBTRACTED in availCases below, so a reserved order nets out ONCE — never
-  // double-counts against a net on-hand. With committed 0, gross === lots and behavior is unchanged.
-  var committedCases=(typeof prodCommittedTotal==='function')?prodCommittedTotal(p,origin):0;
-  var onHandCases=onHandLotsCases+committedCases;
+  var onHandCases=counted.reduce(function(s,l){ return s+(parseFloat(l.cases)||0); },0);   // physical lots on hand (matches the lots table + Starting stock)
   var onHandLbs=onHandCases*caseLb;
   var costVal=counted.reduce(function(s,l){ return s+(parseFloat(l.cases)||0)*(parseFloat(l.avgCost)||0); },0);
   var excludedCases=lots.reduce(function(s,l){ return s+((l&&l.excluded)?(parseFloat(l.cases)||0):0); },0);
@@ -14638,8 +14633,11 @@ function invmProductStats(p,origin){
   // Shrinkage: a % of stock lost before it sells (weight loss / spoilage) — never over-estimate usable inventory.
   var shrinkPct=(store.shrinkPct!=null)?store.shrinkPct:((meta.shrinkPct!=null)?meta.shrinkPct:0);
   var shrinkF=1-Math.max(0,Math.min(60,shrinkPct))/100;
-  var effOnHandCases=onHandLotsCases*shrinkF+committedCases, effOnHandLbs=effOnHandCases*caseLb;   // shrink hits sellable lots only; committed is already sold
-  // available to sell = gross on-hand (post-shrink) − committed = free lots post-shrink. committed declared above.
+  var effOnHandCases=onHandCases*shrinkF, effOnHandLbs=onHandLbs*shrinkF;
+  // Committed / unshipped sales (already sold, not yet shipped) reduce what's really available to sell again.
+  // NOTE: on-hand here is the PHYSICAL lot count. Load it gross (including reserved cases) so this
+  // subtraction nets once; loading it already-net double-counts. prodCommittedTotal is current-week only.
+  var committedCases=(typeof prodCommittedTotal==='function')?prodCommittedTotal(p,origin):0;
   var availCases=Math.max(0, effOnHandCases-committedCases), availLbs=availCases*caseLb;
   var directShipCases=(typeof invmDirectShipCases==='function')?invmDirectShipCases(p,origin):0;   // Sol-ti turmeric etc. — pass-through, shown separately
   var coverWks=(weeklyLbs>0)?availLbs/weeklyLbs:(availLbs>0?Infinity:0);
@@ -14823,7 +14821,13 @@ function invmProjectionHTML(s){
     +'</div>'
     +'<div style="padding:11px 14px"><div class="ipv-st '+vcls+'" style="display:block;margin-bottom:10px;line-height:1.55">'+verdict+'</div>'
     +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11px;min-width:640px">'
-    +'<thead><tr><th style="'+th+';text-align:left">Week</th><th style="'+th+'">Starting stock</th><th style="'+th+'">Arrivals</th><th style="'+th+'">Demand</th><th style="'+th+'">Ending stock</th><th style="'+th+'">Cover</th><th style="'+th+';text-align:left">Status</th></tr></thead>'
+    +'<thead><tr><th style="'+th+';text-align:left">Week</th>'
+      +'<th style="'+th+'"><span class="jlz-gloss">Starting stock<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Starting stock</span><span class="jlz-td">Stock at the start of that week. The first row starts from what you have on hand today.</span></span></span></th>'
+      +'<th style="'+th+'"><span class="jlz-gloss">Arrivals<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Arrivals</span><span class="jlz-td">Cases arriving that week from your purchase pipeline, net of direct-ship (which never enters the cooler).</span></span></span></th>'
+      +'<th style="'+th+'"><span class="jlz-gloss">Demand<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Demand</span><span class="jlz-td">What leaves that week: the run-rate, or the confirmed (unshipped) orders if larger. Order-driven accounts use their actual order that week, not a smeared average.</span><span class="jlz-tf">= max(committed, run-rate)</span></span></span></th>'
+      +'<th style="'+th+'"><span class="jlz-gloss">Ending stock<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Ending stock</span><span class="jlz-td">What is left at the close of that week.</span><span class="jlz-tf">= Start + Arrivals − Demand</span></span></span></th>'
+      +'<th style="'+th+'"><span class="jlz-gloss">Cover<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Cover</span><span class="jlz-td">Weeks of coverage at that week\'s close.</span><span class="jlz-tf">= Ending ÷ weekly demand</span></span></span></th>'
+      +'<th style="'+th+';text-align:left"><span class="jlz-gloss">Status<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Status</span><span class="jlz-td">OK ≥ safety stock · LOW below safety · CRITICAL under 1 week · STOCKOUT at or below zero.</span></span></span></th></tr></thead>'
     +'<tbody>'+rows+'</tbody></table></div>'
     +'<div style="font-size:10px;color:var(--gray-400);margin-top:8px">'
       +(hasCommWk
@@ -14947,10 +14951,10 @@ function invmAnalysisHTML(s){
         + '<div style="margin-top:2px;color:var(--gray-500)">Total business ≈ <b>'+f(s.weeklyCases+s.directShipCases)+' cs/wk</b> <span style="color:var(--gray-400)">· both on the '+(s.win||13)+'-wk window</span></div>'
       + '</div>') : '')
     + '<div class="ipv-kpis">'
-      + '<div class="ipv-kpi"><div class="lbl">Available to sell</div><div class="big">'+f(s.availCases)+' <small>cs</small></div><div class="note">'+availNote+'</div></div>'
-      + '<div class="ipv-kpi"><div class="lbl">Current cover</div><div class="big">'+covTxt+'</div><div class="note">available ÷ demand/wk</div></div>'
-      + '<div class="ipv-kpi"><div class="lbl">Target cover</div><div class="big">'+tgtTxt+'</div><div class="note">lead '+f1(s.leadWks)+' + safety '+f1(s.safetyWks)+'</div></div>'
-      + '<div class="ipv-kpi"><div class="lbl">Suggested order</div><div class="big" style="color:'+(s.orderCases>0?'var(--jlz)':'var(--gray-400)')+'">'+ordTxt+'</div><div><span class="ipv-st '+stCls+'">'+stTxt+'</span></div></div>'
+      + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Available to sell<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Available · free to sell</span><span class="jlz-td">What\'s truly free to sell now: physical lots on hand, minus expected shrink, minus orders already sold but not yet shipped (committed, current week).</span><span class="jlz-tf">= on-hand × (1 − shrink%) − committed</span></span></span></div><div class="big">'+f(s.availCases)+' <small>cs</small></div><div class="note">'+availNote+'</div></div>'
+      + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Current cover<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Current cover</span><span class="jlz-td">How many weeks your free stock lasts at the current sales pace.</span><span class="jlz-tf">= Available ÷ weekly demand</span></span></span></div><div class="big">'+covTxt+'</div><div class="note">available ÷ demand/wk</div></div>'
+      + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Target cover<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Target cover</span><span class="jlz-td">Weeks of stock you want to hold before reordering: supplier lead time plus a safety buffer for demand swings.</span><span class="jlz-tf">= lead + safety (z × CV × √lead)</span></span></span></div><div class="big">'+tgtTxt+'</div><div class="note">lead '+f1(s.leadWks)+' + safety '+f1(s.safetyWks)+'</div></div>'
+      + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Suggested order<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Suggested order</span><span class="jlz-td">Cases to buy now to reach target cover. Zero if you are already above target.</span><span class="jlz-tf">= (target cover × wk demand) − available</span></span></span></div><div class="big" style="color:'+(s.orderCases>0?'var(--jlz)':'var(--gray-400)')+'">'+ordTxt+'</div><div><span class="ipv-st '+stCls+'">'+stTxt+'</span></div></div>'
     + '</div>';
   if(s.weeklyLbs>0 && s.leadWks>0){
     html += '<div class="ipv-formula">'
