@@ -4440,10 +4440,41 @@ function authInjectLogo() {
     .jlz-tip::after{content:"";position:absolute;top:100%;left:50%;transform:translateX(-50%);border:6px solid transparent;border-top-color:#211C15}
     .jlz-tip.down{bottom:auto;top:calc(100% + 9px)}
     .jlz-tip.down::after{top:auto;bottom:100%;border-top-color:transparent;border-bottom-color:#211C15}
+    /* Table headers live inside an overflow-x:auto wrapper that would clip the bubble, and they sit at the
+       very top of the card. Use position:fixed (escapes any overflow) and open downward; JS sets the coords. */
+    th .jlz-gloss .jlz-tip, thead .jlz-gloss .jlz-tip{position:fixed;left:auto;bottom:auto;transform:none;width:250px}
+    th .jlz-gloss .jlz-tip::after, thead .jlz-gloss .jlz-tip::after{display:none}
+    th .jlz-gloss:hover .jlz-tip, thead .jlz-gloss:hover .jlz-tip{transform:none}
     .jlz-tip .jlz-tt{font-family:var(--fm);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#B9B2A3;font-weight:600;margin-bottom:5px;display:block}
     .jlz-tip .jlz-td{font-family:var(--fb);font-size:12px;line-height:1.5;color:#F4F2EC;font-weight:400}
     .jlz-tip .jlz-tf{font-family:var(--fm);font-size:10.5px;color:#B9B2A3;margin-top:6px;display:block;background:rgba(255,255,255,.07);padding:4px 7px;border-radius:5px}
     #bp-cc-card .po{font-family:var(--fm);font-weight:700;color:var(--jlz,#0d5026)}
+  </style>
+  <script>
+  // Glossary tooltips inside table headers: the table wrapper clips (overflow-x:auto), so those bubbles
+  // are position:fixed and need their coords set on hover. Delegated once, works for re-rendered tables.
+  (function(){
+    if (window.__jlzGlossBound) return; window.__jlzGlossBound = true;
+    function place(g){
+      var tip = g.querySelector('.jlz-tip'); if(!tip) return;
+      var r = g.getBoundingClientRect();
+      var w = tip.offsetWidth || 250;
+      var left = Math.min(Math.max(8, r.left + r.width/2 - w/2), (window.innerWidth||960) - w - 8);
+      var top = r.bottom + 8;
+      var h = tip.offsetHeight || 90;
+      if (top + h > (window.innerHeight||700) - 8) top = Math.max(8, r.top - h - 8);   // flip up near the bottom
+      tip.style.left = left + 'px';
+      tip.style.top = top + 'px';
+    }
+    document.addEventListener('mouseover', function(e){
+      var g = e.target && e.target.closest ? e.target.closest('.jlz-gloss') : null;
+      if (!g || !g.closest('th, thead')) return;
+      place(g);
+    }, true);
+  })();
+  </script>
+  <style>
+
     #bp-cc-card .age-old{color:var(--amber-700);font-weight:700}
     #bp-cc-card .bp-iv-controls{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;margin-bottom:14px}
     #bp-cc-card .bp-iv-rates{display:flex;flex-wrap:wrap;gap:18px;align-items:flex-end;padding:12px 14px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:var(--radius-md);margin-bottom:14px}
