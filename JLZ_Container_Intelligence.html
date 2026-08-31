@@ -22803,6 +22803,10 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
            weekly: allWeeks.map(w => ({ week:w, lbs:Math.round(weekTotal[w]||0) })),
            weeklyReliable: (reliableWeeks.length ? reliableWeeks : allWeeks).map(w => ({ week:w, lbs:Math.round(weekTotal[w]||0) })),
            presMix,
+           // Actual weekly sales per customer, keyed by week — lets the build-up table show the REAL
+           // weeks behind each run-rate next to the projected ones. rateWeeks = the weeks the run-rate averages.
+           rateWeeks: rateWeeks.slice(),
+           wkCust: wkCust,
            dataMax, weeksCovered:allWeeks.length, weeklyOnly:!!weeklyOnly };
 }
 
@@ -23687,11 +23691,26 @@ function renderBuildupPanel(){
                          .sort(function(a,b){ return (b.rrCases || 0) - (a.rrCases || 0); });
   var esc = (typeof dmEsc === 'function') ? dmEsc : function(s){ return String(s); };
   function shortD(iso){ try { return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(e){ return iso; } }
+  // ── ACTUAL weeks: the exact weeks the run-rate averages (window-sized), so the average of these
+  // columns IS each customer's rr — the projection becomes auditable at a glance.
+  var histWeeks = (Array.isArray(m.rateWeeks) ? m.rateWeeks.slice(-_win) : []);
+  var wkCustH = m.wkCust || null;
+  var actualCases = function(cust, wk){
+    if(!wkCustH || !wkCustH[wk]) return 0;
+    return Math.round((wkCustH[wk][cust] || 0) / caseLb);   // stored in lbs → cases
+  };
+  var histTot = histWeeks.map(function(wk){
+    if(!wkCustH || !wkCustH[wk]) return 0;
+    var t = 0; Object.keys(wkCustH[wk]).forEach(function(k){ t += wkCustH[wk][k] || 0; });
+    return Math.round(t / caseLb);
+  });
   var planTot = weeks.map(function(w){ try { return Math.round(hybridSalesForWeek(w.weekStartISO, salesBase, m, prod) || 0); } catch(e){ return 0; } });
   var colTot = weeks.map(function(){ return 0; });
   var body = '';
   shown.forEach(function(c){
     body += '<tr><td class="c"><span class="nm">' + esc(c.c) + '</span><span class="bd ' + (c.sporadic ? 'od' : 'st') + '">' + (c.sporadic ? 'OD' : 'ST') + '</span><div class="mt">rr ' + Math.round((c[_rrKey] != null ? c[_rrKey] : c.rrCases) || 0) + ' cs</div></td>';
+    histWeeks.forEach(function(wk, i){ var av = actualCases(c.c, wk);
+      body += '<td class="hist' + (i === histWeeks.length - 1 ? ' hist-last' : '') + '">' + (av > 0 ? av.toLocaleString() : '<span class="z">0</span>') + '</td>'; });
     weeks.forEach(function(w, i){ var cv = cell(c, w.weekStartISO); colTot[i] += cv.v; body += '<td class="' + cv.k + '">' + (cv.v > 0 ? cv.v.toLocaleString() : '0') + '</td>'; });
     body += '</tr>';
   });
@@ -23702,17 +23721,29 @@ function renderBuildupPanel(){
   var h = dmZoneLabel(5,'Forward build-up','next 7 weeks — run-rate + committed, per customer') + '<div class="card dbu">';
   h += '<div class="dbu-hd"><div class="dbu-t">Demand build-up by customer</div><div class="dbu-s">How the projected weekly demand is built — invoiced run-rate + allocated (committed) orders. ' + usesLine + '</div></div>';
   h += '<div class="dbu-lg"><span><i class="sw a"></i>Allocated — real order placed</span><span><i class="sw r"></i>Run-rate — projected from history</span><span><b class="bd od">OD</b>order-driven <b class="bd st">ST</b>steady</span></div>';
-  h += '<div class="dbu-wrap"><table class="dbu-tbl"><thead><tr><th class="c">Customer · run-rate</th>';
+  h += '<div class="dbu-wrap"><table class="dbu-tbl"><thead>';
+  if(histWeeks.length){
+    h += '<tr class="dbu-grp"><th class="c"></th>'
+       + '<th class="hist-grp" colspan="' + histWeeks.length + '">ACTUAL &middot; last ' + histWeeks.length + ' wk (the run-rate window)</th>'
+       + '<th class="proj-grp" colspan="' + weeks.length + '">PROJECTED</th></tr>';
+  }
+  h += '<tr><th class="c">Customer · run-rate</th>';
+  histWeeks.forEach(function(wk, i){
+    var wn = (typeof cxWeekNo === 'function' && cxWeekNo(wk)) ? ('W' + cxWeekNo(wk)) : shortD(wk);
+    h += '<th class="hist' + (i === histWeeks.length - 1 ? ' hist-last' : '') + '">' + wn + '<br><span>' + shortD(wk) + '</span></th>';
+  });
   weeks.forEach(function(w){ h += '<th>W' + w.weekNum + '<br><span>' + shortD(w.weekStartISO) + '</span></th>'; });
   h += '</tr></thead><tbody>' + body;
+  var histPad = function(cls){ var s=''; histWeeks.forEach(function(wk,i){ s += '<td class="hist' + (i===histWeeks.length-1?' hist-last':'') + (cls?(' '+cls):'') + '"></td>'; }); return s; };
   if(resid.some(function(x){ return x >= 1; })){
-    h += '<tr class="oth"><td class="c"><span class="nm">Other small accounts</span></td>';
+    h += '<tr class="oth"><td class="c"><span class="nm">Other small accounts</span></td>' + histPad();
     resid.forEach(function(x){ h += '<td class="r">' + (x >= 1 ? x.toLocaleString() : '0') + '</td>'; });
     h += '</tr>';
   }
   h += '<tr class="tot"><td class="c">TOTAL · sales cases</td>';
+  histWeeks.forEach(function(wk, i){ h += '<td class="hist' + (i===histWeeks.length-1?' hist-last':'') + '">' + (histTot[i] || 0).toLocaleString() + '</td>'; });
   total.forEach(function(t){ h += '<td>' + t.toLocaleString() + '</td>'; });
-  h += '</tr><tr class="buy"><td class="c">Buy · with shrink' + (isG ? '' : '*') + '</td>';
+  h += '</tr><tr class="buy"><td class="c">Buy · with shrink' + (isG ? '' : '*') + '</td>' + histPad();
   total.forEach(function(t){ h += '<td>' + Math.round(t * infl).toLocaleString() + '</td>'; });
   h += '</tr></tbody></table></div>';
   var buyNote = isG
@@ -24115,6 +24146,14 @@ function cxStyles(){ return '<style>'
   + '.dbu-tbl th span{font-weight:400;font-size:9px}'
   + '.dbu-tbl th.c,.dbu-tbl td.c{text-align:left;position:sticky;left:0;background:var(--white)}'
   + '.dbu-tbl th.c{background:var(--gray-50)}'
+  /* ACTUAL (historical) columns — muted, with a divider before the projected block */
+  + '.dbu-tbl td.hist{color:var(--gray-500);background:var(--gray-50)}'
+  + '.dbu-tbl th.hist{background:var(--gray-100);color:var(--gray-500)}'
+  + '.dbu-tbl td.hist-last,.dbu-tbl th.hist-last{border-right:2px solid var(--gray-300)}'
+  + '.dbu-tbl td.hist .z{color:var(--gray-300)}'
+  + '.dbu-tbl tr.dbu-grp th{font-size:9px;letter-spacing:.08em;padding:5px 10px;border-bottom:none;text-align:center}'
+  + '.dbu-tbl tr.dbu-grp th.hist-grp{background:var(--gray-100);color:var(--gray-500);border-right:2px solid var(--gray-300)}'
+  + '.dbu-tbl tr.dbu-grp th.proj-grp{background:var(--gray-50);color:var(--jlz,#0d5026)}'
   + '.dbu-tbl td{border-bottom:1px solid var(--gray-100)}'
   + '.dbu-tbl .nm{font-family:var(--fb);font-weight:600;color:var(--gray-800)}'
   + '.dbu-tbl .mt{font-size:9px;color:var(--gray-400)}'
