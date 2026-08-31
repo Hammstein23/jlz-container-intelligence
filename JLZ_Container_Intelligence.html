@@ -14562,11 +14562,16 @@ function nowcastProductModel(m, p, origin){
   // Ask from just past the reliable edge (NOT the current week): the whole point is to complete the
   // recent weeks (e.g. W34/W35) with their booked orders. The default current-week bound would hide them.
   var lastReliable=m.weeklyReliable[m.weeklyReliable.length-1].week;
-  var cbw=(typeof invmCommittedByWeek==='function')?invmCommittedByWeek(p, origin, lastReliable):{};
+  // Bound: the first week AFTER the reliable edge. Asking from lastReliable itself (inclusive) while the
+  // week filter below is strict (> lastReliable) dropped that first week's booked orders on the floor.
+  var nextAfterReliable=(function(){ try{ var d=new Date(lastReliable+'T12:00:00'); d.setDate(d.getDate()+7); return (typeof dmWeekKey==='function')?dmWeekKey(d):lastReliable; }catch(e){ return lastReliable; } })();
+  var cbw=(typeof invmCommittedByWeek==='function')?invmCommittedByWeek(p, origin, nextAfterReliable):{};
   if(!cbw || !Object.keys(cbw).length) return m;
   var caseLb=(typeof productCaseLb==='function')?productCaseLb(p):30;
   var partial={}; m.weekly.forEach(function(w){ if(w.week>lastReliable) partial[w.week]=w.lbs||0; });   // invoiced-so-far past the reliable edge
-  var wkset={}; Object.keys(partial).forEach(function(k){ wkset[k]=1; }); Object.keys(cbw).forEach(function(k){ if(k>lastReliable) wkset[k]=1; });
+  // Weeks to complete = those with partial invoicing OR with booked orders. A week that exists ONLY in
+  // committed (nothing invoiced yet, e.g. the current week) is still included — it is real booked demand.
+  var wkset={}; Object.keys(partial).forEach(function(k){ wkset[k]=1; }); Object.keys(cbw).forEach(function(k){ if(k>lastReliable && cbw[k]>0) wkset[k]=1; });
   var incWeeks=Object.keys(wkset).sort();
   if(!incWeeks.length) return m;
   var series=m.weeklyReliable.map(function(w){ return {week:w.week, lbs:w.lbs}; }), added=false;
@@ -14582,6 +14587,10 @@ function nowcastProductModel(m, p, origin){
   out.runRate13=Math.round(mean(series.slice(-13)));
   out.runRate6=Math.round(mean(series.slice(-6)));
   out.runRate3=Math.round(mean(series.slice(-3)));
+  // Keep rateWeeks in step with the nowcasted series so the build-up table's ACTUAL columns show the SAME
+  // weeks the run-rate averages (incl. the completed W34/W35) — otherwise the columns wouldn't average to rr.
+  out.rateWeeks=series.map(function(w){ return w.week; });
+  out.nowcastWeeks={}; series.forEach(function(w){ if(w.now||w.prelim) out.nowcastWeeks[w.week]=(w.now?'now':'prelim'); });
   out.nowcast=true;
   return out;
 }
@@ -23698,11 +23707,19 @@ function renderBuildupPanel(){
   // columns IS each customer's rr — the projection becomes auditable at a glance.
   var histWeeks = (Array.isArray(m.rateWeeks) ? m.rateWeeks.slice(-_win) : []);
   var wkCustH = m.wkCust || null;
+  var nowMark = m.nowcastWeeks || {};        // weeks completed with booked orders (nowcast): 'now' | 'prelim'
   var actualCases = function(cust, wk){
-    if(!wkCustH || !wkCustH[wk]) return 0;
-    return Math.round((wkCustH[wk][cust] || 0) / caseLb);   // stored in lbs → cases
+    var inv = (wkCustH && wkCustH[wk]) ? Math.round((wkCustH[wk][cust] || 0) / caseLb) : 0;   // invoiced (lbs → cases)
+    // In nowcasted weeks the customer's booked (unshipped) orders are part of that week's figure, exactly
+    // as the run-rate counts them — otherwise the columns wouldn't add up to the total shown below.
+    var booked = (nowMark[wk] && com[wk] && com[wk][cust]) ? Math.round(com[wk][cust]) : 0;
+    return inv + booked;
   };
+  // Column totals: for nowcasted weeks use the model's completed figure (invoiced + booked), not the raw
+  // invoiced sum — that is what the run-rate averages, so the columns stay consistent with it.
+  var relByWk = {}; (Array.isArray(m.weeklyReliable)?m.weeklyReliable:[]).forEach(function(w){ relByWk[w.week]=w.lbs||0; });
   var histTot = histWeeks.map(function(wk){
+    if(relByWk[wk] != null) return Math.round(relByWk[wk] / caseLb);
     if(!wkCustH || !wkCustH[wk]) return 0;
     var t = 0; Object.keys(wkCustH[wk]).forEach(function(k){ t += wkCustH[wk][k] || 0; });
     return Math.round(t / caseLb);
@@ -23733,7 +23750,10 @@ function renderBuildupPanel(){
   h += '<tr><th class="c">Customer · run-rate</th>';
   histWeeks.forEach(function(wk, i){
     var wn = (typeof cxWeekNo === 'function' && cxWeekNo(wk)) ? ('W' + cxWeekNo(wk)) : shortD(wk);
-    h += '<th class="hist' + (i === histWeeks.length - 1 ? ' hist-last' : '') + '">' + wn + '<br><span>' + shortD(wk) + '</span></th>';
+    var nm = nowMark[wk];   // completed with booked orders (not fully invoiced yet)
+    h += '<th class="hist' + (i === histWeeks.length - 1 ? ' hist-last' : '') + (nm?' hist-now':'') + '"'
+       + (nm?' title="Completed with booked (unshipped) orders — this week is not fully invoiced yet"':'') + '>'
+       + wn + (nm?'<sup class="nc">●</sup>':'') + '<br><span>' + shortD(wk) + '</span></th>';
   });
   weeks.forEach(function(w){ h += '<th>W' + w.weekNum + '<br><span>' + shortD(w.weekStartISO) + '</span></th>'; });
   h += '</tr></thead><tbody>' + body;
@@ -24154,6 +24174,8 @@ function cxStyles(){ return '<style>'
   + '.dbu-tbl th.hist{background:var(--gray-100);color:var(--gray-500)}'
   + '.dbu-tbl td.hist-last,.dbu-tbl th.hist-last{border-right:2px solid var(--gray-300)}'
   + '.dbu-tbl td.hist .z{color:var(--gray-300)}'
+  + '.dbu-tbl th.hist-now{color:#7c3aed}'
+  + '.dbu-tbl th .nc{color:#7c3aed;font-size:8px;margin-left:1px}'
   + '.dbu-tbl tr.dbu-grp th{font-size:9px;letter-spacing:.08em;padding:5px 10px;border-bottom:none;text-align:center}'
   + '.dbu-tbl tr.dbu-grp th.hist-grp{background:var(--gray-100);color:var(--gray-500);border-right:2px solid var(--gray-300)}'
   + '.dbu-tbl tr.dbu-grp th.proj-grp{background:var(--gray-50);color:var(--jlz,#0d5026)}'
