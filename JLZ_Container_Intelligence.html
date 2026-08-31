@@ -14587,7 +14587,12 @@ function invmProductStats(p,origin){
   // Excluded lots = physically gone but kept on record; subtracted from planned on-hand so they never
   // auto-feed the Buy Planner / Simulator. Still shown in the Inventory table (marked).
   var counted=lots.filter(function(l){ return !(l&&l.excluded); });
-  var onHandCases=counted.reduce(function(s,l){ return s+(parseFloat(l.cases)||0); },0);
+  var onHandLotsCases=counted.reduce(function(s,l){ return s+(parseFloat(l.cases)||0); },0);   // free/sellable lots on hand
+  // GROSS on-hand = free lots + committed (reserved / unshipped), mirroring the ginger Buy Planner (Phase 2):
+  // the committed is ADDED here and SUBTRACTED in availCases below, so a reserved order nets out ONCE — never
+  // double-counts against a net on-hand. With committed 0, gross === lots and behavior is unchanged.
+  var committedCases=(typeof prodCommittedTotal==='function')?prodCommittedTotal(p,origin):0;
+  var onHandCases=onHandLotsCases+committedCases;
   var onHandLbs=onHandCases*caseLb;
   var costVal=counted.reduce(function(s,l){ return s+(parseFloat(l.cases)||0)*(parseFloat(l.avgCost)||0); },0);
   var excludedCases=lots.reduce(function(s,l){ return s+((l&&l.excluded)?(parseFloat(l.cases)||0):0); },0);
@@ -14621,9 +14626,8 @@ function invmProductStats(p,origin){
   // Shrinkage: a % of stock lost before it sells (weight loss / spoilage) — never over-estimate usable inventory.
   var shrinkPct=(store.shrinkPct!=null)?store.shrinkPct:((meta.shrinkPct!=null)?meta.shrinkPct:0);
   var shrinkF=1-Math.max(0,Math.min(60,shrinkPct))/100;
-  var effOnHandCases=onHandCases*shrinkF, effOnHandLbs=onHandLbs*shrinkF;
-  // Committed / unshipped sales (already sold, not yet shipped) reduce what's really available to sell again.
-  var committedCases=(typeof prodCommittedTotal==='function')?prodCommittedTotal(p,origin):0;
+  var effOnHandCases=onHandLotsCases*shrinkF+committedCases, effOnHandLbs=effOnHandCases*caseLb;   // shrink hits sellable lots only; committed is already sold
+  // available to sell = gross on-hand (post-shrink) − committed = free lots post-shrink. committed declared above.
   var availCases=Math.max(0, effOnHandCases-committedCases), availLbs=availCases*caseLb;
   var directShipCases=(typeof invmDirectShipCases==='function')?invmDirectShipCases(p,origin):0;   // Sol-ti turmeric etc. — pass-through, shown separately
   var coverWks=(weeklyLbs>0)?availLbs/weeklyLbs:(availLbs>0?Infinity:0);
