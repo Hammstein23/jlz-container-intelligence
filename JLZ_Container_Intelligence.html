@@ -14559,10 +14559,12 @@ function invmDirectShipCases(p,origin){
 function nowcastProductModel(m, p, origin){
   if(!m || p==='ginger') return m;
   if(!Array.isArray(m.weekly) || !Array.isArray(m.weeklyReliable) || !m.weeklyReliable.length) return m;
-  var cbw=(typeof invmCommittedByWeek==='function')?invmCommittedByWeek(p, origin):{};
+  // Ask from just past the reliable edge (NOT the current week): the whole point is to complete the
+  // recent weeks (e.g. W34/W35) with their booked orders. The default current-week bound would hide them.
+  var lastReliable=m.weeklyReliable[m.weeklyReliable.length-1].week;
+  var cbw=(typeof invmCommittedByWeek==='function')?invmCommittedByWeek(p, origin, lastReliable):{};
   if(!cbw || !Object.keys(cbw).length) return m;
   var caseLb=(typeof productCaseLb==='function')?productCaseLb(p):30;
-  var lastReliable=m.weeklyReliable[m.weeklyReliable.length-1].week;
   var partial={}; m.weekly.forEach(function(w){ if(w.week>lastReliable) partial[w.week]=w.lbs||0; });   // invoiced-so-far past the reliable edge
   var wkset={}; Object.keys(partial).forEach(function(k){ wkset[k]=1; }); Object.keys(cbw).forEach(function(k){ if(k>lastReliable) wkset[k]=1; });
   var incWeeks=Object.keys(wkset).sort();
@@ -14759,12 +14761,13 @@ function whatifArrivals(p,origin){
 // Confirmed (committed/unshipped) orders per week for a product+origin, in cases — near-term demand already
 // booked but not yet invoiced. Keyed by dmWeekKey (same weeks as the projection). Only populated from the
 // canonical committed store when it carries per-week entries (the Unshipped import); the lump seed doesn't.
-function invmCommittedByWeek(p, origin){
+// fromWk (optional): earliest week to include. Defaults to the CURRENT week — past weeks are already
+// shipped, so keeping them would make the projection consume stock twice. The NOWCAST passes an earlier
+// bound on purpose: it needs the recent (partial/just-closed) weeks' booked orders to complete them.
+function invmCommittedByWeek(p, origin, fromWk){
   var out={};
-  // Current week onward only: past weeks are already shipped, so keeping them would make the projection
-  // consume stock twice (once as shipped, once as booked demand). Mirrors prodCommittedTotal.
-  var nowWk=(typeof dmWeekKey==='function')?dmWeekKey(new Date()):'';
-  var all=(typeof getCommitted==='function'?getCommitted():[]).filter(function(c){ return c && c.type==='inv' && _cmProd(c)===p && c.wk && (!nowWk || String(c.wk)>=nowWk); });
+  var minWk=(fromWk!=null) ? String(fromWk) : ((typeof dmWeekKey==='function')?dmWeekKey(new Date()):'');
+  var all=(typeof getCommitted==='function'?getCommitted():[]).filter(function(c){ return c && c.type==='inv' && _cmProd(c)===p && c.wk && (!minWk || String(c.wk)>=minWk); });
   if(origin && origin!=='all'){
     var tagged=all.filter(function(c){ return _cmOriginFor(c); });
     if(!tagged.length) return {};                       // no origin field AND no SKU → can't attribute → lump fallback
