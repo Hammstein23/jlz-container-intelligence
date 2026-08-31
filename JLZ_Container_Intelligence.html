@@ -14846,12 +14846,20 @@ function invmProjectionHTML(s){
   return '<div style="background:var(--white);border:1px solid var(--gray-200);border-radius:10px;overflow:hidden;margin-bottom:14px">'
     +'<div style="padding:11px 14px;border-bottom:1px solid var(--gray-100)"><span style="font-size:12px;font-weight:700;color:var(--jlz);text-transform:uppercase;letter-spacing:.05em">'+N+'-week projection</span> <span style="font-size:10.5px;color:var(--gray-400)">· cases · arrivals from the Orders pipeline'+(hasCommWk?' <span style="color:#7c3aed">· 📋 confirmed orders</span>':'')+(hasScen?' <span style="color:#7c3aed">+ 🧪 scenarios</span>':'')+'</span></div>'
     +'<div style="display:flex;gap:16px;align-items:center;padding:11px 14px;border-bottom:1px solid var(--gray-100);flex-wrap:wrap;background:var(--gray-50)">'
-      +'<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-family:var(--fb);font-weight:600">On-hand</div><div style="font-size:17px;font-weight:700;color:var(--gray-700);font-family:var(--fm)">'+f(s.onHandCases)+'<span style="font-size:10px;color:var(--gray-400);font-weight:400"> cs</span></div></div>'
+      +'<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-family:var(--fb);font-weight:600">On-hand</div><div style="font-size:17px;font-weight:700;color:var(--gray-700);font-family:var(--fm)">'+f(s.onHandCases)+'<span style="font-size:10px;color:var(--gray-400);font-weight:400"> cs</span></div>'
+        +((s.excludedCases>0)?('<div style="font-size:9px;color:var(--amber-700);font-family:var(--fm)">+'+f(s.excludedCases)+' excluded</div>'):'')+'</div>'
+      // Shrink step — without it, none of the figures above match the projection's first Starting stock.
+      +((s.shrinkPct>0)?('<div style="color:var(--gray-300);font-size:18px;font-weight:300">&minus;</div>'
+        +'<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-family:var(--fb);font-weight:600">Shrink '+f1(s.shrinkPct)+'%</div>'
+        +'<div style="font-size:17px;font-weight:700;color:var(--amber-700);font-family:var(--fm)">'+f(s.onHandCases-s.effOnHandCases)+'<span style="font-size:10px;color:var(--gray-400);font-weight:400"> cs</span></div>'
+        +'<div style="font-size:9px;color:var(--gray-400);font-family:var(--fm)">&rarr; '+f(s.effOnHandCases)+' usable</div></div>'):'')
       +'<div style="color:var(--gray-300);font-size:18px;font-weight:300">&minus;</div>'
       +'<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-family:var(--fb);font-weight:600">Committed</div><div style="font-size:17px;font-weight:700;color:#7c3aed;font-family:var(--fm)">'+f(s.committedCases)+'<span style="font-size:10px;color:var(--gray-400);font-weight:400"> cs</span></div></div>'
       +'<div style="color:var(--gray-300);font-size:18px;font-weight:300">=</div>'
       +'<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--jlz);font-family:var(--fb);font-weight:600">Available to sell</div><div style="font-size:17px;font-weight:700;color:var(--jlz);font-family:var(--fm)">'+f(s.availCases)+'<span style="font-size:10px;color:var(--gray-400);font-weight:400"> cs</span></div></div>'
-      +'<div style="margin-left:auto;font-size:10px;color:var(--gray-400);max-width:210px;line-height:1.4">'+(hasCommWk?'Projection starts from <b>on-hand</b> and books committed in its week.':'Projection starts from <b>available</b>.')+'</div>'
+      +'<div style="margin-left:auto;font-size:10px;color:var(--gray-400);max-width:230px;line-height:1.45">'+(hasCommWk
+          ? ('Projection starts at <b style="color:var(--gray-600)">'+f(s.effOnHandCases)+' cs</b> (usable on-hand) and books committed in its own week.')
+          : ('Projection starts at <b style="color:var(--gray-600)">'+f(s.availCases)+' cs</b> (available).'))+'</div>'
     +'</div>'
     +'<div style="padding:11px 14px"><div class="ipv-st '+vcls+'" style="display:block;margin-bottom:10px;line-height:1.55">'+verdict+'</div>'
     +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11px;min-width:640px">'
@@ -14863,19 +14871,6 @@ function invmProjectionHTML(s){
       +'<th style="'+th+'"><span class="jlz-gloss">Cover<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Cover</span><span class="jlz-td">Weeks of coverage at that week\'s close.</span><span class="jlz-tf">= Ending ÷ weekly demand</span></span></span></th>'
       +'<th style="'+th+';text-align:left"><span class="jlz-gloss">Status<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Status</span><span class="jlz-td">OK ≥ safety stock · LOW below safety · CRITICAL under 1 week · STOCKOUT at or below zero.</span></span></span></th></tr></thead>'
     +'<tbody>'+rows+'</tbody></table></div>'
-    // Explicit walk from the lots you see in Inventory down to the projection's first Starting stock,
-    // so on-hand vs starting stock never look like they disagree.
-    +'<div style="font-size:10.5px;font-family:var(--fm);color:var(--gray-600);margin-top:9px;padding:7px 10px;background:var(--gray-50);border-radius:6px;line-height:1.7">'
-      +'<b style="color:var(--gray-700)">Where the first Starting stock comes from:</b><br>'
-      +f(s.onHandCases)+' on-hand'
-      +((s.excludedCases>0)?(' <span style="color:var(--amber-700)">(+'+f(s.excludedCases)+' excluded, not counted)</span>'):'')
-      +((s.shrinkPct>0)?(' &minus; '+f1(s.shrinkPct)+'% shrink = <b>'+f(s.effOnHandCases)+'</b>'):(' = <b>'+f(s.onHandCases)+'</b>'))
-      +(hasCommWk
-         ? ' &nbsp;→&nbsp; projection starts here and books <span style="color:#7c3aed">📋 committed</span> in its own week.'
-         : (s.committedCases>0
-             ? (' &minus; '+f(s.committedCases)+' committed = <b>'+f(s.availCases)+'</b> &nbsp;→&nbsp; projection starts here.')
-             : ' &nbsp;→&nbsp; projection starts here.'))
-    +'</div>'
     +'<div style="font-size:10px;color:var(--gray-400);margin-top:8px">'
       +(hasCommWk
         ? 'Starting stock (now) = <b>on-hand</b> (post-shrink). Demand = the <b>run-rate</b>, or <span style="color:#7c3aed">📋 confirmed orders</span> (unshipped, not yet invoiced) in weeks that have them — whichever is larger. '
