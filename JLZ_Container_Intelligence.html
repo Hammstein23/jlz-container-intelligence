@@ -23486,7 +23486,17 @@ function renderDmRunRate(){
   var rows = shown.map(function(c){ var v=Math.round(c[key]||0); return '<tr><td class="l">'+esc(c.c)+(c.sporadic?'<span class="dmrr-od" title="Buys in bursts, not weekly. The number shown is its run-rate (total cases &divide; all weeks in the window), so it looks small &mdash; the plan does NOT use that average: it uses this account’s committed orders in the weeks it ordered, and only resumes the run-rate beyond the last committed week.">ORDER-DRIVEN</span>':'')+'</td><td>'+v.toLocaleString()+'</td><td><span class="dmrr-barc" style="width:'+Math.round(v/cmax*100)+'px"></span></td></tr>'; }).join('');
   var rest = custs.length - shown.length;
   if(rest > 0){ var rv=0; custs.slice(8).forEach(function(c){ rv += Math.round(c[key]||0); }); rows += '<tr><td class="l" style="color:var(--gray-400)">+ '+rest+' smaller</td><td style="color:var(--gray-400)">'+rv.toLocaleString()+'</td><td></td></tr>'; }
-  rows += '<tr class="tot"><td class="l">Total</td><td>'+tot.toLocaleString()+'</td><td></td></tr>';
+  // The headline averages EVERY sale; this list only shows accounts the model tracks individually
+  // (>= 1 cs/wk, and only active/dormant ones). Booked orders completed by the nowcast aren't attributed
+  // to any account either. Without this row the panel claims to be "built from these customers" and then
+  // doesn't add up to its own headline — so name the gap instead of leaving it invisible.
+  var _unattr = Math.round(bigRR) - tot;
+  if(_unattr >= 1){
+    rows += '<tr><td class="l" style="color:var(--gray-400)">Not attributed to an account'
+         +  '<span class="dmrr-hs" title="Accounts under 1 cs/wk, accounts that stopped ordering, and booked orders the nowcast completed without a customer breakdown"> — small, lapsed &amp; booked</span></td>'
+         +  '<td style="color:var(--gray-400)">'+_unattr.toLocaleString()+'</td><td></td></tr>';
+  }
+  rows += '<tr class="tot"><td class="l">Total</td><td>'+Math.max(tot, Math.round(bigRR)).toLocaleString()+'</td><td></td></tr>';
   host.innerHTML = '<div class="card dmrr">'
     + '<div class="dmrr-top"><div class="dmrr-k">Run-rate · what they buy per week'+(dsCases>=1?' <span style="color:var(--gray-400);font-weight:400;text-transform:none">· stockable (Sol-ti shown apart)</span>':'')+'</div>'+seg+'</div>'
     + '<div class="dmrr-bigrow"><div class="dmrr-big">'+bigRR.toLocaleString()+'</div><div class="dmrr-u">cs/wk</div><div class="dmrr-role">'+(win===26?'26-week smooth':win===13?'13-week base':win===6?'6-week momentum':'3-week spot')+'</div></div>'
