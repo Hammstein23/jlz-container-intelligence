@@ -14716,6 +14716,17 @@ function prodInvFor(p){ var st=prodInvState(); if(!st[p]) st[p]={serviceLevel:95
 // and shown separately as pass-through. Scoped by customer + product: Sol-ti's
 // TURMERIC is direct-ship (Fiji, ~83% of Fiji volume); Sol-ti's GINGER comes from
 // normal Peru stock, so it stays in demand. Add more accounts here as needed.
+// ── INTERNAL / NON-CUSTOMER ACCOUNTS ─────────────────────────────────────────
+// Own movements: transfers between our own entities, samples, disposals. They ARE rows in the sales
+// export but they are not customer demand, so buying against them overstates the plan — shallots was the
+// clearest case: "JLZ" alone was 26 of its 39 cs/wk run-rate (67%). Same idea as excluding Che Che
+// Plastics from the sales report. Substring match, case-insensitive; edit the list as accounts appear.
+var INTERNAL_ACCOUNTS = ['jlz', 'che che'];
+function dmIsInternalAccount(cust){
+  var c = String(cust || '').trim().toLowerCase();
+  if (!c) return false;
+  return INTERNAL_ACCOUNTS.some(function(x){ return c === x || c.indexOf(x) > -1; });
+}
 // The pairs below are only the STARTING POINT. Which accounts ship direct changes as lead times and
 // arrangements change, so it is editable from the Demand tab (a toggle per customer) and persisted per
 // device — hard-coding it meant every change needed a code edit, and a wrong entry silently inflates or
@@ -23085,6 +23096,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
   raw.forEach(r => {
     if (r.d > dataMax) dataMax = r.d;                  // latest data date spans all row types
     if (r.type && r.type !== 'Sale') return;           // volume / run-rate = sales only (unchanged)
+    if (typeof dmIsInternalAccount === 'function' && dmIsInternalAccount(r.c)) return;   // own movements, not demand
     const wk = dmWeekKey(new Date(r.d));
     (wkCust[wk] = wkCust[wk] || {});
     wkCust[wk][r.c] = (wkCust[wk][r.c] || 0) + r.lbs;
@@ -23095,7 +23107,22 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
     var _pe = presWk[wk][_pk] || (presWk[wk][_pk] = { lbs:0, packLb:r.packLb||0 });
     _pe.lbs += r.lbs; if(!_pe.packLb && r.packLb) _pe.packLb = r.packLb;
   });
-  const allWeeks = Object.keys(wkCust).filter(w => w < curWeekKey).sort();  // complete weeks only
+  // Complete weeks only — and CALENDAR-continuous: a week with no sales must count as a zero, not vanish.
+  // Keying off `wkCust` alone gave "the last 3 weeks that happened to have sales", which for an
+  // intermittent product spanned months (shallots' 3-week window was Mar 2 + Aug 10 + Aug 17) and
+  // overstated its run-rate badly. Steady products are unaffected — they sell nearly every week.
+  const _soldWeeks = Object.keys(wkCust).filter(w => w < curWeekKey).sort();
+  const allWeeks = (function(){
+    if(_soldWeeks.length < 2) return _soldWeeks;
+    const out = [], first = new Date(_soldWeeks[0] + 'T12:00:00');
+    const last = new Date(_soldWeeks[_soldWeeks.length - 1] + 'T12:00:00');
+    for(let d = new Date(first); d <= last; d.setDate(d.getDate() + 7)){
+      const k = dmWeekKey(d);
+      out.push(k);
+      if(!wkCust[k]) wkCust[k] = {};        // empty week = real zero for this product
+    }
+    return out;
+  })();
   // Presentation mix over the last 13 complete weeks (fractions are window-stable, applied to any run-rate).
   const _presAgg = {};
   allWeeks.slice(-13).forEach(function(w){ var pw=presWk[w]; if(!pw) return; Object.keys(pw).forEach(function(k){ var e=pw[k]; var a=_presAgg[k]||(_presAgg[k]={lbs:0,packLb:e.packLb}); a.lbs+=e.lbs; if(!a.packLb) a.packLb=e.packLb; }); });
