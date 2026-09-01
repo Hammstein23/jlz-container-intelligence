@@ -15726,12 +15726,18 @@ function renderBuyPlanner() {
       const mdl = (typeof _dmModelG !== 'undefined' && _dmModelG) ? _dmModelG : null;
       if(!mdl || !Array.isArray(mdl.weeklyReliable)) return [];
       const cl = mdl.caseLb || 30;
-      const wks = mdl.weeklyReliable.slice(-HIST_N).map(w => ({ week:w.week, sold:Math.round((w.lbs||0)/cl), partial:false }));
-      if(mdl.partialWeek) wks.push({ week:mdl.partialWeek.week, sold:Math.round((mdl.partialWeek.lbs||0)/cl), partial:true });
+      // Past weeks only. The current week is the FIRST row of the forecast below, so including it here
+      // would show it twice with two different bases (net vs gross) and look like a mismatch.
+      let _curWk = null; try{ _curWk = (typeof dmWeekKey === 'function') ? dmWeekKey(new Date()) : null; }catch(e){}
+      const wks = mdl.weeklyReliable.filter(w => !_curWk || w.week < _curWk)
+                    .slice(-HIST_N).map(w => ({ week:w.week, sold:Math.round((w.lbs||0)/cl), partial:false }));
       // Containers actually received, keyed by the week they landed
       const arr = {};
       ((typeof getOrders === 'function') ? getOrders() : []).forEach(o => {
         if (typeof _ordProd === 'function' && _ordProd(o) !== 'ginger') return;
+        // Peru only — this planner is ginger-Peru; a Hawaii container must never show as supply here.
+        const _oo = (typeof _ordOrigin === 'function') ? _ordOrigin(o) : (o.origin || '');
+        if (_oo && _oo !== 'Peru') return;
         const land = (typeof normalizeDate === 'function') ? normalizeDate(o.arrivalActual || '') : (o.arrivalActual || '');
         if(!land) return;
         let wk; try{ wk = (typeof dmWeekKey === 'function') ? dmWeekKey(new Date(land + 'T12:00:00')) : null; }catch(e){ wk = null; }
@@ -15745,7 +15751,10 @@ function renderBuyPlanner() {
       // start = end + sold − arrived). Approximate — manual inventory corrections in between are invisible,
       // so it is flagged as an estimate. A stored weekly snapshot (recorded from now on) overrides it.
       const snaps = (typeof stockSnapFor === 'function') ? stockSnapFor('ginger') : {};
-      let cursor = stockCases;                       // today's real on-hand = end of the current week so far
+      // Anchor on the SAME figure the forecast starts from (gross on-hand), so the last historical
+      // "Ending stock" lines up exactly with the forecast's first "Starting stock" instead of differing
+      // by the committed cases.
+      let cursor = stockCasesGross;
       for(let i = wks.length - 1; i >= 0; i--){
         const w = wks[i];
         w.end = cursor;
