@@ -22894,7 +22894,7 @@ function productFocus(){ const p = getActiveProduct(); return (p === 'all') ? 'g
 // invoiced sales and turned turmeric Fiji's W35 into 129 cs when the real figure was 88.
 function dmBuild(rows, weeklyOnly, k, origin){
   const cl = productCaseLb(k);
-  let m = dmBuildModel(rows, weeklyOnly, cl);
+  let m = dmBuildModel(rows, weeklyOnly, cl, k);
   if (m) m.caseLb = cl;
   // Complete the trailing incomplete weeks with their booked orders (all products, ginger included): the raw
   // model drops any week that isn't fully invoiced, so the latest weeks disappear even when their orders are
@@ -22964,7 +22964,7 @@ function dmRebuildView(){
   const cl = dmFocusCaseLb();
   if (typeof dmBuildModel === 'function'){
     if (_dmRawAll){
-      _dmModel = dmBuildModel(dmFilteredRows(), false, cl);
+      _dmModel = dmBuildModel(dmFilteredRows(), false, cl, (typeof productFocus==='function')?productFocus():null);
     } else if (getActiveProduct() !== 'ginger' && getActiveProduct() !== 'all'){
       _dmModel = dmBuildModel([], false, cl);   // no raw rows + a specific non-ginger product => empty
     }
@@ -23156,7 +23156,7 @@ function dmParseWorkbook(buf){
 
 // Build the demand model. weeklyOnly=true (cross-device, from the sheet) means
 // we only have weekly buckets, so cadence/exact last-order are suppressed.
-function dmBuildModel(raw, weeklyOnly, caseLb){
+function dmBuildModel(raw, weeklyOnly, caseLb, prodKey){
   caseLb = caseLb || DM_CASE_LB;   // lbs->cases conversion for the focused product
   const anchor = new Date();
   const curWeekKey = dmWeekKey(anchor);
@@ -23204,6 +23204,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
   const custSumWeeks = (c,weeks) => weeks.reduce((s,w)=>s+((wkCust[w]&&wkCust[w][c])||0),0);
 
   const w4 = lastN(4), w8 = lastN(8), w13 = lastN(13), prior4 = allWeeks.slice(-8,-4);
+  const w6 = lastN(6), w3 = lastN(3);   // the other two reaction windows, for the threshold below
   // Reporting-lag correction (data-driven): a week only counts toward the run-rate once the
   // latest sale on file (dataMax) has moved into a STRICTLY LATER ISO week. Reason (proven on
   // the real 08-03 export, dataMax=07-28 Tue): the export lags ~6 days and dataMax lands
@@ -23232,14 +23233,17 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
   // Committed-aware activity for DISPLAY/status only — the fcQuiet plan hold-out below stays
   // invoiced-based, so buy quantities don't shift. A placed-but-not-yet-invoiced order counts as
   // recent activity, so returning accounts (e.g. Sol-ti's committed ginger) don't misreport as
-  // "quiet". Ginger-only (committed store is ginger); future committed weeks capped at today so
-  // daysSinceEff stays >= 0.
+  // "quiet". Future committed weeks capped at today so daysSinceEff stays >= 0.
+  // This used to be hardcoded to ginger ("the committed store is ginger"), which stopped being true
+  // when the store went multi-product: for turmeric/garlic/shallots a booked-but-small account was
+  // dropped from `customers` entirely and its volume reappeared as an unexplained residual.
+  const _mProd = prodKey || ((typeof productFocus === 'function') ? productFocus() : 'ginger');
   const _todayISO = anchor.toISOString().slice(0,10);
   const _committedCust = {}, _committedLast = {};
   try {
-    if ((typeof productFocus !== 'function' || productFocus() === 'ginger') && typeof getCommitted === 'function') {
+    if (_mProd && typeof getCommitted === 'function') {
       getCommitted().forEach(function(x){
-        if (!x || !x.customer || !x.wk || _cmProd(x) !== 'ginger') return;
+        if (!x || !x.customer || !x.wk || _cmProd(x) !== _mProd) return;
         _committedCust[x.customer] = true;
         const d = x.wk > _todayISO ? _todayISO : x.wk;
         if (!_committedLast[x.customer] || d > _committedLast[x.customer]) _committedLast[x.customer] = d;
@@ -23276,8 +23280,14 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
     const spark = lastN(10).map(w => Math.round((wkCust[w]&&wkCust[w][c])||0));
     let trend = 'fl'; if (r4 > rp4*1.15) trend='up'; else if (r4 < rp4*0.85) trend='dn';
     const cad = cadence(c);
-    return { c, r13:Math.round(r13), r4:Math.round(r4), spark, trend, days:daysSinceEff(c), cad, t13:custSumWeeks(c,w13) };
-  }).filter(x => x.r13 >= DM_MIN_RATE || _committedCust[x.c]).sort((a,b)=>b.r13-a.r13);
+    // Rates in every reaction window, not just 13 weeks. The threshold below decides who the model
+    // carries a run-rate for, and the plans run on 3- and 6-week windows: judging on the 13-week
+    // average alone dropped accounts that are material RIGHT NOW, and their volume then had nowhere
+    // to go but the residual (turmeric Fiji: 16 of 88 cs/wk).
+    const r6 = custSumWeeks(c,w6)/(w6.length||1);
+    const r3 = custSumWeeks(c,w3)/(w3.length||1);
+    return { c, r13:Math.round(r13), r6:Math.round(r6), r3:Math.round(r3), r4:Math.round(r4), spark, trend, days:daysSinceEff(c), cad, t13:custSumWeeks(c,w13) };
+  }).filter(x => x.r13 >= DM_MIN_RATE || x.r6 >= DM_MIN_RATE || x.r3 >= DM_MIN_RATE || _committedCust[x.c]).sort((a,b)=>b.r13-a.r13);
 
   const dormant = Object.keys(custLifetime)
     .filter(c => !activeCusts[c] && daysSinceEff(c) > 28 && custLifetime[c] > 15000)
@@ -23509,7 +23519,7 @@ function renderDmRunRate(){
     if(typeof dmFilteredRows==='function' && typeof isDirectShipRow==='function' && typeof dmBuildModel==='function'){
       var _rows = dmFilteredRows();
       if(_rows.some(isDirectShipRow)){
-        var _ms = dmBuildModel(_rows.filter(function(r){ return !isDirectShipRow(r); }), false, cl);
+        var _ms = dmBuildModel(_rows.filter(function(r){ return !isDirectShipRow(r); }), false, cl, (typeof productFocus==='function')?productFocus():null);
         if(_ms && _ms.runRate13>0 && Array.isArray(_ms.weeklyReliable)) m = _ms;
         var _p=(typeof getActiveProduct==='function')?getActiveProduct():null;
         var _o=(typeof _dmOrigin!=='undefined' && _dmOrigin && _dmOrigin!=='All')?_dmOrigin:'all';
