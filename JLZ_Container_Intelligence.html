@@ -14734,6 +14734,8 @@ function invmProductStats(p,origin){
   // subtraction nets once; loading it already-net double-counts. prodCommittedTotal is current-week only.
   var committedCases=(typeof prodCommittedTotal==='function')?prodCommittedTotal(p,origin):0;
   var availCases=Math.max(0, effOnHandCases-committedCases), availLbs=availCases*caseLb;
+  // Record this week's on-hand so the past-weeks block becomes exact going forward (same as ginger).
+  try{ if(onHandCases>0 && typeof stockSnapRecord==='function') stockSnapRecord(p, onHandCases); }catch(e){}
   var directShipCases=(typeof invmDirectShipCases==='function')?invmDirectShipCases(p,origin):0;   // Sol-ti turmeric etc. — pass-through, shown separately
   var coverWks=(weeklyLbs>0)?availLbs/weeklyLbs:(availLbs>0?Infinity:0);
   var orderCases=Math.ceil(Math.max(0,(targetWks*weeklyLbs)-availLbs)/caseLb);
@@ -14838,6 +14840,13 @@ function invmCommittedByWeek(p, origin, fromWk){
   all.forEach(function(c){ out[c.wk]=(out[c.wk]||0)+(parseFloat(c.cases)||0); });
   return out;
 }
+// Show/hide the past-weeks block in a product's projection (turmeric/garlic/shallots + ginger-Hawaii).
+// Preference is per product and per device.
+function invmToggleHist(p){
+  try{ var k='bp_hist_open_'+p; localStorage.setItem(k, localStorage.getItem(k)==='1' ? '0' : '1'); }catch(e){}
+  if(typeof invmReRender==='function') invmReRender();
+  else if(typeof renderInventory==='function') renderInventory();
+}
 function invmProjectionHTML(s){
   var p=s.p, N=13;
   var f=function(n){ return Math.round(n||0).toLocaleString('en-US'); };
@@ -14883,6 +14892,76 @@ function invmProjectionHTML(s){
     verdict='<b>'+((s.status==='ur')?'Urgent.':'Reorder.')+'</b> Drops below safety ('+f(safetyCases)+' cs) on <b>'+lbl(shortWk.wkISO)+'</b> (week +'+firstShort+'). '
       +'Lead '+f1(s.leadWks)+' wk → place the order by <b>'+lbl(orderByISO)+'</b> at the latest. Suggested: <b>'+f(s.orderCases)+' cs</b> to reach target.';
   }
+  // ── PAST WEEKS (collapsible, closed by default) — mirrors the ginger Buy Planner block ──────────
+  // Only verifiable figures: what left the warehouse and what actually landed. Stock is reconstructed
+  // backwards from today (approximate, flagged) unless a weekly snapshot was recorded.
+  var HIST_N=8;
+  var histHtml='';
+  try{
+    var _hm=(typeof invmProductModel==='function')?invmProductModel(s.p, s.origin):null;
+    var _hrel=(_hm&&Array.isArray(_hm.weeklyReliable))?_hm.weeklyReliable:[];
+    if(_hrel.length){
+      var _hcl=s.caseLb||30;
+      var _hcur=null; try{ _hcur=(typeof dmWeekKey==='function')?dmWeekKey(new Date()):null; }catch(e){}
+      var hw=_hrel.filter(function(w){ return !_hcur || w.week<_hcur; }).slice(-HIST_N)
+                  .map(function(w){ return {week:w.week, sold:Math.round((w.lbs||0)/_hcl)}; });
+      if(hw.length){
+        // Containers actually received for this product+origin (status-agnostic: it already landed)
+        var _harr={};
+        ((typeof getOrders==='function')?getOrders():[]).forEach(function(o){
+          if(_ordProd(o)!==s.p) return;
+          if(s.origin && s.origin!=='all'){ var _oo=(typeof _ordOrigin==='function')?_ordOrigin(o):(o.origin||''); if(_oo && _oo!==s.origin) return; }
+          var land=o.arrivalActual; if(!land) return;
+          var wk; try{ wk=(typeof dmWeekKey==='function')?dmWeekKey(new Date(String(land).slice(0,10)+'T12:00:00')):null; }catch(e){ wk=null; }
+          if(!wk) return;
+          var cs=parseFloat(o.cases)||0; if(cs<=0) return;
+          (_harr[wk]=_harr[wk]||[]).push({po:o.jlzPo||'—', cases:cs});
+        });
+        var _hinfl=(s.shrinkPct>0)?(1/(1-Math.min(0.6,s.shrinkPct/100))):1;
+        hw.forEach(function(w){ w.arrivals=_harr[w.week]||[]; w.arrCases=w.arrivals.reduce(function(t,a){return t+a.cases;},0); w.out=Math.round(w.sold*_hinfl); });
+        var _hsnaps=(typeof stockSnapFor==='function')?stockSnapFor(s.p):{};
+        var _hcursor=(hasCommWk ? (s.effOnHandCases!=null?s.effOnHandCases:s.onHandCases) : (s.availCases!=null?s.availCases:s.onHandCases));
+        for(var _i=hw.length-1;_i>=0;_i--){ var _w=hw[_i];
+          _w.end=_hcursor; _w.start=_hcursor+_w.out-_w.arrCases; _w.est=true;
+          if(_hsnaps[_w.week]!=null){ _w.end=_hsnaps[_w.week]; _w.start=_hsnaps[_w.week]+_w.out-_w.arrCases; _w.est=false; }
+          _hcursor=_w.start;
+        }
+        var _hopen=false; try{ _hopen=localStorage.getItem('bp_hist_open_'+s.p)==='1'; }catch(e){}
+        var _havg=Math.round(hw.reduce(function(t,w){return t+w.sold;},0)/hw.length);
+        var _hsc=function(v,est){ return est
+          ? '<span style="font-style:italic;color:var(--gray-400)" title="Reconstructed backwards from today — historical stock isn\'t recorded, so manual corrections in between aren\'t reflected">~'+f(v)+'</span>'
+          : '<span style="font-weight:700;color:var(--gray-700)" title="Recorded snapshot — exact">'+f(v)+'</span>'; };
+        histHtml='<div style="border-bottom:1px solid var(--gray-100)">'
+          +'<div onclick="invmToggleHist(\''+s.p+'\')" style="cursor:pointer;padding:8px 14px;background:var(--gray-50);display:flex;align-items:center;gap:8px;font-size:11px;color:var(--gray-600);user-select:none">'
+            +'<span style="font-size:9px;color:var(--gray-400)">'+(_hopen?'▾':'▸')+'</span>'
+            +'<b>'+(_hopen?'Hide':'Show')+' the last '+hw.length+' weeks</b>'
+            +'<span style="color:var(--gray-400)">what actually happened — warehouse outflow &amp; containers received</span>'
+            +'<span style="margin-left:auto;color:var(--gray-500);font-family:var(--fm)">avg '+f(_havg)+' cs/wk sold</span>'
+          +'</div>';
+        if(_hopen){
+          histHtml+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11px;min-width:640px"><tbody>';
+          hw.forEach(function(w){
+            var _wn=(typeof cxWeekNo==='function'&&cxWeekNo(w.week))?('Wk '+cxWeekNo(w.week)):w.week.slice(5);
+            var _at=w.arrivals.length?w.arrivals.map(function(a){return 'PO '+a.po+' ('+f(a.cases)+'cs)';}).join(', '):'<span style="color:var(--gray-300)">—</span>';
+            histHtml+='<tr style="border-bottom:1px solid var(--gray-100);background:var(--gray-50);color:var(--gray-500)">'
+              +'<td style="padding:7px 12px;text-align:left;font-weight:700">'+_wn+' <span style="color:var(--gray-400);font-weight:400;font-size:10px">'+((typeof dmWeekRange==='function')?dmWeekRange(w.week):w.week.slice(5))+'</span></td>'
+              +'<td style="padding:7px 12px;text-align:right">'+_hsc(w.start,w.est)+'</td>'
+              +'<td style="padding:7px 12px;text-align:right">'+(w.arrCases?'<span style="color:#047857;font-weight:700">+'+f(w.arrCases)+'</span>':'<span style="color:var(--gray-300)">—</span>')+'</td>'
+              +'<td style="padding:7px 12px;text-align:right;font-weight:700" title="Cases that left the warehouse: invoiced ÷ (1 − shrink)">'+f(w.out)
+                +'<div style="font-size:9px;font-weight:400;color:var(--gray-400)">sold '+f(w.sold)+'</div></td>'
+              +'<td style="padding:7px 12px;text-align:right">'+_hsc(w.end,w.est)+'</td>'
+              +'<td style="padding:7px 12px;text-align:left;font-size:10px;color:var(--gray-400)">'+_at+'</td>'
+              +'</tr>';
+          });
+          histHtml+='<tr><td colspan="6" style="padding:6px 12px;font-size:10px;color:var(--gray-400);background:var(--gray-50)">'
+            +'Big number = what LEFT the warehouse (invoiced ÷ (1 − shrink)), same basis as Demand below; <b>sold</b> = invoiced. '
+            +'<i>~italic stock</i> = reconstructed backwards from today; <b>bold</b> = recorded snapshot, exact.'
+            +'</td></tr></tbody></table></div>';
+        }
+        histHtml+='</div>';
+      }
+    }
+  }catch(e){ histHtml=''; }
   // table — same shape as the ginger Buy Planner projection (Starting stock / Arrivals / Demand / Ending stock / Cover / Status)
   var th='text-align:right;font-family:var(--fb);font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);font-weight:600;padding:9px 12px;background:var(--gray-50);border-bottom:2px solid var(--gray-200)';
   var badge=function(txt,bg,fg){ return '<span style="padding:2px 8px;border-radius:8px;background:'+bg+';color:'+fg+';font-size:9px;font-weight:700;white-space:nowrap">'+txt+'</span>'; };
@@ -14926,6 +15005,7 @@ function invmProjectionHTML(s){
           ? ('Projection starts at <b style="color:var(--gray-600)">'+f(s.effOnHandCases)+' cs</b> (usable on-hand) and books committed in its own week.')
           : ('Projection starts at <b style="color:var(--gray-600)">'+f(s.availCases)+' cs</b> (available).'))+'</div>'
     +'</div>'
+    + histHtml
     +'<div style="padding:11px 14px"><div class="ipv-st '+vcls+'" style="display:block;margin-bottom:10px;line-height:1.55">'+verdict+'</div>'
     +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11px;min-width:640px">'
     +'<thead><tr><th style="'+th+';text-align:left">Week</th>'
