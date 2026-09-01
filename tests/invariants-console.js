@@ -52,17 +52,26 @@
     var win = (typeof dmWindow === 'function') ? dmWindow(p, origin) : 13;
     var key = win === 3 ? 'rr3Cases' : win === 6 ? 'rr6Cases' : 'rrCases';
 
-    // Recálculo independiente de las filas crudas, con la misma definición que usa el modelo
-    // para wkCust: solo ventas, sin cuentas internas, direct-ship incluido.
-    var mine = {};
+    // Recálculo independiente de las filas crudas, espejando EXACTAMENTE el filtro que usa
+    // invmProductModel: producto, origen (con invmOriginMatch, que es el resolvedor que usa
+    // ese camino), sin direct-ship. Más dmBuildModel: solo ventas, sin cuentas internas.
+    // El volumen direct-ship se cuenta aparte y se muestra: no es demanda de stock, pero
+    // tampoco tiene que desaparecer sin dejar rastro.
+    var mine = {}, dsLbs = 0;
     _dmRawAll.forEach(function(r){
       if ((r.prod || 'ginger') !== p) return;
       if (r.type && r.type !== 'Sale') return;
       if (isInternal(r.c)) return;
       if (origin !== 'all'){
-        var ro = ''; try { ro = dmRowOrigin(r) || ''; } catch(e){}
-        if (ro !== origin) return;
+        var match = false;
+        try { match = (typeof invmOriginMatch === 'function') ? invmOriginMatch(r, origin) : (dmRowOrigin(r) === origin); }
+        catch(e){ match = false; }
+        if (!match) return;
       }
+      var isDs = false;
+      // origin 'all' cae en otro camino del modelo (qaModelG/_dmModel) que NO saca direct-ship.
+      if (origin !== 'all'){ try { isDs = isDirectShipRow(r); } catch(e){} }
+      if (isDs){ dsLbs += (r.lbs || 0); return; }
       var w = wkOf(r.d);
       mine[w] = (mine[w] || 0) + (r.lbs || 0);
     });
@@ -101,6 +110,7 @@
     var row = {
       prod:p, origen:origin, vent:win,
       dif_vs_crudo: r1(worst),
+      directship_cs: Math.round(dsLbs / cl),      // pass-through apartado a propósito, no es demanda de stock
       saltos: skips,
       rr: Math.round(rr),
       filas: Math.round(sumRows),
