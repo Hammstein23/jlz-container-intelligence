@@ -14144,6 +14144,11 @@ function bpRollingAvg(sales, n) {
 }
 
 // ── Pipeline: orders not yet arrived, grouped by arrival week ──
+// Buy Planner: show/hide the past-weeks block above the forecast. Preference persists per device.
+function bpToggleHist(){
+  try{ var open = localStorage.getItem('bp_hist_open') === '1'; localStorage.setItem('bp_hist_open', open ? '0' : '1'); }catch(e){}
+  if (typeof renderBuyPlanner === 'function') renderBuyPlanner();
+}
 function bpGetPipelineByWeek() {
   const orders = (typeof getOrders === 'function') ? getOrders() : [];
   // Ginger buy-plan supply only — a non-ginger order must never inflate ginger arrivals.
@@ -15688,7 +15693,70 @@ function renderBuyPlanner() {
   // that will sit too long (= more shrink) or get consumed too fast.
   const daysInWh = (cases) => weeklyDemand > 0 ? Math.round((cases / weeklyDemand) * 7) : 0;
 
-  let tableHtml = '<thead><tr style="background:var(--gray-50);border-bottom:2px solid var(--gray-200)">'
+  // ── PAST WEEKS (collapsible, closed by default) ─────────────────────────────
+  // What actually happened: invoiced sales and containers actually received. Deliberately NOT a
+  // reconstructed Start/End/Cover — historical stock isn't stored, so those would be estimates that
+  // silently disagree with the lots. Only verifiable figures here.
+  const HIST_N = 8;
+  const histRows = (function(){
+    try{
+      const mdl = (typeof _dmModelG !== 'undefined' && _dmModelG) ? _dmModelG : null;
+      if(!mdl || !Array.isArray(mdl.weeklyReliable)) return [];
+      const cl = mdl.caseLb || 30;
+      const wks = mdl.weeklyReliable.slice(-HIST_N).map(w => ({ week:w.week, sold:Math.round((w.lbs||0)/cl), partial:false }));
+      if(mdl.partialWeek) wks.push({ week:mdl.partialWeek.week, sold:Math.round((mdl.partialWeek.lbs||0)/cl), partial:true });
+      // Containers actually received, keyed by the week they landed
+      const arr = {};
+      ((typeof getOrders === 'function') ? getOrders() : []).forEach(o => {
+        if (typeof _ordProd === 'function' && _ordProd(o) !== 'ginger') return;
+        const land = (typeof normalizeDate === 'function') ? normalizeDate(o.arrivalActual || '') : (o.arrivalActual || '');
+        if(!land) return;
+        let wk; try{ wk = (typeof dmWeekKey === 'function') ? dmWeekKey(new Date(land + 'T12:00:00')) : null; }catch(e){ wk = null; }
+        if(!wk) return;
+        const cs = Math.max(0, (parseFloat(o.cases)||0) - ((typeof directShipTotal === 'function') ? directShipTotal(o.jlzPo) : 0));
+        if(cs <= 0) return;
+        (arr[wk] = arr[wk] || []).push({ po:o.jlzPo, cases:cs });
+      });
+      wks.forEach(w => { w.arrivals = arr[w.week] || []; });
+      return wks;
+    }catch(e){ return []; }
+  })();
+  const histOpen = (function(){ try{ return localStorage.getItem('bp_hist_open') === '1'; }catch(e){ return false; } })();
+
+  let tableHtml = '';
+  if(histRows.length){
+    const histAvg = Math.round(histRows.filter(w=>!w.partial).reduce((s,w)=>s+w.sold,0) / Math.max(1, histRows.filter(w=>!w.partial).length));
+    tableHtml += '<thead><tr><th colspan="7" style="padding:0;border:none">'
+      + '<div onclick="bpToggleHist()" style="cursor:pointer;padding:8px 12px;background:var(--gray-50);border-bottom:1px solid var(--gray-200);display:flex;align-items:center;gap:8px;font-size:11px;color:var(--gray-600);font-family:var(--fb);user-select:none">'
+        + '<span id="bp-hist-caret" style="font-size:9px;color:var(--gray-400)">' + (histOpen ? '▾' : '▸') + '</span>'
+        + '<b style="font-weight:600">' + (histOpen ? 'Hide' : 'Show') + ' the last ' + histRows.filter(w=>!w.partial).length + ' weeks</b>'
+        + '<span style="color:var(--gray-400)">what actually happened — invoiced sales &amp; containers received</span>'
+        + '<span style="margin-left:auto;color:var(--gray-500);font-family:var(--fm)">avg ' + histAvg.toLocaleString() + ' cs/wk sold</span>'
+      + '</div></th></tr></thead>';
+    if(histOpen){
+      tableHtml += '<tbody id="bp-hist-body">';
+      histRows.forEach(w => {
+        const md = (function(){ try{ return new Date(w.week + 'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}); }catch(e){ return w.week; } })();
+        const wkN = (typeof cxWeekNo === 'function' && cxWeekNo(w.week)) ? ('Wk ' + cxWeekNo(w.week)) : md;
+        const arrTxt = w.arrivals.length
+          ? w.arrivals.map(a => 'PO ' + a.po + ' (' + a.cases.toLocaleString() + 'cs)').join(', ')
+          : '<span style="color:var(--gray-300)">—</span>';
+        const arrCs = w.arrivals.reduce((s,a)=>s+a.cases,0);
+        tableHtml += '<tr style="border-bottom:1px solid var(--gray-100);background:' + (w.partial ? '#FFFBEB' : 'var(--gray-50)') + ';color:var(--gray-500)">'
+          + '<td style="padding:7px 12px;font-weight:600">' + wkN + ' <span style="color:var(--gray-400);font-weight:400;font-size:10px">' + md + (w.partial ? ' · in progress' : '') + '</span></td>'
+          + '<td style="padding:7px 12px;text-align:right;color:var(--gray-300)">—</td>'
+          + '<td style="padding:7px 12px;text-align:right">' + (arrCs ? '<span style="color:#047857;font-weight:600">+' + arrCs.toLocaleString() + '</span>' : '<span style="color:var(--gray-300)">—</span>') + '</td>'
+          + '<td style="padding:7px 12px;text-align:right;font-weight:600">' + w.sold.toLocaleString() + '</td>'
+          + '<td colspan="3" style="padding:7px 12px;font-size:10px;color:var(--gray-400)">' + arrTxt + '</td>'
+          + '</tr>';
+      });
+      tableHtml += '<tr><td colspan="7" style="padding:6px 12px;font-size:10px;color:var(--gray-400);background:var(--gray-50);border-bottom:2px solid var(--gray-300)">'
+        + '<b>Sold</b> = invoiced cases that week &middot; <b>Arrivals</b> = containers actually received. Past stock levels aren\'t stored, so Start/End/Cover are shown only for the forecast below.'
+        + '</td></tr></tbody>';
+    }
+  }
+
+  tableHtml += '<thead><tr style="background:var(--gray-50);border-bottom:2px solid var(--gray-200)">'
     + '<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em">Week</th>'
     + '<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em" title="Cases physically in warehouse at start of week">Starting stock</th>'
     + '<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em">Arrivals</th>'
