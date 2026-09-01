@@ -14859,8 +14859,10 @@ function invmProductModel(p,origin){
     if(typeof productFocus==='function' && productFocus()===p && typeof _dmModel!=='undefined' && _dmModel) return _dmModel;
   }
   if(typeof _dmRawAll!=='undefined' && Array.isArray(_dmRawAll) && typeof dmBuild==='function'){
-    try{ var _m=dmBuild(_dmRawAll.filter(function(r){ return (r.prod||'ginger')===p && invmOriginMatch(r,origin) && !isDirectShipRow(r); }), false, p);
-      return (typeof nowcastProductModel==='function')?nowcastProductModel(_m, p, origin):_m; }catch(e){ return null; }
+    // The rows are filtered to THIS origin, so dmBuild must nowcast with the same origin — it already
+    // does the completion, and calling nowcastProductModel again on top would double-count.
+    try{ return dmBuild(_dmRawAll.filter(function(r){ return (r.prod||'ginger')===p && invmOriginMatch(r,origin) && !isDirectShipRow(r); }), false, p, origin);
+    }catch(e){ return null; }
   }
   return null;
 }
@@ -22804,7 +22806,10 @@ function getActiveProduct(){
 function productFocus(){ const p = getActiveProduct(); return (p === 'all') ? 'ginger' : p; }
 
 // Build a demand model for product key `k` and stamp its case weight on it.
-function dmBuild(rows, weeklyOnly, k){
+// `origin` must match the origin the ROWS were already filtered to. Getting this wrong silently mixes
+// origins: nowcasting an origin-filtered model with 'all' added Hawaii's booked orders on top of Fiji's
+// invoiced sales and turned turmeric Fiji's W35 into 129 cs when the real figure was 88.
+function dmBuild(rows, weeklyOnly, k, origin){
   const cl = productCaseLb(k);
   let m = dmBuildModel(rows, weeklyOnly, cl);
   if (m) m.caseLb = cl;
@@ -22815,7 +22820,7 @@ function dmBuild(rows, weeklyOnly, k){
   // one-off container (Sol-ti) is never smeared into the weekly average.
   try{
     if (m && k && k !== 'all' && !weeklyOnly && typeof nowcastProductModel === 'function'){
-      const _nc = nowcastProductModel(m, k, 'all');
+      const _nc = nowcastProductModel(m, k, origin || 'all');
       if (_nc){ _nc.caseLb = cl; m = _nc; }
     }
   }catch(e){ console.warn('nowcast (dmBuild):', e); }
