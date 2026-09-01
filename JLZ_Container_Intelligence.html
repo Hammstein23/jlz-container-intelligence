@@ -14778,7 +14778,7 @@ function invmDirectShipCases(p,origin){
     if(!invmOriginMatch(r,origin)) return;
     if(!isDirectShipRow(r)) return;
     if(r.type && r.type!=='Sale') return;                 // volume = sales only (credits/returns net out of stock, not here)
-    var k; try{ k=(typeof dmWeekKey==='function')?dmWeekKey(new Date(r.d)):null; }catch(e){ k=null; }
+    var k; try{ k=(typeof dmWeekKey==='function')?dmWeekKey(r.d):null; }catch(e){ k=null; }
     if(k) wk[k]=(wk[k]||0)+(r.lbs||0);
   });
   if(!Object.keys(wk).length) return 0;
@@ -23048,6 +23048,14 @@ function dmToDate(v){
 }
 // Sunday-start week key 'YYYY-MM-DD'.
 function dmWeekKey(d){
+  // Accepts a Date OR a date string. A bare 'YYYY-MM-DD' is parsed by JS as UTC midnight, which west of
+  // Greenwich lands on the PREVIOUS day — so every MONDAY sale was bucketed into the previous week (the
+  // rest of the week was unaffected, which is why it hid for so long). Date-only strings are therefore
+  // parsed at local noon, the same guard already used at the call sites that got this right.
+  if (typeof d === 'string'){
+    const s = d.trim();
+    d = /^\d{4}-\d{2}-\d{2}/.test(s) ? new Date(s.slice(0,10) + 'T12:00:00') : new Date(s);
+  }
   const x = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
   const dow = x.getUTCDay();                                   // 0=Sun..6=Sat
   x.setUTCDate(x.getUTCDate() - (dow === 0 ? 6 : dow - 1));    // back to Monday — weeks start Monday
@@ -23166,7 +23174,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb, prodKey){
     if (r.d > dataMax) dataMax = r.d;                  // latest data date spans all row types
     if (r.type && r.type !== 'Sale') return;           // volume / run-rate = sales only (unchanged)
     if (typeof dmIsInternalAccount === 'function' && dmIsInternalAccount(r.c)) return;   // own movements, not demand
-    const wk = dmWeekKey(new Date(r.d));
+    const wk = dmWeekKey(r.d);
     (wkCust[wk] = wkCust[wk] || {});
     wkCust[wk][r.c] = (wkCust[wk][r.c] || 0) + r.lbs;
     (custDates[r.c] = custDates[r.c] || []).push(r.d);
@@ -23193,7 +23201,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb, prodKey){
     let _lastKey = _soldWeeks[_soldWeeks.length - 1];
     if(_globalMax){
       try{
-        const gk = dmWeekKey(new Date(_globalMax));                     // week the export reaches
+        const gk = dmWeekKey(_globalMax);                     // week the export reaches
         const pd = new Date(curWeekKey + 'T12:00:00'); pd.setDate(pd.getDate() - 7);
         const pk = dmWeekKey(pd);                                       // last COMPLETE calendar week
         const end = (gk >= pk) ? pk : gk;                               // never past what the file covers
@@ -23232,7 +23240,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb, prodKey){
   // Measured on the GLOBAL data max: the lag belongs to the export, so a product that simply didn't sell in
   // the last few days must not have its newest complete week held out as if it were still being reported.
   const _edgeMax = _globalMax || dataMax;
-  const _dmaxWk = _edgeMax ? dmWeekKey(new Date(_edgeMax)) : '';
+  const _dmaxWk = _edgeMax ? dmWeekKey(_edgeMax) : '';
   // The CURRENT calendar week is still in progress: only part of it is invoiced, so averaging it in drags
   // the run-rate down (e.g. ginger W35 showing 88 cs mid-week against a ~850 normal). It is excluded from
   // the average but kept in `partialWeek` so the UI can still SHOW it, clearly marked as in-progress.
@@ -23325,7 +23333,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb, prodKey){
   if (!weeklyOnly && _hasRich) {
     custDetail = {};
     raw.forEach(r => {
-      const wk = dmWeekKey(new Date(r.d));
+      const wk = dmWeekKey(r.d);
       const cases = r.lbs / caseLb, u = r.units || 0, fob = r.fob || 0, cost = r.cost || 0, gs = r.gs || 0, gp = r.gp || 0, lbsv = r.lbs || 0;
       const add = (o) => { o.cases += cases; o.units += u; o.uFob += u*fob; o.uCost += u*cost; o.gs += gs; o.gp += gp; o.lbs += lbsv; };
       let cd = custDetail[r.c];
@@ -23720,10 +23728,10 @@ function dmIsInternalAcct(c){ const x=String(c||'').toLowerCase(); return x.inde
 // the realized liquidation tax, and a separate donation/write-off disposal bucket.
 function dmClearanceScan(prodKey, caseLb, dmax, weeks){
   weeks=weeks||52; caseLb=caseLb||DM_CASE_LB;
-  const all=(_dmRawAll||[]), _cwk=dmax?dmWeekKey(new Date(dmax)):'';   // ISO week of latest sale (robust incomplete-week rule, in sync with dmBuildModel/renderDemand)
+  const all=(_dmRawAll||[]), _cwk=dmax?dmWeekKey(dmax):'';   // ISO week of latest sale (robust incomplete-week rule, in sync with dmBuildModel/renderDemand)
   const sw={};
   all.forEach(r=>{ if((r.prod||'ginger')!==prodKey) return; if(r.type&&r.type!=='Sale') return; if(dmIsInternalAcct(r.c)) return;
-    const k=dmWeekKey(new Date(r.d)); const o=sw[k]||(sw[k]={lbs:0,gs:0,gp:0}); o.lbs+=(r.lbs||0); o.gs+=(r.gs||0); o.gp+=(r.gp||0); });
+    const k=dmWeekKey(r.d); const o=sw[k]||(sw[k]={lbs:0,gs:0,gp:0}); o.lbs+=(r.lbs||0); o.gs+=(r.gs||0); o.gp+=(r.gp||0); });
   const ser=Object.keys(sw).sort().map(k=>({week:k,cases:sw[k].lbs/caseLb,gs:sw[k].gs,gp:sw[k].gp,inc:!!dmax&&_cwk<=k}));
   const comp=ser.filter(s=>!s.inc), last=comp.slice(-weeks);
   const clr=last.filter(s=>s.gp<0&&s.cases>0);
@@ -23737,7 +23745,7 @@ function dmClearanceScan(prodKey, caseLb, dmax, weeks){
   const sd=l13.length>1?Math.sqrt(l13.reduce((a,b)=>a+(b-m)*(b-m),0)/(l13.length-1)):0;
   const dw={};
   all.forEach(r=>{ if((r.prod||'ginger')!==prodKey) return; if(r.type&&r.type!=='Sale') return; if(!dmIsInternalAcct(r.c)) return;
-    const k=dmWeekKey(new Date(r.d)); const o=dw[k]||(dw[k]={lbs:0,gp:0}); o.lbs+=(r.lbs||0); o.gp+=(r.gp||0); });
+    const k=dmWeekKey(r.d); const o=dw[k]||(dw[k]={lbs:0,gp:0}); o.lbs+=(r.lbs||0); o.gp+=(r.gp||0); });
   const dks=Object.keys(dw).filter(k=>_cwk>k).sort().slice(-weeks);
   let dispCases=0,dispCost=0; dks.forEach(k=>{ dispCases+=dw[k].lbs/caseLb; dispCost+=dw[k].gp; });
   return { cleanRunRate:rr, sigma13:sd, normalMargin:normalMargin, gpPerCase:gpPerCase, liqLoss:liqLoss, liqWeeks:clr.length, casesDumped:casesDumped, dispCases:dispCases, dispCost:dispCost, weeks:weeks };
@@ -23766,11 +23774,11 @@ function dmProductSeries(rows, caseLb, dmax){
   const wk = {};
   (rows||[]).forEach(r=>{
     if (r.type && r.type !== 'Sale') return;
-    const k = dmWeekKey(new Date(r.d));
+    const k = dmWeekKey(r.d);
     const o = wk[k] || (wk[k] = { lbs:0, gs:0 });
     o.lbs += (r.lbs || 0); o.gs += (r.gs || 0);
   });
-  const _cwk = dmax ? dmWeekKey(new Date(dmax)) : '';       // ISO week of latest sale — robust incomplete-week rule, in sync with the run-rate
+  const _cwk = dmax ? dmWeekKey(dmax) : '';       // ISO week of latest sale — robust incomplete-week rule, in sync with the run-rate
   const inc = k => !!dmax && _cwk <= k;
   return Object.keys(wk).sort().map(k => ({
     week:k, lbs:wk[k].lbs, gs:wk[k].gs,
@@ -24145,7 +24153,7 @@ function dmcArrivingOrders() {
 }
 function dmcOrderEtaWk(o) {
   var d = o && (o.arrivalEstimated || o.arrivalActual); if(!d) return '';
-  try { return dmWeekKey(new Date(d)); } catch(e) { return ''; }
+  try { return dmWeekKey(d); } catch(e) { return ''; }
 }
 function dmcWeekLabel(wk) {
   if(!wk) return '\u2014';
@@ -24675,7 +24683,7 @@ function cxRenderDetail(){
 
   const axis=(m.weekly||[]).map(w=>w.week).slice(-13);
   const dmax=m.dataMax||'';
-  const _dmaxWk = dmax ? dmWeekKey(new Date(dmax)) : '';   // ISO week (Mon key) of the latest sale on file
+  const _dmaxWk = dmax ? dmWeekKey(dmax) : '';   // ISO week (Mon key) of the latest sale on file
   const incomplete=wk=>!!dmax && _dmaxWk <= wk;            // incomplete unless dataMax is in a STRICTLY LATER ISO week (in sync with reliableWeeks — the newest, still-partial week stays out)
   const allWk=(m.weekly||[]).map(w=>w.week);
   const relWk=allWk.filter(w=>!incomplete(w));   // complete (reliable) weeks, for windowed $ views
