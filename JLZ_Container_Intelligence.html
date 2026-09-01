@@ -14144,6 +14144,26 @@ function bpRollingAvg(sales, n) {
 }
 
 // ── Pipeline: orders not yet arrived, grouped by arrival week ──
+// ── WEEKLY STOCK SNAPSHOTS (per product) ────────────────────────────────────
+// Historical stock was never stored, so past weeks can only be RECONSTRUCTED (approximate — any manual
+// inventory correction in between is invisible to it). From now on we record the real on-hand once per
+// week, so the history becomes exact going forward. A stored snapshot always wins over the estimate.
+var STOCK_SNAP_LS='jlz_stock_snapshots_v1';
+function stockSnapAll(){ try{ var o=JSON.parse(localStorage.getItem(STOCK_SNAP_LS)||'{}'); return (o&&typeof o==='object')?o:{}; }catch(e){ return {}; } }
+function stockSnapSave(o){ try{ localStorage.setItem(STOCK_SNAP_LS, JSON.stringify(o||{})); }catch(e){} }
+function stockSnapFor(product){ var a=stockSnapAll(); return a[product||'ginger'] || {}; }
+// Record this week's on-hand for a product. Idempotent: re-running in the same week overwrites that week.
+function stockSnapRecord(product, cases){
+  product = product || 'ginger';
+  var wk; try{ wk = (typeof dmWeekKey==='function') ? dmWeekKey(new Date()) : null; }catch(e){ wk=null; }
+  if(!wk || !(cases>=0)) return;
+  var all=stockSnapAll();
+  if(!all[product]) all[product]={};
+  all[product][wk]=Math.round(cases);
+  var keys=Object.keys(all[product]).sort();          // keep the last 60 weeks, no unbounded growth
+  if(keys.length>60) keys.slice(0, keys.length-60).forEach(function(k){ delete all[product][k]; });
+  stockSnapSave(all);
+}
 // Buy Planner: show/hide the past-weeks block above the forecast. Preference persists per device.
 function bpToggleHist(){
   try{ var open = localStorage.getItem('bp_hist_open') === '1'; localStorage.setItem('bp_hist_open', open ? '0' : '1'); }catch(e){}
@@ -15482,6 +15502,9 @@ function renderBuyPlanner() {
   const _bpNowWk = (typeof dmWeekKey === 'function') ? dmWeekKey(new Date()) : null;
   const committedNowCases = (_bpNowWk && typeof committedInvForWeek === 'function') ? (committedInvForWeek(_bpNowWk, 'ginger') || 0) : 0;
   const stockCasesGross = stockCases + committedNowCases;
+  // Record this week's real on-hand so the history becomes exact from here on (overwrites within the same
+  // week, so it always holds the latest reading). Only when there is actual stock loaded.
+  try{ if (stockCases > 0 && typeof stockSnapRecord === 'function') stockSnapRecord('ginger', stockCases); }catch(e){}
   const baseline = parseInt(document.getElementById('bp-baseline')?.value || '8');
   // Shrink % is now an editable input (1-40), replacing the old yield on/off toggle.
   // Always applied — the question is the magnitude, not whether to apply it at all.
@@ -15717,7 +15740,20 @@ function renderBuyPlanner() {
         if(cs <= 0) return;
         (arr[wk] = arr[wk] || []).push({ po:o.jlzPo, cases:cs });
       });
-      wks.forEach(w => { w.arrivals = arr[w.week] || []; });
+      wks.forEach(w => { w.arrivals = arr[w.week] || []; w.arrCases = w.arrivals.reduce((s,a)=>s+a.cases,0); });
+      // Stock per week: walk BACKWARDS from today's on-hand, undoing each week (end = start of the next,
+      // start = end + sold − arrived). Approximate — manual inventory corrections in between are invisible,
+      // so it is flagged as an estimate. A stored weekly snapshot (recorded from now on) overrides it.
+      const snaps = (typeof stockSnapFor === 'function') ? stockSnapFor('ginger') : {};
+      let cursor = stockCases;                       // today's real on-hand = end of the current week so far
+      for(let i = wks.length - 1; i >= 0; i--){
+        const w = wks[i];
+        w.end = cursor;
+        w.start = cursor + w.sold - w.arrCases;
+        w.est = true;
+        if(snaps[w.week] != null){ w.end = snaps[w.week]; w.start = snaps[w.week] + w.sold - w.arrCases; w.est = false; }
+        cursor = w.start;
+      }
       return wks;
     }catch(e){ return []; }
   })();
@@ -15741,17 +15777,21 @@ function renderBuyPlanner() {
         const arrTxt = w.arrivals.length
           ? w.arrivals.map(a => 'PO ' + a.po + ' (' + a.cases.toLocaleString() + 'cs)').join(', ')
           : '<span style="color:var(--gray-300)">—</span>';
-        const arrCs = w.arrivals.reduce((s,a)=>s+a.cases,0);
+        const arrCs = w.arrCases || 0;
+        const stockCell = (v, est) => (v == null) ? '<span style="color:var(--gray-300)">—</span>'
+          : (est ? '<span style="font-style:italic;color:var(--gray-400)" title="Reconstructed from today\'s stock — historical stock isn\'t recorded, so manual corrections in between aren\'t reflected">~' + Math.round(v).toLocaleString() + '</span>'
+                 : '<span style="font-weight:600;color:var(--gray-700)" title="Recorded snapshot — exact">' + Math.round(v).toLocaleString() + '</span>');
         tableHtml += '<tr style="border-bottom:1px solid var(--gray-100);background:' + (w.partial ? '#FFFBEB' : 'var(--gray-50)') + ';color:var(--gray-500)">'
           + '<td style="padding:7px 12px;font-weight:600">' + wkN + ' <span style="color:var(--gray-400);font-weight:400;font-size:10px">' + md + (w.partial ? ' · in progress' : '') + '</span></td>'
-          + '<td style="padding:7px 12px;text-align:right;color:var(--gray-300)">—</td>'
+          + '<td style="padding:7px 12px;text-align:right">' + stockCell(w.start, w.est) + '</td>'
           + '<td style="padding:7px 12px;text-align:right">' + (arrCs ? '<span style="color:#047857;font-weight:600">+' + arrCs.toLocaleString() + '</span>' : '<span style="color:var(--gray-300)">—</span>') + '</td>'
           + '<td style="padding:7px 12px;text-align:right;font-weight:600">' + w.sold.toLocaleString() + '</td>'
-          + '<td colspan="3" style="padding:7px 12px;font-size:10px;color:var(--gray-400)">' + arrTxt + '</td>'
+          + '<td style="padding:7px 12px;text-align:right">' + stockCell(w.end, w.est) + '</td>'
+          + '<td colspan="2" style="padding:7px 12px;font-size:10px;color:var(--gray-400)">' + arrTxt + '</td>'
           + '</tr>';
       });
       tableHtml += '<tr><td colspan="7" style="padding:6px 12px;font-size:10px;color:var(--gray-400);background:var(--gray-50);border-bottom:2px solid var(--gray-300)">'
-        + '<b>Sold</b> = invoiced cases that week &middot; <b>Arrivals</b> = containers actually received. Past stock levels aren\'t stored, so Start/End/Cover are shown only for the forecast below.'
+        + '<b>Sold</b> = invoiced cases &middot; <b>Arrivals</b> = containers actually received &middot; <i>~italic stock</i> = reconstructed backwards from today (manual inventory corrections in between aren\'t reflected); <b>bold</b> = recorded snapshot, exact. Snapshots start accumulating from this week on.'
         + '</td></tr></tbody>';
     }
   }
