@@ -24165,6 +24165,13 @@ function dmcRemoveDirect(po, i) { removeDirectShip(po, i); renderCommittedPanel(
 // orders — mirroring hybridSalesForWeek per account. Column total = the exact
 // pre-shrink sales the plan targets. Ginger-only (committed store + plan are
 // ginger). Reads _dmModelG so it matches the Buy Planner, not the focused view.
+// Expands "Other small accounts" into the individual accounts it holds, so the number is never a lump.
+function dmToggleOther(cls, btn){
+  var rows = document.getElementsByClassName(cls);
+  var open = rows.length && rows[0].style.display === 'none';
+  for(var i = 0; i < rows.length; i++) rows[i].style.display = open ? '' : 'none';
+  if(btn) btn.innerHTML = (open ? '▾ ocultar' : '▸ ver las ' + rows.length);
+}
 function renderBuildupPanel(){
   var host = document.getElementById('dm-buildup'); if(!host) return;
   var prod = (typeof productFocus === 'function') ? productFocus() : 'ginger';
@@ -24204,9 +24211,13 @@ function renderBuildupPanel(){
   var infl = isG
     ? ((_bpd && _bpd.salesDemand > 0 && _bpd.weeklyDemand > 0) ? (_bpd.weeklyDemand / _bpd.salesDemand) : (1 / 0.86))
     : (1 / (1 - _shrinkPct / 100));
+  // The model `m` is already filtered to the active origin, so the committed store must be too — otherwise
+  // Hawaii's booked turmeric lands in the Fiji view (same origin leak already fixed in dmBuild's nowcast).
+  var _bpOrigin = (typeof _dmOrigin !== 'undefined' && _dmOrigin && _dmOrigin !== 'All') ? _dmOrigin : '';
   var com = {}, comLast = {};
   (typeof getCommitted === 'function' ? getCommitted() : []).forEach(function(c){
     if(!c || c.type !== 'inv' || !c.wk || _cmProd(c) !== prod) return;
+    if(_bpOrigin && typeof _cmOriginFor === 'function'){ var _o = _cmOriginFor(c); if(_o && _o !== _bpOrigin) return; }
     (com[c.wk] = com[c.wk] || {})[c.customer] = (com[c.wk][c.customer] || 0) + (+c.cases || 0);
     if(!comLast[c.customer] || c.wk > comLast[c.customer]) comLast[c.customer] = c.wk;
   });
@@ -24242,12 +24253,23 @@ function renderBuildupPanel(){
   if(partialWk && histWeeks.indexOf(partialWk) < 0) histWeeks = histWeeks.concat([partialWk]);
   var wkCustH = m.wkCust || null;
   var nowMark = m.nowcastWeeks || {};        // weeks completed with booked orders (nowcast): 'now' | 'prelim'
+  // Order-driven accounts are held OUT of the nowcast on purpose (a lumpy one-off would smear across every
+  // future week). Mirror that here or the ACTUAL columns would show volume the run-rate never averaged.
+  var odSet = {}; (m.customers || []).forEach(function(c){ if(c && c.c && c.sporadic) odSet[c.c] = 1; });
   var actualCases = function(cust, wk){
     var inv = (wkCustH && wkCustH[wk]) ? Math.round((wkCustH[wk][cust] || 0) / caseLb) : 0;   // invoiced (lbs → cases)
     // In nowcasted weeks the customer's booked (unshipped) orders are part of that week's figure, exactly
     // as the run-rate counts them — otherwise the columns wouldn't add up to the total shown below.
-    var booked = (nowMark[wk] && com[wk] && com[wk][cust]) ? Math.round(com[wk][cust]) : 0;
+    var booked = (nowMark[wk] && !odSet[cust] && com[wk] && com[wk][cust]) ? Math.round(com[wk][cust]) : 0;
     return inv + booked;
+  };
+  // Who had volume in a week. A nowcasted week also counts accounts that are booked-only (nothing invoiced
+  // yet) — leaving them out is what made the columns fall short of the run-rate they are supposed to explain.
+  var _custsIn = function(wk){
+    var s = {};
+    if(wkCustH && wkCustH[wk]) Object.keys(wkCustH[wk]).forEach(function(c){ s[c] = 1; });
+    if(nowMark[wk] && com[wk]) Object.keys(com[wk]).forEach(function(c){ if(!odSet[c]) s[c] = 1; });
+    return Object.keys(s);
   };
   // Column totals: for nowcasted weeks use the model's completed figure (invoiced + booked), not the raw
   // invoiced sum — that is what the run-rate averages, so the columns stay consistent with it.
@@ -24255,9 +24277,8 @@ function renderBuildupPanel(){
   // show. Built from the customer breakdown (not the model's weekly total) for two reasons: the model
   // total still carries direct-ship, and this way the visible cells always add up to the total below.
   var histTot = histWeeks.map(function(wk){
-    if(!wkCustH || !wkCustH[wk]) return 0;
     var t = 0;
-    Object.keys(wkCustH[wk]).forEach(function(cust){ if(!_isDS(cust)) t += actualCases(cust, wk); });
+    _custsIn(wk).forEach(function(cust){ if(!_isDS(cust)) t += actualCases(cust, wk); });
     return Math.round(t);
   });
   var planTot = weeks.map(function(w){ try { return Math.round(hybridSalesForWeek(w.weekStartISO, salesBase, m, prod) || 0); } catch(e){ return 0; } });
@@ -24300,21 +24321,73 @@ function renderBuildupPanel(){
   weeks.forEach(function(w){ h += '<th>W' + w.weekNum + '<br><span>' + shortD(w.weekStartISO) + '</span></th>'; });
   h += '</tr></thead><tbody>' + body;
   var histPad = function(cls){ var s=''; histWeeks.forEach(function(wk,i){ s += '<td class="hist' + (i===histWeeks.length-1?' hist-last':'') + (wk===partialWk?' hist-part':'') + (cls?(' '+cls):'') + '"></td>'; }); return s; };
-  // Historical residual: what the listed accounts don't cover in each ACTUAL week. Without it the visible
-  // cells silently fail to add up to the column total.
-  var histResid = histWeeks.map(function(wk, i){
-    var shownSum = 0;
-    shown.forEach(function(c){ shownSum += actualCases(c.c, wk); });
-    return Math.max(0, Math.round((histTot[i] || 0) - shownSum));
+  // "Other small accounts" used to be an unexplained lump. Name the accounts inside it: any account with
+  // sales in the ACTUAL weeks that the model doesn't track individually (under 1 cs/wk, or lapsed) still
+  // shows up here by name, so the number is traceable instead of a black box.
+  var _shownSet = {}; shown.forEach(function(c){ _shownSet[c.c] = 1; });
+  var _byCust = {};
+  histWeeks.forEach(function(wk){
+    _custsIn(wk).forEach(function(cust){
+      if(_shownSet[cust] || _isDS(cust)) return;
+      _byCust[cust] = (_byCust[cust] || 0) + actualCases(cust, wk);
+    });
   });
-  if(resid.some(function(x){ return x >= 1; }) || histResid.some(function(x){ return x >= 1; })){
-    h += '<tr class="oth"><td class="c"><span class="nm">Other small accounts</span></td>';
+  var extras = Object.keys(_byCust).filter(function(c){ return _byCust[c] > 0; })
+                     .sort(function(a,b){ return _byCust[b] - _byCust[a]; });
+  var _mdlRr = {}; (m.customers || []).forEach(function(c){ if(c && c.c) _mdlRr[c.c] = (c[_rrKey] != null ? c[_rrKey] : c.rrCases) || 0; });
+
+  // Historical residual: what NOBODY named covers — i.e. booked orders the nowcast completed without a
+  // customer breakdown. Without it the visible cells silently fail to add up to the column total.
+  var histResid = histWeeks.map(function(wk, i){
+    var s = 0;
+    shown.forEach(function(c){ s += actualCases(c.c, wk); });
+    extras.forEach(function(c){ s += actualCases(c, wk); });
+    return Math.max(0, Math.round((histTot[i] || 0) - s));
+  });
+  // Row = the named accounts + whatever is left unattributable, and one expandable detail row per account.
+  var _othTot = histWeeks.map(function(wk, i){
+    var s = histResid[i] || 0;
+    extras.forEach(function(c){ s += actualCases(c, wk); });
+    return Math.round(s);
+  });
+  if(resid.some(function(x){ return x >= 1; }) || _othTot.some(function(x){ return x >= 1; })){
+    var _oid = 'oth-' + prod + '-' + _win;
+    var _nDet = extras.length + (histResid.some(function(x){ return x >= 1; }) ? 1 : 0);
+    var _cap = _nDet
+      ? '<button onclick="dmToggleOther(\'' + _oid + '\',this)" style="border:1px solid var(--gray-200);background:var(--white);'
+        + 'color:var(--gray-500);border-radius:5px;font-family:var(--fm);font-size:9px;font-weight:700;padding:1px 5px;'
+        + 'margin-left:6px;cursor:pointer">▸ ver las ' + _nDet + '</button>'
+      : '';
+    h += '<tr class="oth oth-sum"><td class="c"><span class="nm">Other small accounts</span>' + _cap
+       + '<div class="mt">under 1 cs/wk or lapsed</div></td>';
     histWeeks.forEach(function(wk, i){
       h += '<td class="hist' + (i===histWeeks.length-1?' hist-last':'') + (wk===partialWk?' hist-part':'') + '">'
-        + (histResid[i] >= 1 ? histResid[i].toLocaleString() : '<span class="z">0</span>') + '</td>';
+        + (_othTot[i] >= 1 ? _othTot[i].toLocaleString() : '<span class="z">0</span>') + '</td>';
     });
     resid.forEach(function(x){ h += '<td class="r">' + (x >= 1 ? x.toLocaleString() : '0') + '</td>'; });
     h += '</tr>';
+    // The accounts inside it, by name. Their PROJECTED cells are 0 on purpose: the aggregate run-rate
+    // already carries them, and it is booked into the "unattributed" row below so nothing is counted twice.
+    extras.forEach(function(cust){
+      h += '<tr class="oth oth-det ' + _oid + '" style="display:none"><td class="c" style="padding-left:22px">'
+         + '<span class="nm" style="font-weight:500;color:var(--gray-500)">' + esc(cust) + '</span>'
+         + '<div class="mt">' + (_mdlRr[cust] != null ? ('rr ' + (Math.round(_mdlRr[cust]*10)/10) + ' cs') : 'sin run-rate — dejó de comprar') + '</div></td>';
+      histWeeks.forEach(function(wk, i){ var av = actualCases(cust, wk);
+        h += '<td class="hist' + (i===histWeeks.length-1?' hist-last':'') + (wk===partialWk?' hist-part':'') + '">'
+          + (av > 0 ? av.toLocaleString() : '<span class="z">0</span>') + '</td>'; });
+      weeks.forEach(function(){ h += '<td class="r"><span class="z">0</span></td>'; });
+      h += '</tr>';
+    });
+    if(histResid.some(function(x){ return x >= 1; })){
+      h += '<tr class="oth oth-det ' + _oid + '" style="display:none"><td class="c" style="padding-left:22px">'
+         + '<span class="nm" style="font-weight:500;color:var(--gray-500)">Sin cuenta asignada</span>'
+         + '<div class="mt">órdenes booked de la semana nowcasteada</div></td>';
+      histWeeks.forEach(function(wk, i){
+        h += '<td class="hist' + (i===histWeeks.length-1?' hist-last':'') + (wk===partialWk?' hist-part':'') + '">'
+          + (histResid[i] >= 1 ? histResid[i].toLocaleString() : '<span class="z">0</span>') + '</td>'; });
+      weeks.forEach(function(){ h += '<td class="r"><span class="z">0</span></td>'; });
+      h += '</tr>';
+    }
   }
   h += '<tr class="tot"><td class="c">TOTAL · sales cases</td>';
   histWeeks.forEach(function(wk, i){ h += '<td class="hist' + (i===histWeeks.length-1?' hist-last':'') + (wk===partialWk?' hist-part':'') + '">' + (histTot[i] || 0).toLocaleString() + '</td>'; });
