@@ -14893,8 +14893,11 @@ function invmProductStats(p,origin){
   var store=prodInvFor(p);
   var origins=invmOriginsFor(p);
   origin=origin||(typeof INVM_ORIGIN!=='undefined'?INVM_ORIGIN:'');
-  // Always per-origin: Fiji vs Hawaii (cost/lead differ) must never blend. Resolve 'all'/invalid to the first origin.
-  if(origins.length && (origin==='all' || origins.indexOf(origin)<0)) origin=origins[0];
+  // Always per-origin: Fiji vs Hawaii (cost/lead differ) must never blend. Only 'all'/empty falls back to
+  // an origin that has lots. An EXPLICIT origin is honoured even with zero lots — `origins` lists the
+  // origins currently holding stock, so the old fallback silently answered ginger-Peru with Hawaii's
+  // numbers whenever Peru happened to be out of stock in this store.
+  if(!origin || origin==='all'){ if(origins.length) origin=origins[0]; }
   var allLots=store.lots||[];
   var lots=(!origin||origin==='all')?allLots:allLots.filter(function(l){ return invmOriginMatch(l,origin); });
   // Excluded lots = physically gone but kept on record; subtracted from planned on-hand so they never
