@@ -14600,10 +14600,21 @@ function nowcastProductModel(m, p, origin){
   if(!added) return m;
   var mean=function(a){ return a.length? a.reduce(function(s,x){return s+(x.lbs||0);},0)/a.length : 0; };
   var out=Object.assign({}, m);
-  out.weeklyReliable=series;
-  out.runRate13=Math.round(mean(series.slice(-13)));
-  out.runRate6=Math.round(mean(series.slice(-6)));
-  out.runRate3=Math.round(mean(series.slice(-3)));
+  // The CURRENT week is still running: whatever is booked so far is a fraction of what it will end at, so it
+  // is kept for DISPLAY (partialWeek) but excluded from every average — averaging it in drags the run-rate
+  // down (ginger: 851 → 759 on a week showing 88 of a normal ~850).
+  var curWk=(typeof dmWeekKey==='function')?dmWeekKey(new Date()):'';
+  var avgSeries=series, curEntry=null;
+  if(curWk){
+    avgSeries=series.filter(function(w){ if(w.week===curWk){ curEntry=w; return false; } return true; });
+    if(!avgSeries.length) avgSeries=series;            // never end up with an empty basis
+  }
+  if(curEntry) out.partialWeek={week:curEntry.week, lbs:curEntry.lbs, partial:true};
+  out.weeklyReliable=avgSeries;
+  out.runRate13=Math.round(mean(avgSeries.slice(-13)));
+  out.runRate6=Math.round(mean(avgSeries.slice(-6)));
+  out.runRate3=Math.round(mean(avgSeries.slice(-3)));
+  series=avgSeries;   // rateWeeks below must list only the averaged weeks
   // Keep rateWeeks in step with the nowcasted series so the build-up table's ACTUAL columns show the SAME
   // weeks the run-rate averages (incl. the completed W34/W35) — otherwise the columns wouldn't average to rr.
   out.rateWeeks=series.map(function(w){ return w.week; });
@@ -22685,7 +22696,12 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
   // strictly later week (>) drops the newest week until it is fully in — conservative, never
   // pollutes the average with a partial week. (It re-enters complete on the next export.)
   const _dmaxWk = dataMax ? dmWeekKey(new Date(dataMax)) : '';
-  const reliableWeeks = _dmaxWk ? allWeeks.filter(w => _dmaxWk > w) : allWeeks;
+  // The CURRENT calendar week is still in progress: only part of it is invoiced, so averaging it in drags
+  // the run-rate down (e.g. ginger W35 showing 88 cs mid-week against a ~850 normal). It is excluded from
+  // the average but kept in `partialWeek` so the UI can still SHOW it, clearly marked as in-progress.
+  const _curWk = dmWeekKey(anchor);
+  const reliableWeeks = (_dmaxWk ? allWeeks.filter(w => _dmaxWk > w) : allWeeks).filter(w => w < _curWk);
+  const partialWeek = (allWeeks.indexOf(_curWk) >= 0) ? { week:_curWk, lbs:Math.round(weekTotal[_curWk]||0), partial:true } : null;
   const rateWeeks = (reliableWeeks.length ? reliableWeeks : allWeeks).slice(-13);
   const runRate13 = rateWeeks.length ? sumWeeks(rateWeeks)/rateWeeks.length : 0;
   // Reaction-window scenarios: same reliable-week series, shorter lookbacks. 13w = structural
@@ -22857,6 +22873,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
            // Actual weekly sales per customer, keyed by week — lets the build-up table show the REAL
            // weeks behind each run-rate next to the projected ones. rateWeeks = the weeks the run-rate averages.
            rateWeeks: rateWeeks.slice(),
+           partialWeek,                    // current in-progress week: shown in the UI, never averaged
            wkCust: wkCust,
            dataMax, weeksCovered:allWeeks.length, weeklyOnly:!!weeklyOnly };
 }
@@ -23745,7 +23762,11 @@ function renderBuildupPanel(){
   function shortD(iso){ try { return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(e){ return iso; } }
   // ── ACTUAL weeks: the exact weeks the run-rate averages (window-sized), so the average of these
   // columns IS each customer's rr — the projection becomes auditable at a glance.
+  // ACTUAL columns = the run-rate window, PLUS the current in-progress week (shown for visibility, never
+  // part of the average — it is only partly invoiced, so averaging it would understate the run-rate).
   var histWeeks = (Array.isArray(m.rateWeeks) ? m.rateWeeks.slice(-_win) : []);
+  var partialWk = (m.partialWeek && m.partialWeek.week) ? m.partialWeek.week : null;
+  if(partialWk && histWeeks.indexOf(partialWk) < 0) histWeeks = histWeeks.concat([partialWk]);
   var wkCustH = m.wkCust || null;
   var nowMark = m.nowcastWeeks || {};        // weeks completed with booked orders (nowcast): 'now' | 'prelim'
   var actualCases = function(cust, wk){
@@ -23770,7 +23791,7 @@ function renderBuildupPanel(){
   shown.forEach(function(c){
     body += '<tr><td class="c"><span class="nm">' + esc(c.c) + '</span><span class="bd ' + (c.sporadic ? 'od' : 'st') + '">' + (c.sporadic ? 'OD' : 'ST') + '</span><div class="mt">rr ' + Math.round((c[_rrKey] != null ? c[_rrKey] : c.rrCases) || 0) + ' cs</div></td>';
     histWeeks.forEach(function(wk, i){ var av = actualCases(c.c, wk);
-      body += '<td class="hist' + (i === histWeeks.length - 1 ? ' hist-last' : '') + '">' + (av > 0 ? av.toLocaleString() : '<span class="z">0</span>') + '</td>'; });
+      body += '<td class="hist' + (i === histWeeks.length - 1 ? ' hist-last' : '') + (wk===partialWk?' hist-part':'') + '">' + (av > 0 ? av.toLocaleString() : '<span class="z">0</span>') + '</td>'; });
     weeks.forEach(function(w, i){ var cv = cell(c, w.weekStartISO); colTot[i] += cv.v; body += '<td class="' + cv.k + '">' + (cv.v > 0 ? cv.v.toLocaleString() : '0') + '</td>'; });
     body += '</tr>';
   });
@@ -23784,27 +23805,29 @@ function renderBuildupPanel(){
   h += '<div class="dbu-wrap"><table class="dbu-tbl"><thead>';
   if(histWeeks.length){
     h += '<tr class="dbu-grp"><th class="c"></th>'
-       + '<th class="hist-grp" colspan="' + histWeeks.length + '">ACTUAL &middot; last ' + histWeeks.length + ' wk (the run-rate window)</th>'
+       + '<th class="hist-grp" colspan="' + histWeeks.length + '">ACTUAL &middot; last ' + (partialWk?(histWeeks.length-1):histWeeks.length) + ' wk (the run-rate window)' + (partialWk?' &middot; <span style="color:#b45309">◐ current week not averaged</span>':'') + '</th>'
        + '<th class="proj-grp" colspan="' + weeks.length + '">PROJECTED</th></tr>';
   }
   h += '<tr><th class="c">Customer · run-rate</th>';
   histWeeks.forEach(function(wk, i){
     var wn = (typeof cxWeekNo === 'function' && cxWeekNo(wk)) ? ('W' + cxWeekNo(wk)) : shortD(wk);
-    var nm = nowMark[wk];   // completed with booked orders (not fully invoiced yet)
-    h += '<th class="hist' + (i === histWeeks.length - 1 ? ' hist-last' : '') + (nm?' hist-now':'') + '"'
-       + (nm?' title="Completed with booked (unshipped) orders — this week is not fully invoiced yet"':'') + '>'
-       + wn + (nm?'<sup class="nc">●</sup>':'') + '<br><span>' + shortD(wk) + '</span></th>';
+    var nm = nowMark[wk];              // completed with booked orders (not fully invoiced yet)
+    var isPart = (wk === partialWk);   // current week, still in progress → shown but NOT in the average
+    h += '<th class="hist' + (i === histWeeks.length - 1 ? ' hist-last' : '') + (nm?' hist-now':'') + (isPart?' hist-part':'') + '"'
+       + (isPart?' title="Week in progress — shown for visibility, NOT included in the run-rate average"'
+               :(nm?' title="Completed with booked (unshipped) orders — this week is not fully invoiced yet"':'')) + '>'
+       + wn + (isPart?'<sup class="pc">◐</sup>':(nm?'<sup class="nc">●</sup>':'')) + '<br><span>' + (isPart?'in progress':shortD(wk)) + '</span></th>';
   });
   weeks.forEach(function(w){ h += '<th>W' + w.weekNum + '<br><span>' + shortD(w.weekStartISO) + '</span></th>'; });
   h += '</tr></thead><tbody>' + body;
-  var histPad = function(cls){ var s=''; histWeeks.forEach(function(wk,i){ s += '<td class="hist' + (i===histWeeks.length-1?' hist-last':'') + (cls?(' '+cls):'') + '"></td>'; }); return s; };
+  var histPad = function(cls){ var s=''; histWeeks.forEach(function(wk,i){ s += '<td class="hist' + (i===histWeeks.length-1?' hist-last':'') + (wk===partialWk?' hist-part':'') + (cls?(' '+cls):'') + '"></td>'; }); return s; };
   if(resid.some(function(x){ return x >= 1; })){
     h += '<tr class="oth"><td class="c"><span class="nm">Other small accounts</span></td>' + histPad();
     resid.forEach(function(x){ h += '<td class="r">' + (x >= 1 ? x.toLocaleString() : '0') + '</td>'; });
     h += '</tr>';
   }
   h += '<tr class="tot"><td class="c">TOTAL · sales cases</td>';
-  histWeeks.forEach(function(wk, i){ h += '<td class="hist' + (i===histWeeks.length-1?' hist-last':'') + '">' + (histTot[i] || 0).toLocaleString() + '</td>'; });
+  histWeeks.forEach(function(wk, i){ h += '<td class="hist' + (i===histWeeks.length-1?' hist-last':'') + (wk===partialWk?' hist-part':'') + '">' + (histTot[i] || 0).toLocaleString() + '</td>'; });
   total.forEach(function(t){ h += '<td>' + t.toLocaleString() + '</td>'; });
   h += '</tr><tr class="buy"><td class="c">Buy · with shrink' + (isG ? '' : '*') + '</td>' + histPad();
   total.forEach(function(t){ h += '<td>' + Math.round(t * infl).toLocaleString() + '</td>'; });
@@ -24216,6 +24239,10 @@ function cxStyles(){ return '<style>'
   + '.dbu-tbl td.hist .z{color:var(--gray-300)}'
   + '.dbu-tbl th.hist-now{color:#7c3aed}'
   + '.dbu-tbl th .nc{color:#7c3aed;font-size:8px;margin-left:1px}'
+  /* current in-progress week: visible but visibly NOT part of the average */
+  + '.dbu-tbl th.hist-part{color:#b45309;background:#FFFBEB;border-left:1px dashed var(--gray-300)}'
+  + '.dbu-tbl td.hist-part{background:#FFFBEB;color:#b45309;border-left:1px dashed var(--gray-300)}'
+  + '.dbu-tbl th .pc{color:#b45309;font-size:8px;margin-left:1px}'
   + '.dbu-tbl tr.dbu-grp th{font-size:9px;letter-spacing:.08em;padding:5px 10px;border-bottom:none;text-align:center}'
   + '.dbu-tbl tr.dbu-grp th.hist-grp{background:var(--gray-100);color:var(--gray-500);border-right:2px solid var(--gray-300)}'
   + '.dbu-tbl tr.dbu-grp th.proj-grp{background:var(--gray-50);color:var(--jlz,#0d5026)}'
