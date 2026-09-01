@@ -18144,8 +18144,11 @@ function jsonpGet(baseUrl, params, timeoutMs) {
     };
     const timer = setTimeout(() => {
       if (done) return; done = true; cleanup();
-      reject(new Error('Sheet read timed out (check Apps Script deployment + JSONP support)'));
-    }, timeoutMs || 12000);
+      reject(new Error('Sheet read timed out after ' + Math.round((timeoutMs || 45000)/1000) + 's — the Sheet is slow or asleep right now, not necessarily misconfigured. Try again; if it keeps failing, check the Apps Script deployment.'));
+    // 12s was too tight for the heavier reads (listOrders/listSales scan the whole sheet): Apps Script
+    // regularly needs 15-25s on a cold start, the callback got deleted mid-flight, and the late response
+    // then threw "__jlz_jsonp_xxx is not defined" while the user saw a misleading "timed out".
+    }, timeoutMs || 45000);
     window[cbName] = (data) => {
       if (done) return; done = true; cleanup(); resolve(data);
     };
