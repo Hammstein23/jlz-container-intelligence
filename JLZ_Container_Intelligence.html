@@ -24146,7 +24146,14 @@ function renderBuildupPanel(){
   }
   var winSet = {};
   weeks.forEach(function(w){ if(com[w.weekStartISO]) Object.keys(com[w.weekStartISO]).forEach(function(k){ winSet[k] = 1; }); });
-  var shown = m.customers.filter(function(c){ return c && c.c && ((c.rrCases >= 1) || winSet[c.c]); })
+  // DIRECT-SHIP accounts never enter the warehouse (Sol-ti's turmeric ships port → customer), so they are
+  // not stock demand and must not appear here: including them told you to buy ~233 cs/wk of turmeric that
+  // never touches your cooler. The run-rate already strips them; this table has to agree.
+  var _isDS = function(cust){
+    try{ return (typeof isDirectShipRow === 'function') && isDirectShipRow({ c: cust, prod: prod }); }
+    catch(e){ return false; }
+  };
+  var shown = m.customers.filter(function(c){ return c && c.c && !_isDS(c.c) && ((c.rrCases >= 1) || winSet[c.c]); })
                          .sort(function(a,b){ return (b.rrCases || 0) - (a.rrCases || 0); });
   var esc = (typeof dmEsc === 'function') ? dmEsc : function(s){ return String(s); };
   function shortD(iso){ try { return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(e){ return iso; } }
@@ -24168,12 +24175,14 @@ function renderBuildupPanel(){
   };
   // Column totals: for nowcasted weeks use the model's completed figure (invoiced + booked), not the raw
   // invoiced sum — that is what the run-rate averages, so the columns stay consistent with it.
-  var relByWk = {}; (Array.isArray(m.weeklyReliable)?m.weeklyReliable:[]).forEach(function(w){ relByWk[w.week]=w.lbs||0; });
+  // Column total = every account EXCEPT direct-ship, summed with the same per-customer figure the rows
+  // show. Built from the customer breakdown (not the model's weekly total) for two reasons: the model
+  // total still carries direct-ship, and this way the visible cells always add up to the total below.
   var histTot = histWeeks.map(function(wk){
-    if(relByWk[wk] != null) return Math.round(relByWk[wk] / caseLb);
     if(!wkCustH || !wkCustH[wk]) return 0;
-    var t = 0; Object.keys(wkCustH[wk]).forEach(function(k){ t += wkCustH[wk][k] || 0; });
-    return Math.round(t / caseLb);
+    var t = 0;
+    Object.keys(wkCustH[wk]).forEach(function(cust){ if(!_isDS(cust)) t += actualCases(cust, wk); });
+    return Math.round(t);
   });
   var planTot = weeks.map(function(w){ try { return Math.round(hybridSalesForWeek(w.weekStartISO, salesBase, m, prod) || 0); } catch(e){ return 0; } });
   var colTot = weeks.map(function(){ return 0; });
@@ -24211,8 +24220,19 @@ function renderBuildupPanel(){
   weeks.forEach(function(w){ h += '<th>W' + w.weekNum + '<br><span>' + shortD(w.weekStartISO) + '</span></th>'; });
   h += '</tr></thead><tbody>' + body;
   var histPad = function(cls){ var s=''; histWeeks.forEach(function(wk,i){ s += '<td class="hist' + (i===histWeeks.length-1?' hist-last':'') + (wk===partialWk?' hist-part':'') + (cls?(' '+cls):'') + '"></td>'; }); return s; };
-  if(resid.some(function(x){ return x >= 1; })){
-    h += '<tr class="oth"><td class="c"><span class="nm">Other small accounts</span></td>' + histPad();
+  // Historical residual: what the listed accounts don't cover in each ACTUAL week. Without it the visible
+  // cells silently fail to add up to the column total.
+  var histResid = histWeeks.map(function(wk, i){
+    var shownSum = 0;
+    shown.forEach(function(c){ shownSum += actualCases(c.c, wk); });
+    return Math.max(0, Math.round((histTot[i] || 0) - shownSum));
+  });
+  if(resid.some(function(x){ return x >= 1; }) || histResid.some(function(x){ return x >= 1; })){
+    h += '<tr class="oth"><td class="c"><span class="nm">Other small accounts</span></td>';
+    histWeeks.forEach(function(wk, i){
+      h += '<td class="hist' + (i===histWeeks.length-1?' hist-last':'') + (wk===partialWk?' hist-part':'') + '">'
+        + (histResid[i] >= 1 ? histResid[i].toLocaleString() : '<span class="z">0</span>') + '</td>';
+    });
     resid.forEach(function(x){ h += '<td class="r">' + (x >= 1 ? x.toLocaleString() : '0') + '</td>'; });
     h += '</tr>';
   }
