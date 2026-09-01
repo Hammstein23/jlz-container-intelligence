@@ -1183,7 +1183,7 @@ document.addEventListener('keydown', function(e) {
 });
 
 function switchTab(t) {
-  var ids = ['home','arrival','operations','results','quality','library','history','insights','orders','planner','simulator','pricing','market','demand','customers','inventory'];
+  var ids = ['home','arrival','operations','results','quality','library','history','yield','insights','orders','planner','simulator','pricing','market','demand','customers','inventory'];
   // 1) Isolate panes FIRST — for every tab, before any render runs. This way a
   //    render error can never abort the loop and leave another tab's pane
   //    visible underneath the active one (the "Buy Planner stacked under Orders" bug).
@@ -1197,6 +1197,7 @@ function switchTab(t) {
   try {
     if(t==='home'      && typeof renderHome==='function')       renderHome();
     if(t==='history'   && typeof renderComparison==='function') renderComparison();
+    if(t==='yield'     && typeof renderYieldIntel==='function') renderYieldIntel();
     if(t==='insights'  && typeof renderInsights==='function')   renderInsights();
     if(t==='orders'    && typeof renderOrders==='function')     { window._ordersView = 'active'; renderOrders(); }
     if(t==='planner'   && typeof renderBuyPlanner==='function') renderBuyPlanner();
@@ -2442,6 +2443,10 @@ function authInjectLogo() {
     <button class="nav-item" id="tb-history" onclick="switchTab('history')">
       <svg class="nav-icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>
       History
+    </button>
+    <button class="nav-item" id="tb-yield" onclick="switchTab('yield')">
+      <svg class="nav-icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M5 7h14"/><path d="M5 7l-2 5a4 4 0 0 0 8 0L9 7"/><path d="M19 7l-2 5a4 4 0 0 0 8 0" transform="translate(-4,0)"/></svg>
+      Yield
     </button>
     <button class="nav-item" id="tb-insights" onclick="switchTab('insights')">
       <svg class="nav-icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
@@ -3893,6 +3898,23 @@ function authInjectLogo() {
      Aggregates metrics across all containers (respecting History filters).
      Sections: KPI strip / Supplier scorecard / Top-bottom 3 / Action items
      ────────────────────────────────────────────────────────────────── -->
+<!-- ═════════════════════════════════════════════
+     TAB — YIELD INTELLIGENCE (turmeric · garlic · shallots)
+     Post-arrival results: how much each PO actually yielded, how it moves month to
+     month, which supplier performs best, and what holding stock costs in shrink.
+     No supplier-credit section — that flow is ginger-only, by design.
+══════════════════════════════════════════════ -->
+<div id="tab-yield" class="page" style="display:none">
+  <div style="margin-bottom:14px">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px">
+      <h2 style="margin:0;font-size:18px;font-weight:700;color:var(--gray-800)">Yield Intelligence</h2>
+      <span style="font-size:11px;color:var(--gray-400);font-family:var(--fm)" id="yi-subline">turmeric · garlic · shallots</span>
+    </div>
+    <p style="margin:0;font-size:12px;color:var(--gray-500)">What actually came out of each container — yield by PO, by month and by supplier, plus what every extra day in storage costs.</p>
+  </div>
+  <div id="yi-body"></div>
+</div>
+
 <div id="tab-insights" class="page" style="display:none">
 
   <!-- Section header (matches the styling used in History) -->
@@ -10225,6 +10247,165 @@ function setCaseBasis(basis) {
   if(rcvBtn)  rcvBtn.style.cssText  = rcvBtn.style.cssText.replace(/background:[^;]+;|color:[^;]+;|box-shadow:[^;]+;/g,'')  + (basis==='rcv'  ? active : inactive);
   if(soldBtn) soldBtn.style.cssText = soldBtn.style.cssText.replace(/background:[^;]+;|color:[^;]+;|box-shadow:[^;]+;/g,'') + (basis==='sold' ? active : inactive);
   renderComparison();
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// YIELD INTELLIGENCE — turmeric / garlic / shallots
+// Post-arrival results from WholesaleWare's Work Order Production/Yield Detail
+// Report (Year to Date). The dataset below is pre-aggregated offline because the
+// report is a 128-page PDF: re-run scratchpad/parse_yield.py + clean_yield.py and
+// paste the new JSON to refresh. Ginger is deliberately absent — it has its own
+// History module with the supplier-credit flow this one intentionally omits.
+//
+// Cleaning already applied to these numbers (see clean_yield.py):
+//   · packaging inputs (RRO-30#, @IPaper) carry no weight and never count as product
+//   · equipment inputs (temperature recorders) dropped
+//   · work orders still above 105% are a WholesaleWare recording gap: excluded, and
+//     surfaced in the data-quality section rather than hidden.
+var YI_DATA = {"generated":"2026-09-01","byPo":[{"po":"1953150","cat":"Garlic","sup":"Christopher Ranch Vendor","n":10,"inl":5730,"outl":5590,"y":97.6,"arr":"","first":"01/06/2026","days":null},{"po":"2608782","cat":"Garlic","sup":"Christopher Ranch Vendor","n":4,"inl":5460,"outl":5400,"y":98.9,"arr":"2026-08-18","first":"08/24/2026","days":6},{"po":"2017113","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":3,"inl":4530,"outl":4320,"y":95.4,"arr":"2026-01-27","first":"02/02/2026","days":6},{"po":"2260876","cat":"Turmeric","sup":"SBimal LLC","n":15,"inl":4200,"outl":4085,"y":97.3,"arr":"2026-04-28","first":"05/03/2026","days":5},{"po":"2344373","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":4,"inl":3810,"outl":3750,"y":98.4,"arr":"2026-05-27","first":"06/05/2026","days":9},{"po":"2128611","cat":"Turmeric","sup":"SBimal LLC","n":12,"inl":3750,"outl":3640,"y":97.1,"arr":"","first":"03/19/2026","days":null},{"po":"2597551","cat":"Turmeric","sup":"JLZ Produce Manufacturin","n":14,"inl":3690,"outl":3100,"y":84.0,"arr":"2026-08-24","first":"08/27/2026","days":3},{"po":"1953404","cat":"Shallots","sup":"Peri and Sons Farms","n":3,"inl":3250,"outl":3255,"y":100.2,"arr":"","first":"01/02/2026","days":null},{"po":"2305337","cat":"Turmeric","sup":"SBimal LLC","n":14,"inl":3030,"outl":2835,"y":93.6,"arr":"2026-05-12","first":"05/19/2026","days":7},{"po":"1980886","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":3,"inl":3000,"outl":2890,"y":96.3,"arr":"2026-01-13","first":"01/21/2026","days":8},{"po":"2012256","cat":"Turmeric","sup":"JLZ Produce Manufacturin","n":11,"inl":3000,"outl":2920,"y":97.3,"arr":"2026-01-27","first":"02/02/2026","days":6},{"po":"2227960","cat":"Turmeric","sup":"SBimal LLC","n":12,"inl":3000,"outl":2920,"y":97.3,"arr":"2026-04-18","first":"04/23/2026","days":5},{"po":"2047824","cat":"Turmeric","sup":"JLZ Produce Manufacturin","n":13,"inl":2910,"outl":2810,"y":96.6,"arr":"2026-02-11","first":"02/14/2026","days":3},{"po":"2538428","cat":"Turmeric","sup":"JLZ Produce Manufacturin","n":13,"inl":2910,"outl":2840,"y":97.6,"arr":"2026-07-30","first":"08/08/2026","days":9},{"po":"2439588","cat":"Turmeric","sup":"SBimal LLC","n":14,"inl":2880,"outl":2780,"y":96.5,"arr":"2026-06-23","first":"07/07/2026","days":14},{"po":"2084102","cat":"Turmeric","sup":"SBimal LLC","n":10,"inl":2850,"outl":2730,"y":95.8,"arr":"2026-02-21","first":"02/27/2026","days":6},{"po":"1986778","cat":"Turmeric","sup":"SBimal LLC","n":9,"inl":2820,"outl":2730,"y":96.8,"arr":"2026-01-17","first":"01/22/2026","days":5},{"po":"2402387","cat":"Turmeric","sup":"SBimal LLC","n":10,"inl":2820,"outl":2750,"y":97.5,"arr":"2026-06-15","first":"06/19/2026","days":4},{"po":"2538409","cat":"Garlic","sup":"Christopher Ranch Vendor","n":7,"inl":2820,"outl":2730,"y":96.8,"arr":"2026-07-24","first":"08/08/2026","days":15},{"po":"2220688","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":5,"inl":2790,"outl":2750,"y":98.6,"arr":"2026-04-15","first":"04/21/2026","days":6},{"po":"1944869","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":2,"inl":2760,"outl":2670,"y":96.7,"arr":"","first":"01/07/2026","days":null},{"po":"2587428","cat":"Shallots","sup":"Peri and Sons Farms","n":3,"inl":2700,"outl":2060,"y":76.3,"arr":"2026-08-07","first":"08/13/2026","days":6},{"po":"2481828","cat":"Turmeric","sup":"SBimal LLC","n":14,"inl":2580,"outl":2450,"y":95.0,"arr":"2026-07-14","first":"07/24/2026","days":10},{"po":"2055819","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":3,"inl":2460,"outl":2400,"y":97.6,"arr":"2026-02-10","first":"02/14/2026","days":4},{"po":"2065577","cat":"Garlic","sup":"Christopher Ranch Vendor","n":3,"inl":2430,"outl":2390,"y":98.4,"arr":"2026-02-11","first":"02/23/2026","days":12},{"po":"2038537","cat":"Garlic","sup":"Christopher Ranch Vendor","n":3,"inl":2340,"outl":2390,"y":102.1,"arr":"2026-01-30","first":"02/17/2026","days":18},{"po":"2395076","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":5,"inl":2310,"outl":2210,"y":95.7,"arr":"2026-06-10","first":"06/17/2026","days":7},{"po":"2306103","cat":"Turmeric","sup":"Kailani Farms","n":5,"inl":2280,"outl":2205,"y":96.7,"arr":"2026-05-15","first":"05/21/2026","days":6},{"po":"2353009","cat":"Turmeric","sup":"SBimal LLC","n":8,"inl":2280,"outl":2250,"y":98.7,"arr":"2026-05-26","first":"06/03/2026","days":8},{"po":"2590152","cat":"Turmeric","sup":"SBimal LLC","n":9,"inl":2250,"outl":2180,"y":96.9,"arr":"2026-08-15","first":"08/19/2026","days":4},{"po":"2090365","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":2,"inl":2220,"outl":2160,"y":97.3,"arr":"2026-02-25","first":"03/05/2026","days":8},{"po":"2201195","cat":"Garlic","sup":"Christopher Ranch Vendor","n":11,"inl":2190,"outl":1935,"y":88.4,"arr":"","first":"04/08/2026","days":null},{"po":"2508211","cat":"Turmeric","sup":"Kailani Farms","n":5,"inl":2190,"outl":2110,"y":96.3,"arr":"2026-07-22","first":"07/30/2026","days":8},{"po":"2208699","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":4,"inl":2160,"outl":1750,"y":81.0,"arr":"2026-04-08","first":"04/11/2026","days":3},{"po":"2435247","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":5,"inl":2040,"outl":1700,"y":83.3,"arr":"2026-06-24","first":"07/02/2026","days":8},{"po":"2508203","cat":"Garlic","sup":"Christopher Ranch Vendor","n":8,"inl":2040,"outl":1990,"y":97.5,"arr":"2026-07-14","first":"07/20/2026","days":6},{"po":"2038470","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":3,"inl":1980,"outl":1950,"y":98.5,"arr":"2026-02-04","first":"02/10/2026","days":6},{"po":"2128233","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":3,"inl":1980,"outl":1940,"y":98.0,"arr":"","first":"03/17/2026","days":null},{"po":"2195182","cat":"Turmeric","sup":"JLZ Produce Manufacturin","n":7,"inl":1920,"outl":1850,"y":96.4,"arr":"","first":"04/11/2026","days":null},{"po":"2152264","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":3,"inl":1890,"outl":1850,"y":97.9,"arr":"2026-03-18","first":"03/24/2026","days":6},{"po":"2166234","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":2,"inl":1890,"outl":1850,"y":97.9,"arr":"","first":"03/30/2026","days":null},{"po":"2157490","cat":"Turmeric","sup":"SBimal LLC","n":7,"inl":1800,"outl":1720,"y":95.6,"arr":"","first":"04/02/2026","days":null},{"po":"2402375","cat":"Garlic","sup":"Christopher Ranch Vendor","n":6,"inl":1770,"outl":1575,"y":89.0,"arr":"2026-06-08","first":"06/19/2026","days":11},{"po":"2080852","cat":"Garlic","sup":"Christopher Ranch Vendor","n":9,"inl":1740,"outl":1515,"y":87.1,"arr":"2026-02-17","first":"02/27/2026","days":10},{"po":"1933961","cat":"Turmeric","sup":"SBimal LLC","n":8,"inl":1710,"outl":1700,"y":99.4,"arr":"","first":"01/03/2026","days":null},{"po":"2456535","cat":"Garlic","sup":"Christopher Ranch Vendor","n":7,"inl":1710,"outl":1420,"y":83.0,"arr":"2026-06-26","first":"07/07/2026","days":11},{"po":"2327970","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":3,"inl":1680,"outl":1540,"y":91.7,"arr":"2026-05-20","first":"06/03/2026","days":14},{"po":"2420651","cat":"Turmeric","sup":"Kailani Farms","n":2,"inl":1650,"outl":1590,"y":96.4,"arr":"2026-06-19","first":"07/02/2026","days":13},{"po":"1944871","cat":"Shallots","sup":"Peri and Sons Farms","n":4,"inl":1550,"outl":1200,"y":77.4,"arr":"","first":"01/14/2026","days":null},{"po":"2185411","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":2,"inl":1500,"outl":1480,"y":98.7,"arr":"2026-04-01","first":"04/06/2026","days":5},{"po":"1931071","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":1,"inl":1470,"outl":1440,"y":98.0,"arr":"","first":"01/03/2026","days":null},{"po":"1963780","cat":"Turmeric","sup":"SBimal LLC","n":4,"inl":1350,"outl":1320,"y":97.8,"arr":"2026-01-10","first":"01/14/2026","days":4},{"po":"2074690","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":2,"inl":1320,"outl":1290,"y":97.7,"arr":"","first":"02/24/2026","days":null},{"po":"2599919","cat":"Turmeric","sup":"Kailani Farms","n":2,"inl":1200,"outl":1200,"y":100.0,"arr":"2026-08-24","first":"08/26/2026","days":2},{"po":"2243911","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":2,"inl":1170,"outl":1080,"y":92.3,"arr":"2026-04-21","first":"04/30/2026","days":9},{"po":"2369407","cat":"Garlic","sup":"JLZ Produce Manufacturin","n":5,"inl":1020,"outl":950,"y":93.1,"arr":"2026-05-29","first":"06/10/2026","days":12},{"po":"2372603","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":2,"inl":1020,"outl":990,"y":97.1,"arr":"2026-06-02","first":"06/12/2026","days":10},{"po":"2145033","cat":"Turmeric","sup":"JLZ Produce Manufacturin","n":4,"inl":990,"outl":960,"y":97.0,"arr":"","first":"03/13/2026","days":null},{"po":"2305351","cat":"Garlic","sup":"Christopher Ranch Vendor","n":8,"inl":960,"outl":635,"y":66.1,"arr":"2026-05-08","first":"05/26/2026","days":18},{"po":"2107979","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":2,"inl":900,"outl":900,"y":100.0,"arr":"2026-03-04","first":"03/12/2026","days":8},{"po":"2579010","cat":"Garlic","sup":"Christopher Ranch Vendor","n":2,"inl":810,"outl":750,"y":92.6,"arr":"2026-08-06","first":"08/20/2026","days":14},{"po":"2413544","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":2,"inl":750,"outl":750,"y":100.0,"arr":"2026-06-16","first":"06/23/2026","days":7},{"po":"1963811","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":1,"inl":720,"outl":720,"y":100.0,"arr":"2026-01-06","first":"01/20/2026","days":14},{"po":"1999364","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":1,"inl":720,"outl":720,"y":100.0,"arr":"2026-01-21","first":"01/27/2026","days":6},{"po":"2024450","cat":"Garlic","sup":"Christopher Ranch Vendor","n":4,"inl":690,"outl":650,"y":94.2,"arr":"2026-01-23","first":"01/28/2026","days":5},{"po":"2261533","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":2,"inl":630,"outl":590,"y":93.7,"arr":"2026-04-29","first":"05/08/2026","days":9},{"po":"2466839","cat":"Turmeric","sup":"Kailani Farms","n":3,"inl":480,"outl":420,"y":87.5,"arr":"2026-07-09","first":"07/11/2026","days":2},{"po":"2639212","cat":"Garlic","sup":"JLZ Produce Manufacturin","n":2,"inl":480,"outl":460,"y":95.8,"arr":"2026-08-28","first":"08/28/2026","days":0},{"po":"1782849","cat":"Turmeric","sup":"JLZ Produce Manufacturin","n":1,"inl":450,"outl":450,"y":100.0,"arr":"","first":"01/14/2026","days":null},{"po":"1816522","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":1,"inl":300,"outl":300,"y":100.0,"arr":"","first":"02/02/2026","days":null},{"po":"2558277","cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":1,"inl":300,"outl":300,"y":100.0,"arr":"2026-07-28","first":"08/11/2026","days":14},{"po":"2620621","cat":"Turmeric","sup":"SBimal LLC","n":1,"inl":270,"outl":270,"y":100.0,"arr":"2026-08-28","first":"09/01/2026","days":4}],"byMonth":{"Shallots":[{"m":"01","n":4,"inl":2500,"y":98.6},{"m":"02","n":3,"inl":2300,"y":86.5},{"m":"08","n":3,"inl":2700,"y":76.3}],"Turmeric":[{"m":"01","n":28,"inl":14340,"y":97.5},{"m":"02","n":39,"inl":17340,"y":96.9},{"m":"03","n":33,"inl":13380,"y":97.2},{"m":"04","n":40,"inl":15900,"y":95.5},{"m":"05","n":33,"inl":10740,"y":96.5},{"m":"06","n":35,"inl":13950,"y":96.4},{"m":"07","n":37,"inl":10350,"y":92.9},{"m":"08","n":49,"inl":12930,"y":93.4},{"m":"09","n":2,"inl":630,"y":98.4}],"Garlic":[{"m":"01","n":10,"inl":3840,"y":95.8},{"m":"02","n":11,"inl":7440,"y":99.7},{"m":"03","n":7,"inl":1350,"y":84.1},{"m":"04","n":6,"inl":1140,"y":95.6},{"m":"05","n":10,"inl":1830,"y":83.3},{"m":"06","n":11,"inl":2070,"y":84.8},{"m":"07","n":16,"inl":4140,"y":87.8},{"m":"08","n":18,"inl":10380,"y":97.7}]},"bySupplier":[{"cat":"Garlic","sup":"Christopher Ranch Vendor","n":76,"inl":20280,"y":90.8},{"cat":"Garlic","sup":"JLZ Produce Manufacturin","n":13,"inl":11910,"y":100.5},{"cat":"Shallots","sup":"Peri and Sons Farms","n":10,"inl":7500,"y":86.9},{"cat":"Turmeric","sup":"Crown Paci\ufb01c, LLC","n":69,"inl":48300,"y":95.8},{"cat":"Turmeric","sup":"SBimal LLC","n":143,"inl":36000,"y":94.1},{"cat":"Turmeric","sup":"JLZ Produce Manufacturin","n":67,"inl":17460,"y":99.8},{"cat":"Turmeric","sup":"Kailani Farms","n":17,"inl":7800,"y":96.5}],"decay":[{"band":"0\u20137 d","n":76,"inl":32280,"y":96.2},{"band":"8\u201314 d","n":123,"inl":50250,"y":97.1},{"band":"15\u201330 d","n":113,"inl":37470,"y":91.5},{"band":"31\u201360 d","n":8,"inl":1890,"y":86.8},{"band":"60+ d","n":1,"inl":120,"y":83.3}],"summary":{"perDay":0.303,"wos":395,"pos":72}};
+var YI_PROD = 'Turmeric';   // active product filter
+function yiSetProd(p){ YI_PROD = p; renderYieldIntel(); }
+function yiCls(y){ return y >= 96 ? 'var(--green-700)' : y >= 92 ? 'var(--amber-600)' : 'var(--red-600)'; }
+function renderYieldIntel(){
+  var host = document.getElementById('yi-body'); if(!host) return;
+  var D = YI_DATA, f = function(n){ return Math.round(n||0).toLocaleString('en-US'); };
+  var prods = ['Turmeric','Garlic','Shallots'];
+  var sub = document.getElementById('yi-subline');
+
+  var pos = D.byPo.filter(function(x){ return x.cat === YI_PROD; });
+  var sups = D.bySupplier.filter(function(x){ return x.cat === YI_PROD; });
+  var mon = D.byMonth[YI_PROD] || [];
+  var tIn = pos.reduce(function(s,x){ return s + x.inl; }, 0);
+  var tOut = pos.reduce(function(s,x){ return s + x.outl; }, 0);
+  var avgY = tIn > 0 ? (tOut / tIn * 100) : 0;
+  var best = sups.slice().sort(function(a,b){ return b.y - a.y; })[0];
+  if(sub) sub.textContent = YI_PROD.toLowerCase() + ' · ' + pos.length + ' POs · ' + D.summary.wos + ' work orders';
+
+  var tabs = prods.map(function(p){
+    var on = p === YI_PROD;
+    return '<button onclick="yiSetProd(\'' + p + '\')" style="height:30px;padding:0 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;'
+      + (on ? 'background:var(--jlz);color:#fff;border:1px solid var(--jlz)' : 'background:var(--white);color:var(--gray-600);border:1px solid var(--gray-200)') + '">' + p + '</button>';
+  }).join(' ');
+
+  var kpi = function(l, v, s, c){
+    return '<div style="background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:12px 14px;flex:1;min-width:140px">'
+      + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700">' + l + '</div>'
+      + '<div style="font-size:22px;font-weight:700;margin-top:5px;font-family:var(--fm);color:' + (c||'var(--gray-800)') + '">' + v + '</div>'
+      + '<div style="font-size:11px;color:var(--gray-500);margin-top:2px">' + s + '</div></div>';
+  };
+  var sh = function(icon, color, title, hint){
+    return '<div style="display:flex;align-items:center;gap:9px;margin:22px 0 10px">'
+      + '<div style="width:22px;height:22px;border-radius:6px;background:' + color + ';color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">' + icon + '</div>'
+      + '<span style="font-size:14px;font-weight:700;color:var(--gray-800)">' + title + '</span>'
+      + '<div style="flex:1;height:1px;background:var(--gray-200)"></div>'
+      + (hint ? '<span style="font-size:11px;color:var(--gray-400)">' + hint + '</span>' : '') + '</div>';
+  };
+  var th = 'padding:7px 8px;font-weight:600;color:var(--gray-500);white-space:nowrap;font-size:11px';
+  var td = 'padding:7px 8px;border-bottom:1px solid var(--gray-100);font-family:var(--fm);font-size:11.5px;white-space:nowrap';
+
+  var h = '<div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">' + tabs
+    + '<span style="margin-left:auto;font-size:10.5px;color:var(--gray-400);font-family:var(--fm)">Year to date &middot; datos al ' + D.generated + '</span></div>';
+
+  h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:4px">'
+    + kpi('Rendimiento', avgY.toFixed(1) + '%', f(tIn) + ' lb procesadas', yiCls(avgY))
+    + kpi('Merma', (100 - avgY).toFixed(1) + '%', 'del producto que entró', 'var(--amber-700)')
+    + kpi('Mejor proveedor', best ? best.sup.split(' ')[0] : '—', best ? best.y.toFixed(1) + '%' : '', 'var(--jlz)')
+    + kpi('Costo por día', D.summary.perDay.toFixed(2) + '%', 'de merma en cámara', 'var(--red-600)')
+    + '</div>';
+
+  // ── por PO ──
+  h += sh('&#9878;', 'var(--amber-600)', 'Rendimiento por PO', pos.length + ' contenedores');
+  h += '<div style="background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);overflow:hidden">'
+    + '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:640px"><thead><tr style="background:var(--gray-50);border-bottom:1px solid var(--gray-200)">'
+    + '<th style="' + th + ';text-align:left">PO</th><th style="' + th + ';text-align:left">Proveedor</th>'
+    + '<th style="' + th + ';text-align:right">WOs</th><th style="' + th + ';text-align:left">Llegada</th>'
+    + '<th style="' + th + ';text-align:right" title="Días entre la llegada y el primer procesamiento">Esperó</th>'
+    + '<th style="' + th + ';text-align:right">Entró lb</th><th style="' + th + ';text-align:right">Salió lb</th>'
+    + '<th style="' + th + ';text-align:right">Yield</th></tr></thead><tbody>';
+  pos.forEach(function(p){
+    var wait = (p.days == null) ? '<span style="color:var(--gray-300)">—</span>'
+      : (p.days + 'd' + (p.days > 14 ? ' <span style="color:var(--amber-700)">&#9888;</span>' : ''));
+    h += '<tr><td style="' + td + ';font-weight:700;color:var(--jlz)">' + p.po + '</td>'
+      + '<td style="' + td + ';font-family:var(--fb)">' + p.sup + '</td>'
+      + '<td style="' + td + ';text-align:right">' + p.n + '</td>'
+      + '<td style="' + td + ';color:var(--gray-500)">' + (p.arr ? p.arr.slice(5) : '—') + '</td>'
+      + '<td style="' + td + ';text-align:right">' + wait + '</td>'
+      + '<td style="' + td + ';text-align:right">' + f(p.inl) + '</td>'
+      + '<td style="' + td + ';text-align:right">' + f(p.outl) + '</td>'
+      + '<td style="' + td + ';text-align:right;font-weight:700;color:' + yiCls(p.y) + '">' + p.y.toFixed(1) + '%</td></tr>';
+  });
+  h += '</tbody></table></div><div style="background:var(--gray-50);padding:7px 10px;font-size:10.5px;color:var(--gray-500);font-family:var(--fm)">'
+    + '<b>Esperó</b> = días entre la llegada del contenedor y su primer work order. &#9888; marca los que esperaron más de 14 días, donde la merma se dispara.</div></div>';
+
+  // ── mes a mes ──
+  h += sh('&#128200;', 'var(--blue-700)', 'Evolución mes a mes', 'el rendimiento no es fijo');
+  if(mon.length){
+    var ys = mon.map(function(m){ return m.y; });
+    var lo = Math.min.apply(null, ys), hi = Math.max.apply(null, ys);
+    h += '<div style="background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:14px">'
+      + '<div style="display:flex;align-items:flex-end;gap:8px;height:120px">';
+    mon.forEach(function(m){
+      var hgt = Math.round((m.y - Math.max(60, lo - 6)) / Math.max(1, (hi - Math.max(60, lo - 6))) * 88) + 8;
+      var small = m.n < 5;
+      h += '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;justify-content:flex-end;height:100%">'
+        + '<div style="font-family:var(--fm);font-size:9.5px;color:var(--gray-500)">' + m.y.toFixed(1) + '%</div>'
+        + '<div style="width:64%;max-width:32px;height:' + hgt + 'px;border-radius:3px 3px 0 0;background:' + (small ? 'var(--gray-300)' : yiCls(m.y)) + '"></div>'
+        + '<div style="font-family:var(--fm);font-size:9px;color:var(--gray-400)">' + m.m + (small ? '*' : '') + '</div></div>';
+    });
+    h += '</div><div style="font-size:10.5px;color:var(--gray-500);font-family:var(--fm);margin-top:8px">'
+      + 'Rango ' + lo.toFixed(1) + '% – ' + hi.toFixed(1) + '% (' + (hi - lo).toFixed(1) + ' puntos de variación). '
+      + '<b>*</b> = menos de 5 work orders ese mes: la barra es ruido, no tendencia.</div></div>';
+  }
+
+  // ── proveedores ──
+  h += sh('&#127981;', 'var(--green-700)', 'Comparación entre proveedores', '');
+  h += '<div style="background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);overflow:hidden"><div style="overflow-x:auto">'
+    + '<table style="width:100%;border-collapse:collapse;min-width:520px"><thead><tr style="background:var(--gray-50);border-bottom:1px solid var(--gray-200)">'
+    + '<th style="' + th + ';text-align:left">Proveedor</th><th style="' + th + ';text-align:right">WOs</th>'
+    + '<th style="' + th + ';text-align:right">Entró lb</th><th style="' + th + ';text-align:right">Yield</th>'
+    + '<th style="' + th + ';text-align:left">vs. el mejor</th></tr></thead><tbody>';
+  var top = best ? best.y : 0;
+  sups.sort(function(a,b){ return b.y - a.y; }).forEach(function(s){
+    var gap = (s.y - top);
+    h += '<tr><td style="' + td + ';font-family:var(--fb);font-weight:600">' + s.sup + '</td>'
+      + '<td style="' + td + ';text-align:right">' + s.n + '</td>'
+      + '<td style="' + td + ';text-align:right">' + f(s.inl) + '</td>'
+      + '<td style="' + td + ';text-align:right;font-weight:700;color:' + yiCls(s.y) + '">' + s.y.toFixed(1) + '%</td>'
+      + '<td style="' + td + ';color:var(--gray-500)">' + (gap === 0 ? '&#9733; mejor' : gap.toFixed(1) + ' pts') + '</td></tr>';
+  });
+  h += '</tbody></table></div></div>';
+
+  // ── curva de deterioro ──
+  h += sh('&#9201;', 'var(--amber-600)', 'Qué cuesta que el producto espere', 'los 3 productos juntos');
+  h += '<div style="background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);overflow:hidden"><div style="overflow-x:auto">'
+    + '<table style="width:100%;border-collapse:collapse;min-width:520px"><thead><tr style="background:var(--gray-50);border-bottom:1px solid var(--gray-200)">'
+    + '<th style="' + th + ';text-align:left">Días en cámara</th><th style="' + th + ';text-align:right">WOs</th>'
+    + '<th style="' + th + ';text-align:right">Volumen lb</th><th style="' + th + ';text-align:right">Merma</th>'
+    + '<th style="' + th + ';text-align:left;width:34%"></th></tr></thead><tbody>';
+  D.decay.forEach(function(b){
+    var m = 100 - b.y, weak = b.n < 10;
+    var col = weak ? 'var(--gray-300)' : (m <= 5 ? 'var(--green-700)' : m <= 9 ? 'var(--amber-600)' : 'var(--red-600)');
+    h += '<tr><td style="' + td + ';font-family:var(--fb);font-weight:600">' + b.band + '</td>'
+      + '<td style="' + td + ';text-align:right">' + b.n + (weak ? ' <span style="color:var(--amber-700);font-size:9px">POCA MUESTRA</span>' : '') + '</td>'
+      + '<td style="' + td + ';text-align:right">' + f(b.inl) + '</td>'
+      + '<td style="' + td + ';text-align:right;font-weight:700;color:' + col + '">' + m.toFixed(1) + '%</td>'
+      + '<td style="' + td + '"><span style="display:inline-block;height:10px;border-radius:3px;background:' + col + ';width:' + Math.round(m * 7) + 'px"></span></td></tr>';
+  });
+  h += '</tbody></table></div><div style="background:var(--gray-50);padding:7px 10px;font-size:10.5px;color:var(--gray-500);font-family:var(--fm)">'
+    + 'Hasta 14 días la merma ronda el 3%; a partir del día 15 se triplica. Pendiente medida: <b>' + D.summary.perDay.toFixed(2) + '% por día</b>. '
+    + 'Los tramos marcados POCA MUESTRA son direccionales, no concluyentes.</div></div>';
+
+  // ── calidad del dato ──
+  h += sh('&#9888;', 'var(--purple-500)', 'Calidad del dato', 'lo que hay que saber antes de decidir con esto');
+  h += '<div style="background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:12px 14px;font-size:12px;color:var(--gray-600);line-height:1.75">'
+    + '&bull; <b>33 work orders (3.7%)</b> daban más salida que entrada — su producto de entrada no quedó registrado completo en WholesaleWare. Están excluidos, no corregidos.<br>'
+    + '&bull; <b>Shallots</b> tiene pocos work orders en el año: su mensual es ruido; mirá el acumulado.<br>'
+    + '&bull; La <b>fecha de llegada</b> es la <i>scheduled delivery</i> del PO, no la recepción física confirmada.<br>'
+    + '&bull; Fuente: Work Order Production/Yield Detail Report, Year to Date. Para refrescar hay que volver a correrlo y re-procesar.'
+    + '</div>';
+
+  host.innerHTML = h;
 }
 
 function renderComparison() {
