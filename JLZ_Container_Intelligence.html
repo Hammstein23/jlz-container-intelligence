@@ -15746,7 +15746,15 @@ function renderBuyPlanner() {
         if(cs <= 0) return;
         (arr[wk] = arr[wk] || []).push({ po:o.jlzPo, cases:cs });
       });
-      wks.forEach(w => { w.arrivals = arr[w.week] || []; w.arrCases = w.arrivals.reduce((s,a)=>s+a.cases,0); });
+      // Two different questions, two columns: `sold` = cases invoiced to customers; `out` = cases that
+      // actually LEFT the warehouse (sold ÷ (1 − shrink)), since part is lost before it sells. Only `out`
+      // may drive the stock reconstruction — using `sold` would under-count the real drain.
+      const _inflH = (salesDemand > 0 && weeklyDemand > 0) ? (weeklyDemand / salesDemand) : 1;
+      wks.forEach(w => {
+        w.arrivals = arr[w.week] || [];
+        w.arrCases = w.arrivals.reduce((s,a)=>s+a.cases,0);
+        w.out = Math.round(w.sold * _inflH);
+      });
       // Stock per week: walk BACKWARDS from today's on-hand, undoing each week (end = start of the next,
       // start = end + sold − arrived). Approximate — manual inventory corrections in between are invisible,
       // so it is flagged as an estimate. A stored weekly snapshot (recorded from now on) overrides it.
@@ -15758,9 +15766,9 @@ function renderBuyPlanner() {
       for(let i = wks.length - 1; i >= 0; i--){
         const w = wks[i];
         w.end = cursor;
-        w.start = cursor + w.sold - w.arrCases;
+        w.start = cursor + w.out - w.arrCases;        // undo with what LEFT the warehouse, not what was invoiced
         w.est = true;
-        if(snaps[w.week] != null){ w.end = snaps[w.week]; w.start = snaps[w.week] + w.sold - w.arrCases; w.est = false; }
+        if(snaps[w.week] != null){ w.end = snaps[w.week]; w.start = snaps[w.week] + w.out - w.arrCases; w.est = false; }
         cursor = w.start;
       }
       return wks;
@@ -15775,7 +15783,7 @@ function renderBuyPlanner() {
       + '<div onclick="bpToggleHist()" style="cursor:pointer;padding:8px 12px;background:var(--gray-50);border-bottom:1px solid var(--gray-200);display:flex;align-items:center;gap:8px;font-size:11px;color:var(--gray-600);font-family:var(--fb);user-select:none">'
         + '<span id="bp-hist-caret" style="font-size:9px;color:var(--gray-400)">' + (histOpen ? '▾' : '▸') + '</span>'
         + '<b style="font-weight:600">' + (histOpen ? 'Hide' : 'Show') + ' the last ' + histRows.filter(w=>!w.partial).length + ' weeks</b>'
-        + '<span style="color:var(--gray-400)">what actually happened — invoiced sales &amp; containers received</span>'
+        + '<span style="color:var(--gray-400)">what actually happened — warehouse outflow &amp; containers received</span>'
         + '<span style="margin-left:auto;color:var(--gray-500);font-family:var(--fm)">avg ' + histAvg.toLocaleString() + ' cs/wk sold</span>'
       + '</div></th></tr></thead>';
     if(histOpen){
@@ -15794,13 +15802,14 @@ function renderBuyPlanner() {
           + '<td style="padding:7px 12px;font-weight:600">' + wkN + ' <span style="color:var(--gray-400);font-weight:400;font-size:10px">' + md + (w.partial ? ' · in progress' : '') + '</span></td>'
           + '<td style="padding:7px 12px;text-align:right">' + stockCell(w.start, w.est) + '</td>'
           + '<td style="padding:7px 12px;text-align:right">' + (arrCs ? '<span style="color:#047857;font-weight:600">+' + arrCs.toLocaleString() + '</span>' : '<span style="color:var(--gray-300)">—</span>') + '</td>'
-          + '<td style="padding:7px 12px;text-align:right;font-weight:600">' + w.sold.toLocaleString() + '</td>'
+          + '<td style="padding:7px 12px;text-align:right;font-weight:600" title="Cases that left the warehouse: invoiced ÷ (1 − shrink). Comparable with the forecast\'s Demand column.">' + w.out.toLocaleString()
+            + '<div style="font-size:9px;font-weight:400;color:var(--gray-400)">sold ' + w.sold.toLocaleString() + '</div></td>'
           + '<td style="padding:7px 12px;text-align:right">' + stockCell(w.end, w.est) + '</td>'
           + '<td colspan="2" style="padding:7px 12px;font-size:10px;color:var(--gray-400)">' + arrTxt + '</td>'
           + '</tr>';
       });
       tableHtml += '<tr><td colspan="7" style="padding:6px 12px;font-size:10px;color:var(--gray-400);background:var(--gray-50);border-bottom:2px solid var(--gray-300)">'
-        + '<b>Sold</b> = invoiced cases &middot; <b>Arrivals</b> = containers actually received &middot; <i>~italic stock</i> = reconstructed backwards from today (manual inventory corrections in between aren\'t reflected); <b>bold</b> = recorded snapshot, exact. Snapshots start accumulating from this week on.'
+        + 'The <b>big number</b> is what LEFT the warehouse (invoiced ÷ (1 − shrink)) &mdash; same basis as the forecast\'s Demand below; <b>sold</b> underneath is what you actually invoiced. <b>Arrivals</b> = containers received (Peru only). <i>~italic stock</i> = reconstructed backwards from today, so manual inventory corrections in between aren\'t reflected; <b>bold</b> = recorded snapshot, exact. Snapshots start accumulating from this week on.'
         + '</td></tr></tbody>';
     }
   }
