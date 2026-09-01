@@ -33,7 +33,15 @@ Para probar que el harness sirve, corrélo contra una copia con un bug metido a 
 
 ## 2. `tests/invariants-console.js` — contra datos reales
 
-Pegá el archivo entero en la consola del navegador, con la app cargada.
+Con la app abierta y los datos cargados, pegá **esta línea** en la consola del navegador:
+
+```js
+fetch('tests/invariants-console.js').then(r=>r.text()).then(eval)
+```
+
+Lo trae del propio sitio, así que siempre corre la última versión y no hay que copiar
+nada a mano. (Si la app está abierta como archivo local en vez de desde el sitio, el
+`fetch` no va a funcionar: ahí sí, pegá el contenido del archivo entero.)
 
 `run.sh` prueba que el modelo sea consistente **consigo mismo**, y eso no alcanza: el
 bug de los lunes tenía las dos mitades del sistema de acuerdo, y las dos equivocadas.
