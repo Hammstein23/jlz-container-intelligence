@@ -14886,15 +14886,28 @@ function nowcastProductModel(m, p, origin){
       return s/wks.length;
     };
     var _rw=out.rateWeeks;
+    // Manual overrides must survive the nowcast. The aggregate above was just recomputed from the weekly
+    // series, which knows nothing about them — so re-measure each override against its NOWCASTED model rate
+    // and put that difference back. Without this, pinning an account silently stopped working the moment
+    // the product had any booked order.
+    var _ov13=0, _ov6=0, _ov3=0;
     out.customers=m.customers.map(function(c){
       if(!c || !c.c) return c;
       var n=Object.assign({}, c);
-      // A manual run-rate override is the user's explicit number — never recompute over it.
-      if(!(c.ovr && c.ovr.rr)){ n.rrCases=avgCust(c.c,_rw); n.rrLbs=Math.round(n.rrCases*caseLb); }
+      if(c.ovr && c.ovr.rr){          // the user's explicit number — never recomputed, in any window
+        _ov13 += (c.rrCases||0) - avgCust(c.c,_rw);
+        _ov6  += (c.rr6Cases!=null?c.rr6Cases:c.rrCases||0) - avgCust(c.c,_rw.slice(-6));
+        _ov3  += (c.rr3Cases!=null?c.rr3Cases:c.rrCases||0) - avgCust(c.c,_rw.slice(-3));
+        return n;
+      }
+      n.rrCases=avgCust(c.c,_rw); n.rrLbs=Math.round(n.rrCases*caseLb);
       n.rr6Cases=avgCust(c.c,_rw.slice(-6));
       n.rr3Cases=avgCust(c.c,_rw.slice(-3));
       return n;
     });
+    out.runRate13=Math.round(out.runRate13 + _ov13*caseLb);
+    out.runRate6 =Math.round(out.runRate6  + _ov6*caseLb);
+    out.runRate3 =Math.round(out.runRate3  + _ov3*caseLb);
   }
   out.nowcast=true;
   return out;
@@ -23293,7 +23306,11 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
   const _meaningful = {};
   active.forEach(a => _meaningful[a.c] = true);
   dormant.forEach(d => _meaningful[d.c] = true);
-  let _rrOvrDeltaLbs = 0;   // Σ(override run-rate − model run-rate) across accounts; keeps runRate13 aligned with per-account overrides.
+  // Σ(override run-rate − model run-rate) across accounts, kept PER WINDOW: a manual override says "this
+  // account sells N cases a week", so it replaces the model rate in whichever window is being shown. One
+  // shared delta measured against the 13-week rate skewed the 3- and 6-week aggregates by the difference
+  // between windows, and left the per-account rr3/rr6 ignoring the override altogether.
+  let _rrOvrDeltaLbs = 0, _rrOvrDelta6Lbs = 0, _rrOvrDelta3Lbs = 0;
   const customers = Object.keys(_meaningful).map(c => {
     const cd = custDetail ? custDetail[c] : null;
     const rrLbs = _avgW(c, rateWeeks);
@@ -23321,7 +23338,9 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
     let rrLbsEff = rrLbs, sporadic = sporadicModel, statusEff = statusModel, fcQuietEff = fcQuietModel;
     const ovr = {};
     if (_ov){
-      if (_ov.rrCases != null){ rrLbsEff = (+_ov.rrCases || 0) * caseLb; _rrOvrDeltaLbs += (rrLbsEff - rrLbs); ovr.rr = true; }
+      if (_ov.rrCases != null){ rrLbsEff = (+_ov.rrCases || 0) * caseLb;
+        _rrOvrDeltaLbs += (rrLbsEff - rrLbs); _rrOvrDelta6Lbs += (rrLbsEff - rr6Lbs); _rrOvrDelta3Lbs += (rrLbsEff - rr3Lbs);
+        ovr.rr = true; }
       if (_ov.pattern === 'od' || _ov.pattern === 'steady'){ sporadic = (_ov.pattern === 'od'); ovr.pattern = true; }
       if (_ov.status === 'active' || _ov.status === 'quiet'){ statusEff = _ov.status; fcQuietEff = (_ov.status === 'quiet'); ovr.status = true; }
     }
@@ -23330,7 +23349,11 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
       fcQuiet: fcQuietEff,
       days: isFinite(dsEff) ? dsEff : null, last: lastOrder(c), cad: cadv,
       spark: _r10.map(w => Math.round((wkCust[w] && wkCust[w][c]) || 0)), trend,
-      rrLbs: Math.round(rrLbsEff), rrCases: rrLbsEff / caseLb, rr6Cases: rr6Lbs / caseLb, rr3Cases: rr3Lbs / caseLb, sporadic,
+      // An override is a weekly rate, so it applies to EVERY window — otherwise pinning an account does
+      // nothing in the products whose reaction window is 3 or 6 weeks (turmeric, garlic, shallots).
+      rrLbs: Math.round(rrLbsEff), rrCases: rrLbsEff / caseLb,
+      rr6Cases: (ovr.rr ? rrLbsEff : rr6Lbs) / caseLb, rr3Cases: (ovr.rr ? rrLbsEff : rr3Lbs) / caseLb, sporadic,
+      rr6CasesModel: rr6Lbs / caseLb, rr3CasesModel: rr3Lbs / caseLb,
       rrLbsModel: Math.round(rrLbs), rrCasesModel: rrLbs / caseLb, sporadicModel, statusModel, fcQuietModel, ovr,
       life: Math.round(custLifetime[c] || 0),
       vol: (custLifetime[c] || 0) / totalLifeAll * 100,
@@ -23350,7 +23373,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb){
   let _bgs = 0, _bgp = 0; if (custDetail) Object.values(custDetail).forEach(cd => { _bgs += _sumWinF(cd,_winR,'gs'); _bgp += _sumWinF(cd,_winR,'gp'); });
   const blendMg = _bgs ? _bgp / _bgs * 100 : null;
 
-  return { runRate13:Math.round(runRate13 + _rrOvrDeltaLbs), runRate13Model:Math.round(runRate13), runRate6:Math.round(runRate6 + _rrOvrDeltaLbs), runRate3:Math.round(runRate3 + _rrOvrDeltaLbs), activeCount:active.length, dormantCount:dormant.length,
+  return { runRate13:Math.round(runRate13 + _rrOvrDeltaLbs), runRate13Model:Math.round(runRate13), runRate6:Math.round(runRate6 + _rrOvrDelta6Lbs), runRate3:Math.round(runRate3 + _rrOvrDelta3Lbs), activeCount:active.length, dormantCount:dormant.length,
            active, dormant, demandRows, custDetail, customers, concTop2, blendMg,
            weekly: allWeeks.map(w => ({ week:w, lbs:Math.round(weekTotal[w]||0) })),
            weeklyReliable: (reliableWeeks.length ? reliableWeeks : allWeeks).map(w => ({ week:w, lbs:Math.round(weekTotal[w]||0) })),
