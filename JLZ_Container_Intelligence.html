@@ -14859,6 +14859,43 @@ function nowcastProductModel(m, p, origin){
   // weeks the run-rate averages (incl. the completed W34/W35) — otherwise the columns wouldn't average to rr.
   out.rateWeeks=series.map(function(w){ return w.week; });
   out.nowcastWeeks={}; series.forEach(function(w){ if(w.now||w.prelim) out.nowcastWeeks[w.week]=(w.now?'now':'prelim'); });
+  // Put the PER-CUSTOMER run-rates on the same basis as the aggregate. `customers` was built from invoiced
+  // history only; the nowcast completes recent weeks with booked orders, so the aggregate rises and the rows
+  // don't — and the whole gap silently lands in "Other small accounts" (turmeric Fiji: 29 of 88 cs/wk, a
+  // third of the projection, anonymous). Re-average each account over the SAME weeks the aggregate averages,
+  // counting its booked orders in the completed weeks exactly as the aggregate counts them.
+  if(Array.isArray(m.customers) && m.customers.length && m.wkCust){
+    var comCust={};
+    if(typeof getCommitted==='function'){
+      getCommitted().forEach(function(c){
+        if(!c || c.type!=='inv' || !c.wk || _cmProd(c)!==p) return;
+        if(odCust[c.customer]) return;                                  // order-driven: held out, as above
+        if(!out.nowcastWeeks[c.wk]) return;                             // only the weeks actually completed
+        if(origin && origin!=='all' && typeof _cmOriginFor==='function'){ var o=_cmOriginFor(c); if(o && o!==origin) return; }
+        (comCust[c.wk]=comCust[c.wk]||{})[c.customer]=(comCust[c.wk][c.customer]||0)+(parseFloat(c.cases)||0);
+      });
+    }
+    var _wkc=m.wkCust;
+    var avgCust=function(cust, wks){
+      if(!wks || !wks.length) return 0;
+      var s=0;
+      wks.forEach(function(w){
+        s += ((_wkc[w] && _wkc[w][cust]) || 0)/caseLb;                  // invoiced (lbs → cases)
+        s += (comCust[w] && comCust[w][cust]) || 0;                     // booked, in completed weeks only
+      });
+      return s/wks.length;
+    };
+    var _rw=out.rateWeeks;
+    out.customers=m.customers.map(function(c){
+      if(!c || !c.c) return c;
+      var n=Object.assign({}, c);
+      // A manual run-rate override is the user's explicit number — never recompute over it.
+      if(!(c.ovr && c.ovr.rr)){ n.rrCases=avgCust(c.c,_rw); n.rrLbs=Math.round(n.rrCases*caseLb); }
+      n.rr6Cases=avgCust(c.c,_rw.slice(-6));
+      n.rr3Cases=avgCust(c.c,_rw.slice(-3));
+      return n;
+    });
+  }
   out.nowcast=true;
   return out;
 }
