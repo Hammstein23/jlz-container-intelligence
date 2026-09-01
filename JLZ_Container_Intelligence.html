@@ -23180,11 +23180,27 @@ function dmBuildModel(raw, weeklyOnly, caseLb, prodKey){
   // Keying off `wkCust` alone gave "the last 3 weeks that happened to have sales", which for an
   // intermittent product spanned months (shallots' 3-week window was Mar 2 + Aug 10 + Aug 17) and
   // overstated its run-rate badly. Steady products are unaffected — they sell nearly every week.
+  // How far the EXPORT reaches is a property of the file, not of one product's sales. Using this product's
+  // own last sale as the edge threw away its most recent complete week whenever it happened not to sell in
+  // the final days (shallots' window stopped at Aug 17 while every other product reached Aug 24).
+  const _globalMax = (typeof dmGlobalDataMax === 'function' && dmGlobalDataMax()) ? dmGlobalDataMax() : '';
   const _soldWeeks = Object.keys(wkCust).filter(w => w < curWeekKey).sort();
   const allWeeks = (function(){
     if(_soldWeeks.length < 2) return _soldWeeks;
     const out = [], first = new Date(_soldWeeks[0] + 'T12:00:00');
-    const last = new Date(_soldWeeks[_soldWeeks.length - 1] + 'T12:00:00');
+    // Run through the last COMPLETE week on file, not the last week this product sold — a product that
+    // goes quiet must show those weeks as the zeros they are, or its run-rate averages only its good weeks.
+    let _lastKey = _soldWeeks[_soldWeeks.length - 1];
+    if(_globalMax){
+      try{
+        const gk = dmWeekKey(new Date(_globalMax));                     // week the export reaches
+        const pd = new Date(curWeekKey + 'T12:00:00'); pd.setDate(pd.getDate() - 7);
+        const pk = dmWeekKey(pd);                                       // last COMPLETE calendar week
+        const end = (gk >= pk) ? pk : gk;                               // never past what the file covers
+        if(end > _lastKey && end < curWeekKey) _lastKey = end;
+      }catch(e){}
+    }
+    const last = new Date(_lastKey + 'T12:00:00');
     for(let d = new Date(first); d <= last; d.setDate(d.getDate() + 7)){
       const k = dmWeekKey(d);
       out.push(k);
@@ -23213,7 +23229,10 @@ function dmBuildModel(raw, weeklyOnly, caseLb, prodKey){
   // the run-rate down ~16% (830 -> 695), making the plan optimistically wrong. Requiring a
   // strictly later week (>) drops the newest week until it is fully in — conservative, never
   // pollutes the average with a partial week. (It re-enters complete on the next export.)
-  const _dmaxWk = dataMax ? dmWeekKey(new Date(dataMax)) : '';
+  // Measured on the GLOBAL data max: the lag belongs to the export, so a product that simply didn't sell in
+  // the last few days must not have its newest complete week held out as if it were still being reported.
+  const _edgeMax = _globalMax || dataMax;
+  const _dmaxWk = _edgeMax ? dmWeekKey(new Date(_edgeMax)) : '';
   // The CURRENT calendar week is still in progress: only part of it is invoiced, so averaging it in drags
   // the run-rate down (e.g. ginger W35 showing 88 cs mid-week against a ~850 normal). It is excluded from
   // the average but kept in `partialWeek` so the UI can still SHOW it, clearly marked as in-progress.
