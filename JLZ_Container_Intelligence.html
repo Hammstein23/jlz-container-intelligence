@@ -14716,11 +14716,34 @@ function prodInvFor(p){ var st=prodInvState(); if(!st[p]) st[p]={serviceLevel:95
 // and shown separately as pass-through. Scoped by customer + product: Sol-ti's
 // TURMERIC is direct-ship (Fiji, ~83% of Fiji volume); Sol-ti's GINGER comes from
 // normal Peru stock, so it stays in demand. Add more accounts here as needed.
+// The pairs below are only the STARTING POINT. Which accounts ship direct changes as lead times and
+// arrangements change, so it is editable from the Demand tab (a toggle per customer) and persisted per
+// device — hard-coding it meant every change needed a code edit, and a wrong entry silently inflates or
+// deflates the buy plan for that whole product.
 var DIRECT_SHIP=[{customer:'sol-ti', product:'turmeric'}];
+var DS_LS='jlz_directship_pairs_v1';
+function dsKey(cust, prod){ return String(cust||'').trim().toLowerCase()+'|'+String(prod||'ginger'); }
+function dsState(){ try{ var o=JSON.parse(localStorage.getItem(DS_LS)||'null'); return (o&&typeof o==='object')?o:null; }catch(e){ return null; } }
+function dsSave(o){ try{ localStorage.setItem(DS_LS, JSON.stringify(o||{})); }catch(e){} }
+// true = this account's volume for this product NEVER enters inventory (ships supplier → customer).
+function dsIsOn(cust, prod){
+  var st=dsState(), k=dsKey(cust,prod);
+  if(st && st.hasOwnProperty(k)) return !!st[k];                       // explicit choice wins
+  var c=String(cust||'').trim().toLowerCase(), p=prod||'ginger';       // else fall back to the seed pairs
+  return DIRECT_SHIP.some(function(d){ return d.product===p && c.indexOf(d.customer)>-1; });
+}
+function dsToggle(cust, prod){
+  var st=dsState()||{}, k=dsKey(cust,prod);
+  st[k]=!dsIsOn(cust,prod);
+  dsSave(st);
+  // Everything downstream reads the same flag, so rebuild the model and repaint the planners.
+  try{ if(typeof dmRebuildView==='function') dmRebuildView(); }catch(e){}
+  try{ if(typeof renderBuyPlanner==='function') renderBuyPlanner(); }catch(e){}
+  try{ if(typeof invmReRender==='function') invmReRender(); }catch(e){}
+}
 function isDirectShipRow(r){
   if(!r) return false;
-  var c=String(r.c||'').trim().toLowerCase(), p=(r.prod||'ginger');
-  return DIRECT_SHIP.some(function(d){ return d.product===p && c.indexOf(d.customer)>-1; });
+  return dsIsOn(r.c, r.prod||'ginger');
 }
 // Averaging window (weeks) for the direct-ship business figure. Default 26 — a lumpy order-driven
 // account only lands a few POs in 13 wks, so a longer window gives a steadier sizing number.
@@ -24109,6 +24132,17 @@ function renderBuildupPanel(){
   var weeks = bpFutureWeeks(8).slice(1, 8);   // next ~7 weeks, skip the current still-open week
   if(!weeks.length){ host.innerHTML = ''; return; }
   var _win = (typeof dmWindow === 'function') ? dmWindow(prod) : 13;
+  // Direct-ship accounts (Sol-ti's turmeric) ship port → customer and never enter the warehouse, so they
+  // are not stock demand. Declared here because BOTH the column total and the rows must exclude them —
+  // dropping them from the rows alone just pushed their volume into "Other small accounts".
+  var _isDS = function(cust){
+    try{ return (typeof isDirectShipRow === 'function') && isDirectShipRow({ c: cust, prod: prod }); }
+    catch(e){ return false; }
+  };
+  var _rrKeyBase = (_win === 3) ? 'rr3Cases' : (_win === 6) ? 'rr6Cases' : 'rrCases';
+  var _dsCases = (m.customers || []).reduce(function(s, c){
+    return s + ((c && c.c && _isDS(c.c)) ? ((c[_rrKeyBase] != null ? c[_rrKeyBase] : c.rrCases) || 0) : 0);
+  }, 0);
   var salesBase;
   if (isG) {
     salesBase = (typeof dmEffectiveRunRateLbs === 'function' && dmEffectiveRunRateLbs() != null)
@@ -24117,6 +24151,7 @@ function renderBuildupPanel(){
     var _rrW = (_win === 3 ? (m.runRate3 || m.runRate13) : _win === 6 ? (m.runRate6 || m.runRate13) : m.runRate13);
     salesBase = _rrW / caseLb;
   }
+  salesBase = Math.max(0, salesBase - _dsCases);     // the plan buys stock, not pass-through volume
   // Buy-inflation. Ginger uses the Buy Planner's OWN time-based shrink so the "Buy" row
   // matches the plan exactly. Other products use their (placeholder) shrink %, clearly flagged.
   var _bpd = (typeof window !== 'undefined') ? window._bpDigest : null;
@@ -24146,13 +24181,9 @@ function renderBuildupPanel(){
   }
   var winSet = {};
   weeks.forEach(function(w){ if(com[w.weekStartISO]) Object.keys(com[w.weekStartISO]).forEach(function(k){ winSet[k] = 1; }); });
-  // DIRECT-SHIP accounts never enter the warehouse (Sol-ti's turmeric ships port → customer), so they are
-  // not stock demand and must not appear here: including them told you to buy ~233 cs/wk of turmeric that
-  // never touches your cooler. The run-rate already strips them; this table has to agree.
-  var _isDS = function(cust){
-    try{ return (typeof isDirectShipRow === 'function') && isDirectShipRow({ c: cust, prod: prod }); }
-    catch(e){ return false; }
-  };
+  // Accounts excluded as pass-through, listed under the table so they can be switched back on.
+  var dsList = m.customers.filter(function(c){ return c && c.c && _isDS(c.c) && ((c.rrCases >= 1) || winSet[c.c]); })
+                          .sort(function(a,b){ return (b.rrCases||0)-(a.rrCases||0); });
   var shown = m.customers.filter(function(c){ return c && c.c && !_isDS(c.c) && ((c.rrCases >= 1) || winSet[c.c]); })
                          .sort(function(a,b){ return (b.rrCases || 0) - (a.rrCases || 0); });
   var esc = (typeof dmEsc === 'function') ? dmEsc : function(s){ return String(s); };
@@ -24188,7 +24219,11 @@ function renderBuildupPanel(){
   var colTot = weeks.map(function(){ return 0; });
   var body = '';
   shown.forEach(function(c){
-    body += '<tr><td class="c"><span class="nm">' + esc(c.c) + '</span><span class="bd ' + (c.sporadic ? 'od' : 'st') + '">' + (c.sporadic ? 'OD' : 'ST') + '</span><div class="mt">rr ' + Math.round((c[_rrKey] != null ? c[_rrKey] : c.rrCases) || 0) + ' cs</div></td>';
+    var dsBtn = '<button onclick="dsToggle(\'' + String(c.c).replace(/'/g,"\\'") + '\',\'' + prod + '\')" '
+      + 'title="Marcar como direct-ship: su volumen deja de contar como demanda de inventario para ' + esc(prod) + '" '
+      + 'style="margin-left:6px;border:1px solid var(--gray-200);background:var(--white);color:var(--gray-400);border-radius:5px;'
+      + 'font-family:var(--fm);font-size:9px;font-weight:700;padding:1px 5px;cursor:pointer">no entra a inventario</button>';
+    body += '<tr><td class="c"><span class="nm">' + esc(c.c) + '</span><span class="bd ' + (c.sporadic ? 'od' : 'st') + '">' + (c.sporadic ? 'OD' : 'ST') + '</span>' + dsBtn + '<div class="mt">rr ' + Math.round((c[_rrKey] != null ? c[_rrKey] : c.rrCases) || 0) + ' cs</div></td>';
     histWeeks.forEach(function(wk, i){ var av = actualCases(c.c, wk);
       body += '<td class="hist' + (i === histWeeks.length - 1 ? ' hist-last' : '') + (wk===partialWk?' hist-part':'') + '">' + (av > 0 ? av.toLocaleString() : '<span class="z">0</span>') + '</td>'; });
     weeks.forEach(function(w, i){ var cv = cell(c, w.weekStartISO); colTot[i] += cv.v; body += '<td class="' + cv.k + '">' + (cv.v > 0 ? cv.v.toLocaleString() : '0') + '</td>'; });
@@ -24246,6 +24281,24 @@ function renderBuildupPanel(){
     ? '<b>TOTAL</b> is the sales the plan targets (pre-shrink); <b>Buy</b> adds shrink for warehouse outflow — the same time-based rate the Buy Planner uses, so the two match.'
     : '<b>TOTAL</b> is the sales you target (pre-shrink); <b>Buy*</b> adds a <b>placeholder</b> shrink of ' + _shrinkPct + '% for ' + esc(pl) + ' — to be confirmed with warehouse data.';
   h += '<div class="dbu-note"><b>How to read.</b> Each cell is what you buy for that customer that week. <b>Order-driven (OD)</b> accounts show their committed order in the weeks they order and resume their run-rate past their last committed week; <b>steady (ST)</b> accounts show their run-rate every week, lifted only when a commitment exceeds it. ' + buyNote + '</div>';
+  // Pass-through accounts: shipped supplier → customer, so their volume is deliberately OUT of every
+  // number above. Listed here (never hidden) so it is obvious what was set aside and easy to undo.
+  h += '<div style="margin-top:10px;padding:10px 12px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:var(--r)">'
+    + '<div style="font-size:11px;font-weight:700;color:var(--gray-600);margin-bottom:6px">Cuentas que NO entran al inventario '
+    + '<span style="font-weight:400;color:var(--gray-400)">· direct-ship para ' + esc(pl) + ' — su volumen no cuenta como demanda de stock</span></div>';
+  if(dsList.length){
+    h += dsList.map(function(c){
+      return '<span style="display:inline-flex;align-items:center;gap:6px;margin:0 8px 6px 0;padding:3px 8px;border-radius:6px;'
+        + 'background:#ede9fe;border:1px solid #c4b5fd;font-size:11px;color:#5b21b6">'
+        + '<b>' + esc(c.c) + '</b> <span style="font-family:var(--fm);color:#7c3aed">' + Math.round(c.rrCases||0) + ' cs/sem</span>'
+        + '<button onclick="dsToggle(\'' + String(c.c).replace(/'/g,"\\'") + '\',\'' + prod + '\')" '
+        + 'title="Volver a contarlo como demanda de inventario" '
+        + 'style="border:none;background:none;color:#7c3aed;cursor:pointer;font-size:13px;line-height:1;padding:0 2px">&times;</button></span>';
+    }).join('');
+  } else {
+    h += '<span style="font-size:11px;color:var(--gray-400)">Ninguna. Usá el botón <i>no entra a inventario</i> en la fila de un cliente para marcarlo.</span>';
+  }
+  h += '</div>';
   h += '</div>';
   host.innerHTML = h;
 }
