@@ -14828,7 +14828,11 @@ function nowcastProductModel(m, p, origin){
   var partial={}; m.weekly.forEach(function(w){ if(w.week>lastReliable) partial[w.week]=w.lbs||0; });   // invoiced-so-far past the reliable edge
   // Weeks to complete = those with partial invoicing OR with booked orders. A week that exists ONLY in
   // committed (nothing invoiced yet, e.g. the current week) is still included — it is real booked demand.
-  var wkset={}; Object.keys(partial).forEach(function(k){ wkset[k]=1; }); Object.keys(cbw).forEach(function(k){ if(k>lastReliable && cbw[k]>0) wkset[k]=1; });
+  // The run-rate is a rate of HISTORY. invmCommittedByWeek has no upper bound, so a booked order for a
+  // future week would otherwise be averaged in as though that week had already happened.
+  var _curWkKey=(typeof dmWeekKey==='function')?dmWeekKey(new Date()):'';
+  var wkset={}; Object.keys(partial).forEach(function(k){ wkset[k]=1; });
+  Object.keys(cbw).forEach(function(k){ if(k>lastReliable && cbw[k]>0 && (!_curWkKey || k<=_curWkKey)) wkset[k]=1; });
   var incWeeks=Object.keys(wkset).sort();
   if(!incWeeks.length) return m;
   var series=m.weeklyReliable.map(function(w){ return {week:w.week, lbs:w.lbs}; }), added=false;
@@ -14838,6 +14842,21 @@ function nowcastProductModel(m, p, origin){
     else if(part>0){ series.push({week:k, lbs:Math.round(part), prelim:true}); added=true; }           // invoiced-only, still lagging → counted but flagged preliminary
   });
   if(!added) return m;
+  // A week between two counted weeks that sold NOTHING is a real zero, not a week to skip. The sold-week
+  // list ends at the last week with sales, so an intermittent product that goes quiet and then books an
+  // order leaves a hole — averaging across it cherry-picks the weeks that had activity and overstates the
+  // rate (turmeric Hawaii: the 3wk window was Jul 27 · Aug 3 · Aug 24, silently dropping two zero weeks).
+  if(series.length>1 && typeof dmWeekKey==='function'){
+    var filled=[], prev=null;
+    series.forEach(function(w){
+      if(prev){
+        var d=new Date(prev+'T12:00:00'); d.setDate(d.getDate()+7);
+        for(var g=0; g<60 && dmWeekKey(d)<w.week; g++){ filled.push({week:dmWeekKey(d), lbs:0, zero:true}); d.setDate(d.getDate()+7); }
+      }
+      filled.push(w); prev=w.week;
+    });
+    series=filled;
+  }
   var mean=function(a){ return a.length? a.reduce(function(s,x){return s+(x.lbs||0);},0)/a.length : 0; };
   var out=Object.assign({}, m);
   // The CURRENT week is still running: whatever is booked so far is a fraction of what it will end at, so it
