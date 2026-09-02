@@ -53,9 +53,17 @@ Este script sale a comparar contra afuera, en tres niveles:
 | 2 | invariantes sobre los datos vivos | ventanas con saltos, filas que no explican el run-rate, cuentas internas coladas |
 | 3 | filas crudas vs **WholesaleWare** | pérdida de filas al cargar el archivo — lo único que los otros dos no ven |
 
-El nivel 3 es manual y es el más valioso: el script imprime los totales de libras por
-semana con su rango de fechas; sacás el **Sales By Account Report** de WholesaleWare
-para ese mismo rango y comparás el total. Si coinciden, el dato entró completo.
+El nivel 3 es manual y es el más valioso: el script imprime los totales por semana con
+su rango de fechas; sacás el **Sales By Account Report** de WholesaleWare para ese mismo
+rango y comparás. Si coinciden, el dato entró completo.
+
+Compará **`Billable Units`** y **`Gross Sales`**: son columnas tal cual del reporte, se
+suman y listo. **No compares libras** — la app las deriva con
+`(Billable Units ÷ Billable UOM Ratio) × lb por unidad`, y ese último factor no es una
+columna: se parsea del nombre del ítem (`"Organic Ginger 30Lbs"` → 30, `"9oz"` → 0.5625).
+Compararlas mediría nuestra propia conversión en vez del dato de origen. El script las
+imprime igual como `lb_derivado`, porque si `units` cuadra y `lb` no, el problema está
+justamente en ese parseo.
 
 > **Filtrá por `Target Fulfillment Date`.** Es el campo que lee el cargador
 > (`r['Target Fullfillment Date']` — el error de tipeo es de WholesaleWare, no nuestro).

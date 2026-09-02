@@ -134,24 +134,36 @@
   // Totales por semana calculados solo de las filas crudas, para comparar a mano contra el
   // Sales By Account Report de WholesaleWare del mismo rango. Esto es lo único que detecta
   // un error en la CARGA del archivo (si se perdieran filas, todo lo de arriba igual cuadra).
+  // Se compara por BILLABLE UNITS y GROSS SALES, que son columnas tal cual del reporte: se
+  // suman y listo. Las libras NO sirven para esto — son derivadas
+  // ((units ÷ Billable UOM Ratio) × lb por unidad, con ese último factor PARSEADO del nombre
+  // del ítem), así que compararlas mediría nuestra propia conversión, no el dato de origen.
+  // Se muestran igual, en su propia columna, porque si units cuadra y lb no, el problema está
+  // exactamente en el parseo del peso.
   var byWk = {};
   _dmRawAll.forEach(function(r){
     if (r.type && r.type !== 'Sale') return;
-    var w = wkOf(r.d), p = r.prod || 'ginger';
-    var o = byWk[w] || (byWk[w] = {});
-    o[p] = (o[p] || 0) + (r.lbs || 0);
-    o._todo = (o._todo || 0) + (r.lbs || 0);
+    var o = byWk[wkOf(r.d)] || (byWk[wkOf(r.d)] = { u:0, gs:0, lb:0 });
+    o.u  += (r.units || 0);        // firmado: notas de crédito y devoluciones restan
+    o.gs += (r.gs || 0);
+    o.lb += (r.lbs || 0);
   });
-  var last = Object.keys(byWk).sort().slice(-6);
-  var lvl3 = last.map(function(w){
-    var e = byWk[w], out = { semana:w, desde:w, hasta:(function(){ var d=new Date(w+'T12:00:00'); d.setDate(d.getDate()+6); return d.toISOString().slice(0,10); })() };
-    PRODS.forEach(function(p){ out[p+'_lb'] = Math.round(e[p] || 0); });
-    out.TOTAL_lb = Math.round(e._todo || 0);
-    return out;
+  var lvl3 = Object.keys(byWk).sort().slice(-6).map(function(w){
+    var e = byWk[w], end = new Date(w + 'T12:00:00'); end.setDate(end.getDate() + 6);
+    var p2 = function(n){ return (n < 10 ? '0' : '') + n; };
+    return {
+      desde: w,
+      hasta: end.getFullYear() + '-' + p2(end.getMonth()+1) + '-' + p2(end.getDate()),
+      BILLABLE_UNITS: Math.round(e.u),
+      GROSS_SALES: Math.round(e.gs),
+      lb_derivado: Math.round(e.lb)
+    };
   });
   console.log('%c NIVEL 3 — contra WholesaleWare (comparación manual) ', 'background:#0d5026;color:#fff;font-weight:700');
   console.log('Sales By Account Report, filtrando por TARGET FULFILLMENT DATE con el rango desde→hasta de una fila.');
   console.log('Tiene que ser ese campo: es el que lee el cargador (r["Target Fullfillment Date"]). Con otro no compara nada.');
+  console.log('Compará las columnas BILLABLE UNITS y GROSS SALES del reporte — se suman directo, sin convertir nada.');
+  console.log('lb_derivado NO se compara: lo calcula la app parseando el peso del nombre del ítem.');
   console.log('Incluye TODAS las cuentas, internas y direct-ship, porque así lo reporta WholesaleWare.');
   console.table(lvl3);
 
