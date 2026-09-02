@@ -106,18 +106,32 @@ ok('NO carga el PO que falta', !Object.keys(_bpInv.rows).some(function(k){ retur
 check('preserva sellLb', _bpInv.sellLb, 1.85);
 ok('preserva rates', _bpInv.rates && _bpInv.rates.peru === 0.44);
 
-// ════ Paso 3b — el chequeo que atrapa el doble descuento ════════════════════
-// Simula las dos formas de cargar y comprueba que la aritmética de la app distingue.
-group('Paso 3b — bruto vs neto');
+// ════ Paso 3b — las DOS convenciones, que son opuestas ══════════════════════
+// Los dos stores tratan el committed al revés uno del otro. Confundirlos cuenta las cajas
+// reservadas dos veces: para abajo en el product-aware, para arriba en ginger-Perú.
+group('Paso 3b — cada store carga distinto');
 
-var SHRINK = 0.05, COMMITTED = 50, LIBRES_REALES = 150;
-function available(onHand){ return Math.max(0, onHand * (1 - SHRINK) - COMMITTED); }
-var bruto = available(LIBRES_REALES + COMMITTED);     // 200 físicas, 50 reservadas
-var neto  = available(LIBRES_REALES);                 // el error: cargar solo las libres
+var SHRINK = 0.05, COMMITTED = 50, LIBRES = 150, FISICAS = LIBRES + COMMITTED;
 
-check('cargando BRUTO el available da las cajas libres', Math.round(bruto), Math.round(LIBRES_REALES - (LIBRES_REALES + COMMITTED) * SHRINK));
-ok('cargando NETO el available queda corto', neto < bruto - 40);
-ok('la diferencia es el committed descontado dos veces', Math.round(bruto - neto) === Math.round(COMMITTED * (1 - SHRINK)));
+// product-aware: available = onHand·shrink − committed  → se carga BRUTO
+function availProd(onHand){ return Math.max(0, onHand * (1 - SHRINK) - COMMITTED); }
+var pa_bien = availProd(FISICAS), pa_mal = availProd(LIBRES);
+check('product-aware con BRUTO: available = las libres (menos shrink)',
+      Math.round(pa_bien), Math.round(LIBRES - FISICAS * SHRINK));
+ok('product-aware con LIBRE: queda corto', pa_mal < pa_bien - 40);
+ok('lo que falta es el committed restado dos veces',
+   Math.round(pa_bien - pa_mal) === Math.round(COMMITTED * (1 - SHRINK)));
+
+// ginger-Perú: gross = stock + committed  → se carga LIBRE (la convención OPUESTA)
+function grossGinger(stock){ return stock + COMMITTED; }
+var g_bien = grossGinger(LIBRES), g_mal = grossGinger(FISICAS);
+check('ginger-Perú con LIBRE: el gross son las cajas físicas', g_bien, FISICAS);
+ok('ginger-Perú con BRUTO: infla el stock', g_mal > FISICAS);
+ok('lo que sobra es el committed sumado dos veces', g_mal - FISICAS === COMMITTED);
+
+// El punto que hay que recordar: cargar igual en los dos stores rompe uno de los dos.
+ok('las dos convenciones son opuestas — no se puede cargar igual en ambos',
+   (LIBRES !== FISICAS) && (availProd(FISICAS) !== availProd(LIBRES)) && (grossGinger(LIBRES) !== grossGinger(FISICAS)));
 
 // ════ El runbook no perdió ningún snippet ═══════════════════════════════════
 group('Integridad del runbook');
@@ -126,6 +140,8 @@ ok('el snippet A es el de ginger-Perú (por PO)', /bpInvSave/.test(SNIPPET_1) &&
 ok('el snippet B es el product-aware', /prodInvSave/.test(SNIPPET_2) && /excluded/.test(SNIPPET_2));
 ok('el snippet B hace REEMPLAZO total, no merge', /\.lots = LOTS/.test(SNIPPET_2));
 ok('el paso 3b muestra on-hand, committed y available', /onHandCases/.test(SNIPPET_3) && /committedCases/.test(SNIPPET_3) && /availCases/.test(SNIPPET_3));
+ok('el paso 3b también cubre ginger-Perú, que vive en el otro store', /bpInvState/.test(SNIPPET_3) && /committedInvForWeek/.test(SNIPPET_3));
+ok('el runbook dice que las convenciones son opuestas', /LIBRES/.test(RUNBOOK_TEXT) && /BRUTAS/.test(RUNBOOK_TEXT));
 ok('el chequeo de consola lleva el cache-buster', /\?v='\s*\+\s*Date\.now\(\)/.test(SNIPPET_4));
 
 summary();

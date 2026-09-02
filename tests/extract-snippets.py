@@ -27,6 +27,7 @@ def main() -> None:
         for i, b in enumerate(blocks, 1):
             fh.write('var SNIPPET_%d = %s;\n' % (i, json.dumps(b)))
         fh.write('var SNIPPET_COUNT = %d;\n' % len(blocks))
+        fh.write('var RUNBOOK_TEXT = %s;\n' % json.dumps(src))   # el runbook entero, para aserciones sobre la prosa
     print('extracted %d snippet(s) -> %s' % (len(blocks), out))
 
 
