@@ -57,6 +57,11 @@ El nivel 3 es manual y es el más valioso: el script imprime los totales de libr
 semana con su rango de fechas; sacás el **Sales By Account Report** de WholesaleWare
 para ese mismo rango y comparás el total. Si coinciden, el dato entró completo.
 
+> **Filtrá por `Target Fulfillment Date`.** Es el campo que lee el cargador
+> (`r['Target Fullfillment Date']` — el error de tipeo es de WholesaleWare, no nuestro).
+> Comparar contra cualquier otro campo de fecha no prueba nada: las filas quedarían en
+> semanas distintas y las diferencias serían de la consulta, no del código.
+
 Cualquier fila con `dif_vs_crudo ≠ 0` o `saltos ≠ 0` es un bug.
 
 ## Por qué corren así

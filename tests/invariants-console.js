@@ -150,7 +150,8 @@
     return out;
   });
   console.log('%c NIVEL 3 — contra WholesaleWare (comparación manual) ', 'background:#0d5026;color:#fff;font-weight:700');
-  console.log('Sacá el Sales By Account Report para el rango desde→hasta de una fila y compará el total de libras.');
+  console.log('Sales By Account Report, filtrando por TARGET FULFILLMENT DATE con el rango desde→hasta de una fila.');
+  console.log('Tiene que ser ese campo: es el que lee el cargador (r["Target Fullfillment Date"]). Con otro no compara nada.');
   console.log('Incluye TODAS las cuentas, internas y direct-ship, porque así lo reporta WholesaleWare.');
   console.table(lvl3);
 

@@ -23046,7 +23046,7 @@ function dmToDate(v){
   const d = new Date(s);
   return isNaN(d) ? null : d;
 }
-// Sunday-start week key 'YYYY-MM-DD'.
+// Week key 'YYYY-MM-DD' = the MONDAY that starts the week the date falls in.
 function dmWeekKey(d){
   // Accepts a Date OR a date string. A bare 'YYYY-MM-DD' is parsed by JS as UTC midnight, which west of
   // Greenwich lands on the PREVIOUS day — so every MONDAY sale was bucketed into the previous week (the
