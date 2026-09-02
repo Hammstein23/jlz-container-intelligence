@@ -59,8 +59,14 @@ El nivel 3 es manual y es el más valioso: el script imprime los totales por sem
 su rango de fechas; sacás el **Sales By Account Report** de WholesaleWare para ese mismo
 rango y comparás. Si coinciden, el dato entró completo.
 
-Compará **`Billable Units`** y **`Gross Sales`**: son columnas tal cual del reporte, se
-suman y listo. **No compares libras** — la app las deriva con
+Compará **un producto a la vez**, no los totales: el cargador descarta a propósito las
+filas convencionales, los productos que no son los nuestros (Ginger Juice incluido) y los
+ítems cuyo nombre no dice el peso (`"4CT"`). Total contra total no cierra nunca, y la
+diferencia no sería un bug. El script imprime aparte lo que se descartó y por qué, y las
+notas de crédito y devoluciones — que están en el reporte pero no en la demanda.
+
+Dentro de ese producto, compará **`Billable Units`** y **`Gross Sales`**: son columnas tal
+cual del reporte, se suman y listo. Filtrá también a `Type = Sale` y a orgánico. **No compares libras** — la app las deriva con
 `(Billable Units ÷ Billable UOM Ratio) × lb por unidad`, y ese último factor no es una
 columna: se parsea del nombre del ítem (`"Organic Ginger 30Lbs"` → 30, `"9oz"` → 0.5625).
 Compararlas mediría nuestra propia conversión en vez del dato de origen. El script las

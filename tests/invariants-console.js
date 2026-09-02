@@ -15,7 +15,7 @@
 (function(){
   'use strict';
   // Estampa de versión: si el navegador sirvió una copia cacheada, esto lo delata al instante.
-  console.log('%c invariants-console.js  ·  v2026-09-02  ·  nivel 3 compara UNITS + GROSS SALES ',
+  console.log('%c invariants-console.js  ·  v2026-09-02b  ·  nivel 3 por PRODUCTO (units + gross) ',
               'background:#334155;color:#fff');
   if (typeof _dmRawAll === 'undefined' || !_dmRawAll || !_dmRawAll.length){
     console.log('No hay datos cargados. Abrí Demand y cargá el archivo primero.'); return;
@@ -143,32 +143,75 @@
   // del ítem), así que compararlas mediría nuestra propia conversión, no el dato de origen.
   // Se muestran igual, en su propia columna, porque si units cuadra y lb no, el problema está
   // exactamente en el parseo del peso.
-  var byWk = {};
+  // Se compara POR PRODUCTO, no todo junto: el cargador descarta a propósito las filas
+  // convencionales, los productos que no son los nuestros (Ginger Juice incluido) y los ítems
+  // sin peso parseable en el nombre ("4CT"). Un total contra otro total nunca iba a cuadrar.
+  // Filtrá el reporte a UN producto y compará esa fila.
+  // Se compara por BILLABLE UNITS y GROSS SALES, columnas tal cual del reporte. Las libras NO:
+  // son derivadas ((units ÷ Billable UOM Ratio) × lb por unidad, parseado del nombre del ítem),
+  // así que medirían nuestra conversión y no el dato de origen.
+  var byWk = {}, credits = {};
   _dmRawAll.forEach(function(r){
-    if (r.type && r.type !== 'Sale') return;
-    var o = byWk[wkOf(r.d)] || (byWk[wkOf(r.d)] = { u:0, gs:0, lb:0 });
-    o.u  += (r.units || 0);        // firmado: notas de crédito y devoluciones restan
-    o.gs += (r.gs || 0);
-    o.lb += (r.lbs || 0);
+    var w = wkOf(r.d), pr = r.prod || 'ginger';
+    if (r.type && r.type !== 'Sale'){                       // CREDIT / RETURN: van aparte
+      var cc = credits[w] || (credits[w] = { u:0, gs:0 });
+      cc.u += (r.units || 0); cc.gs += (r.gs || 0);
+      return;
+    }
+    var o = byWk[w] || (byWk[w] = {});
+    var e = o[pr] || (o[pr] = { u:0, gs:0 });
+    e.u += (r.units || 0); e.gs += (r.gs || 0);
   });
-  var lvl3 = Object.keys(byWk).sort().slice(-6).map(function(w){
-    var e = byWk[w], end = new Date(w + 'T12:00:00'); end.setDate(end.getDate() + 6);
-    var p2 = function(n){ return (n < 10 ? '0' : '') + n; };
-    return {
-      desde: w,
-      hasta: end.getFullYear() + '-' + p2(end.getMonth()+1) + '-' + p2(end.getDate()),
-      BILLABLE_UNITS: Math.round(e.u),
-      GROSS_SALES: Math.round(e.gs),
-      lb_derivado: Math.round(e.lb)
-    };
+  var p2 = function(n){ return (n < 10 ? '0' : '') + n; };
+  var endOf = function(w){ var d = new Date(w + 'T12:00:00'); d.setDate(d.getDate() + 6);
+    return d.getFullYear() + '-' + p2(d.getMonth()+1) + '-' + p2(d.getDate()); };
+  var weeks3 = Object.keys(byWk).sort().slice(-3);
+
+  var lvl3 = [];
+  weeks3.forEach(function(w){
+    PRODS.forEach(function(pr){
+      var e = (byWk[w] || {})[pr];
+      if (!e || (!e.u && !e.gs)) return;
+      lvl3.push({ desde:w, hasta:endOf(w), producto:pr,
+                  BILLABLE_UNITS:Math.round(e.u), GROSS_SALES:Math.round(e.gs) });
+    });
   });
+
   console.log('%c NIVEL 3 — contra WholesaleWare (comparación manual) ', 'background:#0d5026;color:#fff;font-weight:700');
-  console.log('Sales By Account Report, filtrando por TARGET FULFILLMENT DATE con el rango desde→hasta de una fila.');
-  console.log('Tiene que ser ese campo: es el que lee el cargador (r["Target Fullfillment Date"]). Con otro no compara nada.');
-  console.log('Compará las columnas BILLABLE UNITS y GROSS SALES del reporte — se suman directo, sin convertir nada.');
-  console.log('lb_derivado NO se compara: lo calcula la app parseando el peso del nombre del ítem.');
-  console.log('Incluye TODAS las cuentas, internas y direct-ship, porque así lo reporta WholesaleWare.');
+  console.log('Sales By Account Report → filtro TARGET FULFILLMENT DATE con el rango desde→hasta.');
+  console.log('Es ese campo y no otro: es el que lee el cargador (r["Target Fullfillment Date"]).');
+  console.log('Filtrá el reporte a UN producto y compará BILLABLE UNITS y GROSS SALES de esa fila.');
+  console.log('En el reporte: solo Type = Sale, solo ORGANICO (lo convencional la app no lo carga).');
   console.table(lvl3);
+
+  // Notas de crédito y devoluciones: están en el archivo y el reporte las muestra, pero NO entran
+  // al modelo de demanda. Si el total del reporte no cierra por poco, casi siempre es esto.
+  var cr = Object.keys(credits).filter(function(w){ return weeks3.indexOf(w) >= 0; })
+                 .map(function(w){ return { desde:w, hasta:endOf(w),
+                   credito_devol_units:Math.round(credits[w].u), credito_devol_gross:Math.round(credits[w].gs) }; });
+  if (cr.length){
+    console.log('Créditos y devoluciones de esas semanas — están en el reporte pero NO en la demanda:');
+    console.table(cr);
+  }
+
+  // Lo que el cargador dejó afuera a propósito, con su motivo. Estas filas SÍ están en el reporte.
+  if (typeof _dmRecon !== 'undefined' && _dmRecon){
+    var dropped = [];
+    Object.keys(_dmRecon).forEach(function(pr){
+      var d = _dmRecon[pr];
+      if (!d) return;
+      if (d.dropWeight || d.dropZeroUnit || d.dropNoDate || d.dropMixedOrigin){
+        dropped.push({ producto:pr, filas_cargadas:d.kept,
+                       sin_peso_en_el_nombre:d.dropWeight || 0, gross_de_esas:Math.round(d.dropGross || 0),
+                       sin_unidades:d.dropZeroUnit || 0, sin_fecha:d.dropNoDate || 0,
+                       origen_mezclado:d.dropMixedOrigin || 0 });
+      }
+    });
+    if (dropped.length){
+      console.log('Filas descartadas a propósito (histórico completo, no solo estas semanas) — están en el reporte:');
+      console.table(dropped);
+    }
+  }
 
   console.log('%c RESULTADO ', 'background:#0d5026;color:#fff;font-weight:700');
   if (!problems.length) console.log('✓ Sin problemas en los niveles 1 y 2. Falta tu comparación manual del nivel 3.');
