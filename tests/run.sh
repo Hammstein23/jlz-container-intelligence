@@ -36,6 +36,17 @@ python3 "$DIR/extract.py" "$HTML" "$TMP/app.js" \
 run_suite "demanda" "$TMP/app.js" "$DIR/pure-tests.js"
 
 echo
+echo "══ Chequeo de cierre del día ═══════════════════════════════════"
+if [ -f "$DIR/orders-check.js" ]; then
+  cat "$DIR/stubs.js" "$DIR/orders-check.js" > /dev/null   # existe y es legible
+  set +e; osascript -l JavaScript -e "var getOrders=undefined;$(cat "$DIR/orders-check.js")" >/dev/null 2>&1
+  rc=$?; set -e
+  if [ $rc -ne 0 ]; then echo "  FAIL orders-check.js no parsea"; FAILED=1; else echo "  ok   orders-check.js parsea y sale limpio sin datos"; fi
+else
+  echo "no se encontró orders-check.js — salteado"
+fi
+
+echo
 echo "══ Runbook de los lunes ════════════════════════════════════════"
 if [ -f "$RUNBOOK" ]; then
   python3 "$DIR/extract-snippets.py" "$RUNBOOK" "$TMP/snippets.js"
