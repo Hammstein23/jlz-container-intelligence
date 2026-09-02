@@ -14,6 +14,9 @@
 
 (function(){
   'use strict';
+  // Estampa de versión: si el navegador sirvió una copia cacheada, esto lo delata al instante.
+  console.log('%c invariants-console.js  ·  v2026-09-02  ·  nivel 3 compara UNITS + GROSS SALES ',
+              'background:#334155;color:#fff');
   if (typeof _dmRawAll === 'undefined' || !_dmRawAll || !_dmRawAll.length){
     console.log('No hay datos cargados. Abrí Demand y cargá el archivo primero.'); return;
   }

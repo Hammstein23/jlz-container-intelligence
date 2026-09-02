@@ -36,11 +36,13 @@ Para probar que el harness sirve, corrélo contra una copia con un bug metido a 
 Con la app abierta y los datos cargados, pegá **esta línea** en la consola del navegador:
 
 ```js
-fetch('tests/invariants-console.js').then(r=>r.text()).then(eval)
+fetch('tests/invariants-console.js?v='+Date.now()).then(r=>r.text()).then(eval)
 ```
 
 Lo trae del propio sitio, así que siempre corre la última versión y no hay que copiar
-nada a mano. (Si la app está abierta como archivo local en vez de desde el sitio, el
+nada a mano. **El `?v=` no es opcional**: sin él el navegador sirve la copia cacheada y
+uno se queda mirando resultados viejos creyendo que son nuevos. El script imprime su
+versión en la primera línea — si no coincide con la de este archivo, era caché. (Si la app está abierta como archivo local en vez de desde el sitio, el
 `fetch` no va a funcionar: ahí sí, pegá el contenido del archivo entero.)
 
 `run.sh` prueba que el modelo sea consistente **consigo mismo**, y eso no alcanza: el
