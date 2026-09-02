@@ -96,7 +96,7 @@ var productFocus = function(){ return 'turmeric'; };
 var dmWindow = function(){ return 6; };
 var _dmOrigin = 'Fiji';
 var isDirectShipRow = function(r){ return r.c === 'SOL-TI'; };
-var dmEffectiveRunRateLbs = function(){ return null; };
+// (dmEffectiveRunRateLbs NO se stubea: turmeric no la llama, y ginger la necesita de verdad)
 var PRODUCTS = { turmeric: { shrinkPct: 5 } };
 var BWK = ['2026-07-20','2026-07-27','2026-08-03','2026-08-10','2026-08-17','2026-08-24'];
 COMMITTED = [
@@ -167,5 +167,78 @@ var inTable = custRows.concat(detRows).map(function(r){ return r.cells[0]; }).jo
 ok('direct-ship (SOL-TI) fuera de las filas', inTable.indexOf('SOL-TI') < 0);
 ok('direct-ship sí queda listado abajo, para poder revertirlo', /SOL-TI/.test(HTML));
 ok('otro origen (HAWAII ONLY) fuera del panel entero', !/HAWAII ONLY/.test(HTML));
+
+
+
+// ═══ 5. Build-up de GINGER — la otra rama ═══════════════════════════════════
+// Ginger no usa el run-rate del modelo como base: usa dmEffectiveRunRateLbs(), que le resta
+// las cuentas quiet sacadas a mano. Es una rama distinta (`isG`) del mismo panel, y hasta
+// ahora ningún test la tocaba: todos corrían con turmeric.
+group('renderBuildupPanel — rama de ginger');
+
+CASE_LB = 30;
+productFocus = function(){ return 'ginger'; };
+dmWindow = function(){ return 6; };
+_dmOrigin = 'All';
+isDirectShipRow = function(){ return false; };
+PRODUCTS = { ginger: { shrinkPct: 14 } };
+COMMITTED = [];
+var GWK = ['2026-07-13','2026-07-20','2026-07-27','2026-08-03','2026-08-10','2026-08-17'];
+var gwk = {};
+GWK.forEach(function(w){ gwk[w] = { 'BIG CO': 30*500, 'MID CO': 30*200, 'DORMIDA SA': 30*100 }; });
+_dmModelG = {
+  caseLb: 30, rateWeeks: GWK, wkCust: gwk, nowcastWeeks: {},
+  runRate13: 30*800, runRate6: 30*800, runRate3: 30*800,
+  customers: [
+    { c:'BIG CO',     rrCases:500, rr6Cases:500, rr3Cases:500, sporadic:false },
+    { c:'MID CO',     rrCases:200, rr6Cases:200, rr3Cases:200, sporadic:false },
+    { c:'DORMIDA SA', rrCases:100, rr6Cases:100, rr3Cases:100, sporadic:false }
+  ]
+};
+_dmModel = _dmModelG;
+var qaModelG = function(){ return _dmModelG; };
+var _quiet = [], _pct = {};
+var qaQuietList = function(){ return _quiet; };
+var qaPct = function(c){ return (_pct[c] != null) ? _pct[c] : 100; };
+window._bpDigest = { salesDemand: 800, weeklyDemand: 800/0.86 };
+bpFutureWeeks = function(n){
+  var out = [], d = new Date('2026-08-17T12:00:00');
+  for (var i = 0; i < n; i++){ var x = new Date(d); x.setDate(x.getDate() + 7*i);
+    out.push({ weekStartISO:x.toISOString().slice(0,10), weekNum:34 + i }); }
+  return out;
+};
+hybridSalesForWeek = function(iso, base){ return base; };
+
+function gingerTable(){
+  renderBuildupPanel();
+  var R = rowsOf(_out);
+  var tot = R.filter(function(r){ return hasCls(r,'tot'); })[0];
+  var oth = R.filter(function(r){ return hasCls(r,'oth-sum'); })[0];
+  var cus = R.filter(function(r){ return r.cls === '' && tot && r.cells.length === tot.cells.length; });
+  return { tot:tot, oth:oth, cus:cus };
+}
+
+// Sin cuentas sacadas: la base del plan es el run-rate del modelo y todo tiene que cuadrar.
+_quiet = []; _pct = {};
+var G = gingerTable();
+ok('la tabla de ginger se renderiza', !!G.tot);
+check('el plan usa el run-rate del modelo', Math.round(dmEffectiveRunRateLbs()/30), 800);
+var gBad = 0;
+for (var gi = 1; G.tot && gi < G.tot.cells.length; gi++){
+  var gs = 0; G.cus.forEach(function(r){ gs += num(r.cells[gi]); });
+  if (Math.abs(gs + (G.oth ? num(G.oth.cells[gi]) : 0) - num(G.tot.cells[gi])) > 0.5) gBad++;
+}
+check('clientes + Other = TOTAL en cada columna', gBad, 0);
+
+// Ahora se saca del plan una cuenta quiet: la base baja 100 cs. El TOTAL de la tabla dice
+// ser "lo que usa el Buy Planner", así que tiene que bajar con ella.
+_quiet = [{ c:'DORMIDA SA', rrLbs: 30*100 }]; _pct = { 'DORMIDA SA': 0 };
+check('el plan resta la cuenta sacada', Math.round(dmEffectiveRunRateLbs()/30), 700);
+var G2 = gingerTable();
+var projIdx = G2.tot.cells.length - 1;              // una columna proyectada cualquiera
+var g2rows = 0; G2.cus.forEach(function(r){ g2rows += num(r.cells[projIdx]); });
+var g2oth = G2.oth ? num(G2.oth.cells[projIdx]) : 0;
+check('el TOTAL proyectado sigue al plan (700), no al modelo (800)', num(G2.tot.cells[projIdx]), 700);
+check('las filas + Other suman ese TOTAL', g2rows + g2oth, num(G2.tot.cells[projIdx]));
 
 summary();

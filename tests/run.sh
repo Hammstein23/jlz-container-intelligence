@@ -31,7 +31,7 @@ run_suite () {                       # nombre · archivo js a concatenar · arch
 
 echo "══ Modelo de demanda ═══════════════════════════════════════════"
 python3 "$DIR/extract.py" "$HTML" "$TMP/app.js" \
-  dmWeekKey nowcastProductModel dmToggleOther renderBuildupPanel
+  dmWeekKey nowcastProductModel dmToggleOther renderBuildupPanel dmEffectiveRunRateLbs
 run_suite "demanda" "$TMP/app.js" "$DIR/pure-tests.js"
 
 echo

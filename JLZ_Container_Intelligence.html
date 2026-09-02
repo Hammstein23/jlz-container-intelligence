@@ -24341,8 +24341,23 @@ function renderBuildupPanel(){
   // total (window-3/6/13) and the rows (fixed 13) disagree and the gap lands in "Other" — a
   // phantom that is really just a window mismatch. Pick the matching per-account field.
   var _rrKey = (_win === 3) ? 'rr3Cases' : (_win === 6) ? 'rr6Cases' : 'rrCases';
+  // Ginger only: a quiet account can be held out of the plan (Out / Half / Full). The plan's base
+  // already drops it — dmEffectiveRunRateLbs subtracts rrLbs·(1−pct) — so the ROW has to show the
+  // same reduction. Without this the table's TOTAL kept claiming the full run-rate while the Buy
+  // Planner bought less, and the caption under it ("the column total is what the Buy Planner
+  // uses") was simply false by the size of the account held out.
+  var _qaF = {};
+  if (isG && typeof qaQuietList === 'function' && typeof qaPct === 'function'){
+    try { qaQuietList().forEach(function(x){
+      if (x && x.c) _qaF[x.c] = Math.max(0, Math.min(100, qaPct(x.c))) / 100;
+    }); } catch(e){}
+  }
+  var _rrOf = function(cust){
+    var v = (cust[_rrKey] != null ? cust[_rrKey] : cust.rrCases) || 0;
+    return v * (_qaF[cust.c] != null ? _qaF[cust.c] : 1);
+  };
   function cell(cust, wk){
-    var rr = Math.round((cust[_rrKey] != null ? cust[_rrKey] : cust.rrCases) || 0);
+    var rr = Math.round(_rrOf(cust));
     var cm = Math.round((com[wk] && com[wk][cust.c]) || 0);
     var last = comLast[cust.c];
     if(cust.sporadic){
@@ -24405,7 +24420,10 @@ function renderBuildupPanel(){
       + 'title="Marcar como direct-ship: su volumen deja de contar como demanda de inventario para ' + esc(prod) + '" '
       + 'style="margin-left:6px;border:1px solid var(--gray-200);background:var(--white);color:var(--gray-400);border-radius:5px;'
       + 'font-family:var(--fm);font-size:9px;font-weight:700;padding:1px 5px;cursor:pointer">no entra a inventario</button>';
-    body += '<tr><td class="c"><span class="nm">' + esc(c.c) + '</span><span class="bd ' + (c.sporadic ? 'od' : 'st') + '">' + (c.sporadic ? 'OD' : 'ST') + '</span>' + dsBtn + '<div class="mt">rr ' + Math.round((c[_rrKey] != null ? c[_rrKey] : c.rrCases) || 0) + ' cs</div></td>';
+    body += '<tr><td class="c"><span class="nm">' + esc(c.c) + '</span><span class="bd ' + (c.sporadic ? 'od' : 'st') + '">' + (c.sporadic ? 'OD' : 'ST') + '</span>' + dsBtn + '<div class="mt">rr ' + Math.round(_rrOf(c)) + ' cs'
+      + ((_qaF[c.c] != null && _qaF[c.c] < 1)
+          ? ('<span style="color:#b45309"> \u00b7 quiet, ' + (_qaF[c.c] === 0 ? 'fuera del plan' : Math.round(_qaF[c.c]*100) + '% en el plan') + '</span>')
+          : '') + '</div></td>';
     histWeeks.forEach(function(wk, i){ var av = actualCases(c.c, wk);
       body += '<td class="hist' + (i === histWeeks.length - 1 ? ' hist-last' : '') + (wk===partialWk?' hist-part':'') + '">' + (av > 0 ? av.toLocaleString() : '<span class="z">0</span>') + '</td>'; });
     weeks.forEach(function(w, i){ var cv = cell(c, w.weekStartISO); colTot[i] += cv.v; body += '<td class="' + cv.k + '">' + (cv.v > 0 ? cv.v.toLocaleString() : '0') + '</td>'; });
