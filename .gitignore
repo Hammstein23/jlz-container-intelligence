@@ -1,5 +1,8 @@
-# Config local de preview/dev (rutas de máquina, no va al repo)
-.claude/
+# Config local de preview/dev (rutas de máquina, no va al repo).
+# Los comandos SÍ van: son runbooks del negocio, tienen que estar versionados
+# y disponibles desde cualquier máquina.
+.claude/*
+!.claude/commands/
 
 # Basura de macOS
 .DS_Store
