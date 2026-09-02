@@ -12,7 +12,9 @@ Corre en segundos, sin navegador y sin datos. Levanta las funciones reales del H
 (`extract.py` las saca por nombre) y las prueba con datos sintéticos. Si algo falla,
 sale con código 1 y dice exactamente qué.
 
-Cubre los invariantes que se rompieron el 2026-09-01:
+Corre **dos suites**:
+
+**A. El modelo de demanda** (27 checks) — invariantes que se rompieron el 2026-09-01:
 
 - Las ventas de **lunes** caen en su propia semana (el bug más escondido: martes a
   domingo estaban bien, así que todo cuadraba y las semanas estaban corridas igual).
@@ -25,11 +27,22 @@ Cubre los invariantes que se rompieron el 2026-09-01:
 - En el build-up: **clientes + Other = TOTAL** en toda columna, y el desglose de "Other
   small accounts" suma exactamente esa fila.
 
-Para probar que el harness sirve, corrélo contra una copia con un bug metido a mano:
+**B. Los snippets del runbook de los lunes** (29 checks) — se leen del `.md` real
+(`.claude/commands/lunes.md`), no de una copia: el lunes se ejecuta el runbook, así que probar
+una copia no probaría nada. Verifica que el snippet de inventario **preserve las marcas
+`excluded`** (si no, esos lotes vuelven a contar como stock), que el reemplazo total sea total,
+que un PO ausente de Orders se reporte en vez de cargarse, que el de ginger-Perú preserve
+`sellLb` y `rates`, y que el chequeo de consola conserve el cache-buster.
+
+Para probar que el harness sirve, corrélo contra copias con un bug metido a mano:
 
 ```bash
-./tests/run.sh /ruta/a/una/copia-rota.html
+./tests/run.sh /ruta/copia-rota.html
+./tests/run.sh "" /ruta/runbook-roto.md
 ```
+
+**Verificado el 2026-09-02:** sacarle la preservación de `excluded` al runbook lo hace fallar con
+3 FAIL; sacarle el cache-buster, con 1. Los dos salen con código 1.
 
 ## 2. `tests/invariants-console.js` — contra datos reales
 
