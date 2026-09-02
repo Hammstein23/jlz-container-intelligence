@@ -280,4 +280,37 @@ check('van de 7 en 7 días', fwGap, 0);
 // NUNCA debe salir de toISOString, y eso se puede afirmar leyendo la función.
 ok('bpFutureWeeks no serializa la llave por UTC', !/\.toISOString\s*\(/.test(String(_realBpFutureWeeks)));
 
+
+// ═══ 7. Semanas de cobertura ════════════════════════════════════════════════
+// Detectado por Juan mirando el Simulator: la Wk 40 terminaba con 3.892 cs y mostraba 2,9w,
+// mientras la Wk 41 terminaba con 2.987 y mostraba 3,3w. Más stock, menos cobertura.
+// La causa: se dividía por la demanda de ESA misma semana (1.346 vs 905), no por lo que
+// realmente queda por consumir. Con demanda despareja el número no significaba nada.
+group('bpWeeksOfCover — cuánto dura lo que ya tengo');
+var r2 = function(x){ return Math.round(x * 10) / 10; };
+
+check('demanda pareja: 900 contra 300/semana', r2(bpWeeksOfCover(900, [300,300,300,300])), 3);
+check('se corta a mitad de semana', r2(bpWeeksOfCover(800, [300,300,300])), r2(2 + 200/300));
+check('sin stock no hay cobertura', bpWeeksOfCover(0, [300,300]), 0);
+check('stock negativo tampoco', bpWeeksOfCover(-50, [300]), 0);
+check('una semana sin demanda igual suma', r2(bpWeeksOfCover(300, [0, 300])), 2);
+check('si sobrevive todo el horizonte, devuelve el horizonte', bpWeeksOfCover(99999, [300,300,300]), 3);
+check('sin semanas por delante, 0', bpWeeksOfCover(500, []), 0);
+
+// El caso real de la captura, con las demandas que efectivamente venían después.
+var wk40 = bpWeeksOfCover(3892, [905,905,905,905,905]);
+var wk41 = bpWeeksOfCover(2987, [905,905,905,905]);
+check('Wk 40 (3.892 cs) ahora da 4,3w', r2(wk40), 4.3);
+check('Wk 41 (2.987 cs) da 3,3w', r2(wk41), 3.3);
+ok('MÁS stock da MÁS cobertura — que era el bug', wk40 > wk41);
+
+// La propiedad general: con las mismas demandas por delante, más stock nunca puede cubrir menos.
+var mono = true, prevC = -1;
+[500, 1000, 2000, 3000, 5000].forEach(function(st){
+  var c = bpWeeksOfCover(st, [800,600,900,700,800,600]);
+  if (c < prevC) mono = false;
+  prevC = c;
+});
+ok('la cobertura crece de forma monótona con el stock', mono);
+
 summary();

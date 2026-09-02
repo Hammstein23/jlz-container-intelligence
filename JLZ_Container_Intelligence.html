@@ -14292,6 +14292,24 @@ function dmISOLocal(d){
   const p = (n) => (n < 10 ? '0' : '') + n;
   return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
 }
+// Weeks of cover = how long the stock in hand lasts against the demand STILL AHEAD.
+// It used to divide the ending stock by THAT SAME week's demand, which made the number swing
+// with how lumpy that one week happened to be: a 576-case week read as 6.8 weeks of cover, and
+// the 1,346-case week right after it as 2.9 — on MORE stock. Exactly backwards from what the
+// column claims to answer, and it also drove the CRITICAL badge.
+// Future arrivals are deliberately NOT counted: this measures how long what you already hold
+// survives, which is the question worth asking. What arrives later is the Ending stock column.
+function bpWeeksOfCover(endStock, futureDemands){
+  if (!(endStock > 0)) return 0;
+  let left = endStock, wks = 0;
+  for (let i = 0; i < (futureDemands || []).length; i++){
+    const d = futureDemands[i];
+    if (!(d > 0)) { wks += 1; continue; }          // a week that demands nothing still buys a week
+    if (left >= d){ left -= d; wks += 1; }
+    else return wks + left / d;                     // runs out partway through this week
+  }
+  return wks;   // outlives the horizon — a floor, not the true figure
+}
 function bpFutureWeeks(n) {
   const out = [];
   const today = new Date();
@@ -16080,8 +16098,12 @@ function renderBuyPlanner() {
       demand: wkDemand,
       committed: committedWk,
       endingStock: runningStock,
-      weeksOfCoverage: wkDemand > 0 ? runningStock / wkDemand : 0,
+      weeksOfCoverage: 0,          // se calcula abajo: necesita las demandas de las semanas SIGUIENTES
     };
+  });
+  // Segunda pasada: el cover de cada semana se mide contra lo que viene después, no contra sí misma.
+  rows.forEach((r, i) => {
+    r.weeksOfCoverage = bpWeeksOfCover(r.endingStock, rows.slice(i + 1).map(x => x.demand));
   });
 
   // Render projection table
@@ -20659,6 +20681,26 @@ function simRenderProjection(realOrders, hypoOrders) {
     + '<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em">Status</th>'
     + '</tr></thead><tbody>';
 
+  // La demanda de una semana depende SOLO de la semana, no del stock, así que se puede calcular
+  // toda de antemano — y hace falta: el cover de una semana se mide contra las demandas de las
+  // que vienen DESPUÉS, y en una pasada hacia adelante todavía no existen. Un solo helper para
+  // las dos pasadas, para que no puedan divergir.
+  const _simMdl = (typeof _dmModelG !== 'undefined' ? _dmModelG : ((typeof window!=='undefined' && window._dmModelG) || null));
+  const _simHypoExtra = (typeof simActiveHypoSales === 'function') ? simActiveHypoSales() : [];
+  const _simInfl = (salesDemand > 0) ? (weeklyDemand / salesDemand) : 1;
+  const _simWkDemand = (fw) => {
+    const k = (typeof dmWeekKey === 'function' && fw.weekStartDate) ? dmWeekKey(fw.weekStartDate) : null;
+    const cw = (k && typeof committedInvForWeek === 'function') ? committedInvForWeek(k) : 0;
+    const hs = (k && _simMdl && _simMdl.customers && typeof hybridSalesForWeek === 'function')
+      ? hybridSalesForWeek(k, salesDemand, _simMdl, 'ginger', _simHypoExtra) : null;
+    const hw = (typeof simHypoSalesForWeek === 'function' && k) ? simHypoSalesForWeek(k) : 0;
+    return { key: k, hypo: hw,
+             demand: (hs != null) ? (hs * _simInfl) : (Math.max(cw, weeklyDemand) + hw * _simInfl) };
+  };
+  const _simDemands = futureWeeks.map(_simWkDemand).map(x => x.demand);
+  let _simIdx = 0;
+  const _simFutureDemands = (i) => _simDemands.slice(i + 1);
+
   futureWeeks.forEach(fw => {
     const arrivals = arrivalsByWeek[fw.week] || [];
     const activeArrivals = arrivals.filter(a => !a.isDowngraded);
@@ -20669,18 +20711,13 @@ function simRenderProjection(realOrders, hypoOrders) {
     const arrivalCases = activeArrivals.reduce((s,a) => s + Math.max(0, a.cases - ((a.po && typeof directShipTotal === 'function') ? directShipTotal(a.po) : 0)), 0);
     // Hybrid netting (match the Buy Planner): per-account hybrid demand — steady keep run-rate + excess,
     // order-driven (sporadic) count only committed this week — then apply shrink inflation. No model → legacy max.
-    const _wkKey = (typeof dmWeekKey === 'function' && fw.weekStartDate) ? dmWeekKey(fw.weekStartDate) : null;
-    const committedWk = (_wkKey && typeof committedInvForWeek === 'function') ? committedInvForWeek(_wkKey) : 0;
-    const _simMdl = (typeof _dmModelG !== 'undefined' ? _dmModelG : ((typeof window!=='undefined' && window._dmModelG) || null));
-    const _hypoExtra = (typeof simActiveHypoSales === 'function') ? simActiveHypoSales() : [];
-    const _hybridSales = (_wkKey && _simMdl && _simMdl.customers && typeof hybridSalesForWeek === 'function')
-      ? hybridSalesForWeek(_wkKey, salesDemand, _simMdl, 'ginger', _hypoExtra) : null;
-    const _infl = (salesDemand > 0) ? (weeklyDemand / salesDemand) : 1;
-    const _hypoSalesWk = (typeof simHypoSalesForWeek === 'function' && _wkKey) ? simHypoSalesForWeek(_wkKey) : 0;
-    const wkDemand = (_hybridSales != null) ? (_hybridSales * _infl) : (Math.max(committedWk, weeklyDemand) + _hypoSalesWk * _infl);
+    const _sw = _simWkDemand(fw);
+    const _hypoSalesWk = _sw.hypo, wkDemand = _sw.demand;
     const startStock = running;
     running = running + arrivalCases - wkDemand;
-    const cover = wkDemand > 0 ? running / wkDemand : 0;
+    // Contra las demandas que TODAVÍA vienen, no contra la de esta misma semana.
+    const cover = bpWeeksOfCover(running, _simFutureDemands(_simIdx));
+    _simIdx++;
     const monthDay = fw.weekStartDate.toLocaleDateString('en-US', { month:'short', day:'numeric' });
 
     let statusBadge, rowBg = '';
