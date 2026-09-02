@@ -57,7 +57,7 @@
     // ese camino), sin direct-ship. Más dmBuildModel: solo ventas, sin cuentas internas.
     // El volumen direct-ship se cuenta aparte y se muestra: no es demanda de stock, pero
     // tampoco tiene que desaparecer sin dejar rastro.
-    var mine = {}, dsLbs = 0;
+    var mine = {}, dsByWk = {};
     _dmRawAll.forEach(function(r){
       if ((r.prod || 'ginger') !== p) return;
       if (r.type && r.type !== 'Sale') return;
@@ -71,8 +71,8 @@
       var isDs = false;
       // origin 'all' cae en otro camino del modelo (qaModelG/_dmModel) que NO saca direct-ship.
       if (origin !== 'all'){ try { isDs = isDirectShipRow(r); } catch(e){} }
-      if (isDs){ dsLbs += (r.lbs || 0); return; }
       var w = wkOf(r.d);
+      if (isDs){ dsByWk[w] = (dsByWk[w] || 0) + (r.lbs || 0); return; }
       mine[w] = (mine[w] || 0) + (r.lbs || 0);
     });
 
@@ -110,7 +110,7 @@
     var row = {
       prod:p, origen:origin, vent:win,
       dif_vs_crudo: r1(worst),
-      directship_cs: Math.round(dsLbs / cl),      // pass-through apartado a propósito, no es demanda de stock
+      directship_cs: (function(){ var t=0; wks.forEach(function(w){ t += (dsByWk[w]||0); }); return Math.round(t/cl); })(),  // en la ventana, no en toda la historia
       saltos: skips,
       rr: Math.round(rr),
       filas: Math.round(sumRows),
