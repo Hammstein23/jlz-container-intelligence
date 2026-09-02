@@ -141,7 +141,22 @@ ok('el snippet B es el product-aware', /prodInvSave/.test(SNIPPET_2) && /exclude
 ok('el snippet B hace REEMPLAZO total, no merge', /\.lots = LOTS/.test(SNIPPET_2));
 ok('el paso 3b muestra on-hand, committed y available', /onHandCases/.test(SNIPPET_3) && /committedCases/.test(SNIPPET_3) && /availCases/.test(SNIPPET_3));
 ok('el paso 3b también cubre ginger-Perú, que vive en el otro store', /bpInvState/.test(SNIPPET_3) && /committedInvForWeek/.test(SNIPPET_3));
-ok('el runbook dice que las convenciones son opuestas', /LIBRES/.test(RUNBOOK_TEXT) && /BRUTAS/.test(RUNBOOK_TEXT));
+// Cada store tiene que quedar asociado a SU convención: buscar las palabras sueltas no sirve,
+// las dos aparecen en el documento. Se mira la fila de la tabla de cada uno.
+var _row = function(store){                 // la fila de tabla que describe qué se carga en ese store
+  var ls = RUNBOOK_TEXT.split('\n');
+  for (var i = 0; i < ls.length; i++){
+    var l = ls[i];
+    if (l.indexOf(store) > -1 && l.indexOf('|') > -1 && l.indexOf('cajas') > -1) return l;
+  }
+  return '';
+};
+var _gRow = _row('jlz_bp_inv'), _pRow = _row('jlz_prod_inv_v1');
+ok('se encontró la fila de cada store en el runbook', !!_gRow && !!_pRow);
+ok('el runbook asocia ginger-Perú con cargar LIBRES y sumar el committed',
+   /LIBRES/.test(_gRow) && /suma/.test(_gRow));
+ok('el runbook asocia el store product-aware con cargar BRUTAS y restar',
+   /BRUTAS/.test(_pRow) && /resta/.test(_pRow));
 ok('el chequeo de consola lleva el cache-buster', /\?v='\s*\+\s*Date\.now\(\)/.test(SNIPPET_4));
 
 summary();
