@@ -14283,6 +14283,15 @@ function bpSaveSales(arr) {
 
 // ── Compute future weeks starting from this week ──
 // Returns array of {week, year, weekNum, weekStartDate} for N weeks ahead.
+// A local Date as 'YYYY-MM-DD', WITHOUT passing through UTC. `toISOString()` converts to UTC
+// first, so west of Greenwich an evening date rolls forward a day: the Buy Planner's week keys
+// silently became Tuesday after ~7pm, and every lookup keyed by week — committed orders above
+// all — missed, dropping real booked orders out of the plan for anyone working at night.
+function dmISOLocal(d){
+  if(!(d instanceof Date) || isNaN(d)) return '';
+  const p = (n) => (n < 10 ? '0' : '') + n;
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
 function bpFutureWeeks(n) {
   const out = [];
   const today = new Date();
@@ -14310,7 +14319,7 @@ function bpFutureWeeks(n) {
       weekNum: wk,
       week: target.getUTCFullYear() + '-W' + String(wk).padStart(2, '0'),
       weekStartDate: new Date(d),
-      weekStartISO: d.toISOString().slice(0, 10),
+      weekStartISO: dmISOLocal(d),          // local, NUNCA toISOString: de noche daba el martes
     });
   }
   return out;
@@ -16427,7 +16436,7 @@ function renderBuyPlanner() {
     const targetDate = new Date(targetRow.weekStartDate);
     const deadlineDate = new Date(targetDate.getTime() - leadDays * 86400000);
     const daysLeft = Math.round((deadlineDate - todayDate) / 86400000);
-    const wk = isoWeek(deadlineDate.toISOString().slice(0, 10));
+    const wk = isoWeek(dmISOLocal(deadlineDate));
     return { date: deadlineDate, daysLeft, wk };
   }
   // Order-by deadline anchors to the REAL stockout (endingStock<=0). The safety
@@ -19855,7 +19864,7 @@ function simPopulateShipWeekSelect(selectedKey) {
   const keys = [];
   for (let i = 0; i < 8; i++) {
     const d = new Date(curMon); d.setUTCDate(curMon.getUTCDate() + i * 7);
-    const wk = (typeof isoWeek === 'function') ? isoWeek(d.toISOString().slice(0,10)) : 0;
+    const wk = (typeof isoWeek === 'function') ? isoWeek(dmISOLocal(d)) : 0;
     keys.push(d.getUTCFullYear() + '-W' + String(wk).padStart(2, '0'));
   }
   // If editing a quote whose ship week is outside this window, include it.
@@ -20037,7 +20046,7 @@ function simRenderTimeline(realOrders, hypoOrders, stockDateStr) {
   let headers = '', gridLines = '';
   for (let w = 0; w <= 20; w += 2) {
     const d = new Date(startD.getTime() + w * 7 * 86400000);
-    const wk = (typeof isoWeek === 'function') ? isoWeek(d.toISOString().slice(0,10)) : '';
+    const wk = (typeof isoWeek === 'function') ? isoWeek(dmISOLocal(d)) : '';
     const mo = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
     const left = (w * 7 / totalDays) * 100;
     headers += '<div style="position:absolute;left:' + left + '%;font-size:9px;color:var(--gray-500);font-family:var(--fm);transform:translateX(-50%);white-space:nowrap;text-align:center;line-height:1.3">'
@@ -20181,7 +20190,7 @@ function simRenderHypoTable(hypoOrders) {
 
   hypoOrders.forEach(o => {
     const eta = simComputeEta(o);
-    const etaWk = eta ? isoWeek(eta.toISOString().slice(0,10)) : '—';
+    const etaWk = eta ? isoWeek(dmISOLocal(eta)) : '—';
     const etaDate = eta ? eta.toLocaleDateString('en-US', { month:'short', day:'numeric' }) : '—';
     const pricePerLb = o.pricePerCase ? (o.pricePerCase / 30).toFixed(4) : null;  // 30 lb/case approx
     const modeIcon = o.mode === 'air' ? '✈ Air' : '🚢 Sea';
@@ -20620,7 +20629,7 @@ function simRenderProjection(realOrders, hypoOrders) {
   hypoOrders.forEach(o => {
     const eta = simComputeEta(o);
     if (!eta) return;
-    const wk = isoWeek(eta.toISOString().slice(0,10));
+    const wk = isoWeek(dmISOLocal(eta));
     const wkKey = eta.getUTCFullYear() + '-W' + String(wk).padStart(2, '0');
     addArrival(wkKey, { label: '🧪 ' + (o.vendor || ''), cases: o.cases || 0, isReal: false });
   });

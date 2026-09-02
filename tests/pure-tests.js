@@ -2,6 +2,10 @@
 // JLZ_Container_Intelligence.html. Each group locks in a bug that was found and fixed
 // on 2026-09-01, so a regression fails here instead of quietly changing a buy plan.
 
+// Las secciones de abajo reemplazan varias funciones por stubs. Guardá acá las reales que
+// hagan falta después, o se termina testeando el stub y no el código (ya pasó una vez).
+var _realBpFutureWeeks = bpFutureWeeks;
+
 // ═══ 1. Week bucketing ══════════════════════════════════════════════════════
 // Was: a bare 'YYYY-MM-DD' parses as UTC midnight, which west of Greenwich resolves to
 // the previous day, so every MONDAY sale landed in the previous week.
@@ -126,7 +130,7 @@ var _dmModelG = _dmModel;
 var bpFutureWeeks = function(n){
   var out = [], d = new Date('2026-08-24T12:00:00');
   for (var i = 0; i < n; i++){ var x = new Date(d); x.setDate(x.getDate() + 7*i);
-    out.push({ weekStartISO:x.toISOString().slice(0,10), weekNum:35 + i }); }
+    out.push({ weekStartISO:dmISOLocal(x), weekNum:35 + i }); }
   return out;
 };
 var hybridSalesForWeek = function(){ return 32; };
@@ -204,7 +208,7 @@ window._bpDigest = { salesDemand: 800, weeklyDemand: 800/0.86 };
 bpFutureWeeks = function(n){
   var out = [], d = new Date('2026-08-17T12:00:00');
   for (var i = 0; i < n; i++){ var x = new Date(d); x.setDate(x.getDate() + 7*i);
-    out.push({ weekStartISO:x.toISOString().slice(0,10), weekNum:34 + i }); }
+    out.push({ weekStartISO:dmISOLocal(x), weekNum:34 + i }); }
   return out;
 };
 hybridSalesForWeek = function(iso, base){ return base; };
@@ -240,5 +244,40 @@ var g2rows = 0; G2.cus.forEach(function(r){ g2rows += num(r.cells[projIdx]); });
 var g2oth = G2.oth ? num(G2.oth.cells[projIdx]) : 0;
 check('el TOTAL proyectado sigue al plan (700), no al modelo (800)', num(G2.tot.cells[projIdx]), 700);
 check('las filas + Other suman ese TOTAL', g2rows + g2oth, num(G2.tot.cells[projIdx]));
+
+
+// ═══ 6. Fechas locales serializadas a UTC ═══════════════════════════════════
+// toISOString() convierte a UTC primero, así que al oeste de Greenwich una fecha de la NOCHE
+// avanza un día. Las llaves de semana del Buy Planner salían martes después de las ~7pm, y todo
+// lookup por semana (el committed sobre todo) fallaba: órdenes reales desaparecían del plan.
+group('dmISOLocal — la fecha local, sin pasar por UTC');
+[[8,'2026-08-31'], [15,'2026-08-31'], [19,'2026-08-31'], [21,'2026-08-31'], [23,'2026-08-31'],
+ [0,'2026-08-31'], [1,'2026-08-31']].forEach(function(t){
+  check('lunes 31/08 a las ' + t[0] + ':00 local', dmISOLocal(new Date(2026, 7, 31, t[0], 30)), t[1]);
+});
+check('fin de año a la noche', dmISOLocal(new Date(2026, 11, 31, 23, 30)), '2026-12-31');
+check('un Date inválido no rompe', dmISOLocal(new Date('nada')), '');
+check('algo que no es Date tampoco', dmISOLocal('2026-08-31'), '');
+
+group('bpFutureWeeks — las semanas que usa el plan');
+var FW = _realBpFutureWeeks(8);   // la REAL, no el stub que dejó la sección de ginger
+check('devuelve las 8 semanas pedidas', FW.length, 8);
+var fwBad = 0, fwNotMon = 0;
+FW.forEach(function(w){
+  // La llave tiene que ser un lunes de verdad, y coincidir con la que produce dmWeekKey:
+  // si no coinciden, el join contra el modelo y contra el committed falla en silencio.
+  if (dmWeekKey(w.weekStartISO) !== w.weekStartISO) fwBad++;
+  if (new Date(w.weekStartISO + 'T12:00:00').getDay() !== 1) fwNotMon++;
+});
+check('todas las llaves son lunes', fwNotMon, 0);
+check('todas coinciden con dmWeekKey (el join no falla)', fwBad, 0);
+var fwGap = 0;
+for (var fi = 1; fi < FW.length; fi++){
+  if (Math.round((new Date(FW[fi].weekStartISO+'T12:00:00') - new Date(FW[fi-1].weekStartISO+'T12:00:00'))/864e5) !== 7) fwGap++;
+}
+check('van de 7 en 7 días', fwGap, 0);
+// Las tres de arriba solo fallan según la hora y la zona horaria. Ésta no: la llave de semana
+// NUNCA debe salir de toISOString, y eso se puede afirmar leyendo la función.
+ok('bpFutureWeeks no serializa la llave por UTC', !/\.toISOString\s*\(/.test(String(_realBpFutureWeeks)));
 
 summary();
