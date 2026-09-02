@@ -15,7 +15,7 @@
 (function(){
   'use strict';
   // Estampa de versión: si el navegador sirvió una copia cacheada, esto lo delata al instante.
-  console.log('%c invariants-console.js  ·  v2026-09-02b  ·  nivel 3 por PRODUCTO (units + gross) ',
+  console.log('%c invariants-console.js  ·  v2026-09-02c  ·  incluye ginger-Perú y el plan de compra ',
               'background:#334155;color:#fff');
   if (typeof _dmRawAll === 'undefined' || !_dmRawAll || !_dmRawAll.length){
     console.log('No hay datos cargados. Abrí Demand y cargá el archivo primero.'); return;
@@ -36,12 +36,29 @@
   var r1 = function(x){ return Math.round((x||0)*10)/10; };
 
   var PRODS = ['ginger','turmeric','garlic','shallots'];
-  var pairs = [];
-  PRODS.forEach(function(p){
-    var os = ['all'];
-    try { var o = invmOriginsFor(p) || []; if (o.length) os = o; } catch(e){}
-    os.forEach(function(o){ pairs.push([p, o]); });
+
+  // Los pares producto+origen salen de las VENTAS, no del inventario. Derivarlos de
+  // invmOriginsFor (que lee el store de lots) dejaba a **ginger-Perú fuera del chequeo**: sus lots
+  // viven en el otro store (jlz_bp_inv) y ese resolvedor solo devolvía Hawaii.
+  var vol = {}, skipped = [];
+  _dmRawAll.forEach(function(r){
+    if (r.type && r.type !== 'Sale') return;
+    var o = ''; try { o = dmRowOrigin(r) || ''; } catch(e){}
+    if (!o) return;
+    var k = (r.prod || 'ginger') + '|' + o;
+    vol[k] = (vol[k] || 0) + (r.lbs || 0);
   });
+  // 'ginger|all' primero y aparte: es _dmModelG, el modelo de PRODUCCIÓN que alimenta el Buy
+  // Planner, el Simulator y el sync con la hoja. Se arma con TODAS las filas de ginger, sin
+  // filtrar origen y CON direct-ship — distinto de las vistas por origen. Es el más importante
+  // de la app y no estaba entrando a esta verificación.
+  var pairs = [['ginger','all']];
+  Object.keys(vol).sort().forEach(function(k){
+    var a = k.split('|');
+    if (vol[k] < 3000){ skipped.push(a[0]+' · '+a[1]+' ('+Math.round(vol[k]/30)+' cs históricas)'); return; }
+    pairs.push([a[0], a[1]]);
+  });
+  if (skipped.length) console.log('orígenes marginales no verificados (volumen histórico chico): ' + skipped.join(' · '));
 
   var problems = [];
 
@@ -111,7 +128,7 @@
     var curWk = wkOf(new Date().toISOString().slice(0,10));
 
     var row = {
-      prod:p, origen:origin, vent:win,
+      prod:p, origen:(p==='ginger'&&origin==='all')?'TODOS (Buy Planner)':origin, vent:win,
       dif_vs_crudo: r1(worst),
       directship_cs: (function(){ var t=0; wks.forEach(function(w){ t += (dsByWk[w]||0); }); return Math.round(t/cl); })(),  // en la ventana, no en toda la historia
       saltos: skips,
@@ -132,6 +149,54 @@
   console.log('%c NIVEL 1+2 — modelo vs filas crudas, e invariantes ', 'background:#0d5026;color:#fff;font-weight:700');
   console.log('dif_vs_crudo = mayor diferencia en cajas entre lo que dice el modelo y un recálculo independiente. Debe ser 0.');
   console.table(level12);
+
+  // ══ GINGER — lo que decide la compra ════════════════════════════════════
+  // El Buy Planner NO compra contra el run-rate del modelo: usa dmEffectiveRunRateLbs(), que le
+  // resta las cuentas quiet sacadas A MANO. Por defecto no se saca ninguna (la política es cubrir
+  // a todos), así que los dos números deben coincidir. Si no coinciden, alguien sacó una cuenta:
+  // es una decisión válida, pero tiene que verse acá y no aparecer como sorpresa en la compra.
+  try {
+    var mg = (typeof qaModelG === 'function') ? qaModelG() : null;
+    if (!mg) {
+      problems.push('no existe el modelo de producción de ginger (qaModelG) — el Buy Planner no tiene base');
+    } else {
+      var wG = (typeof dmWindow === 'function') ? dmWindow('ginger') : 13;
+      var clG = mg.caseLb || 30;
+      var rrModel = (wG === 3 ? mg.runRate3 : wG === 6 ? mg.runRate6 : mg.runRate13) / clG;
+      var rrPlan = (typeof dmEffectiveRunRateLbs === 'function' && dmEffectiveRunRateLbs() != null)
+                   ? dmEffectiveRunRateLbs() / clG : rrModel;
+      var quitadas = [];
+      try {
+        (typeof qaQuietList === 'function' ? qaQuietList() : []).forEach(function(x){
+          var pct = (typeof qaPct === 'function') ? qaPct(x.c) : 100;
+          if (pct < 100) quitadas.push(x.c + ' (' + pct + '%)');
+        });
+      } catch(e){}
+
+      console.log('%c GINGER — lo que decide la compra ', 'background:#0d5026;color:#fff;font-weight:700');
+      console.log('ventana activa: ' + wG + ' semanas  ·  run-rate del modelo: ' + Math.round(rrModel) + ' cs/sem');
+      console.log('lo que usa el Buy Planner: ' + Math.round(rrPlan) + ' cs/sem'
+        + (Math.abs(rrPlan - rrModel) > 1
+            ? '   ← ' + Math.round(rrModel - rrPlan) + ' cs sacadas a mano'
+            : '   (sin ajustes manuales)'));
+      if (quitadas.length) console.log('cuentas quiet sacadas del plan: ' + quitadas.join(' · '));
+
+      // Inventario de ginger-Perú: vive en el otro store, así que el chequeo de arriba no lo ve.
+      // Acá la convención es la OPUESTA: se carga lo LIBRE y la app le suma el committed.
+      try {
+        var stG = bpInvState();
+        var libre = Object.keys(stG.rows || {}).reduce(function(t,k){ return t + (+((stG.rows[k]||{}).cases) || 0); }, 0);
+        var wkNow = (typeof dmWeekKey === 'function') ? dmWeekKey(new Date()) : '';
+        var commG = (typeof committedInvForWeek === 'function') ? (committedInvForWeek(wkNow, 'ginger') || 0) : 0;
+        console.log('inventario ginger-Perú: libre (cargado) ' + Math.round(libre)
+          + '  + committed ' + Math.round(commG) + '  = gross ' + Math.round(libre + commG)
+          + '   (' + Object.keys(stG.rows || {}).length + ' lots)');
+        if (libre <= 0) problems.push('ginger-Perú: no hay inventario cargado — el plan compraría contra stock 0');
+        var covG = (rrPlan > 0) ? (libre / rrPlan) : 0;
+        console.log('cobertura con lo libre: ' + (Math.round(covG * 10) / 10) + ' semanas');
+      } catch(e){ console.log('no se pudo leer el inventario de ginger-Perú: ' + e.message); }
+    }
+  } catch(e){ console.log('no se pudo evaluar el plan de ginger: ' + e.message); }
 
   // ══ NIVEL 3 ═════════════════════════════════════════════════════════════
   // Totales por semana calculados solo de las filas crudas, para comparar a mano contra el

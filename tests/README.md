@@ -93,6 +93,22 @@ justamente en ese parseo.
 
 Cualquier fila con `dif_vs_crudo ≠ 0` o `saltos ≠ 0` es un bug.
 
+**Los pares producto+origen salen de las VENTAS, no del inventario.** Derivarlos de
+`invmOriginsFor` (que lee el store de lots) dejaba a **ginger-Perú fuera del chequeo**: sus lots
+viven en `jlz_bp_inv` y ese resolvedor solo devolvía Hawaii. Los orígenes con volumen histórico
+chico se saltean y se listan — nunca en silencio.
+
+También se verifica aparte lo que de verdad decide la compra de ginger:
+
+- **`ginger · TODOS (Buy Planner)`** = `_dmModelG`, el modelo de producción que alimenta Buy
+  Planner, Simulator y el sync con la hoja. Se arma con **todas** las filas de ginger, sin filtrar
+  origen y **con** direct-ship — distinto de las vistas por origen.
+- **run-rate del modelo vs `dmEffectiveRunRateLbs()`**, que es lo que el plan usa de verdad: la
+  diferencia son las cuentas quiet sacadas a mano. Por defecto no se saca ninguna, así que deben
+  coincidir; si no, se lista quién se sacó.
+- **Inventario de ginger-Perú**, que el chequeo por producto no ve. Ojo: ahí la convención es la
+  **opuesta** — se carga lo LIBRE y la app le suma el committed.
+
 ## 3. `./tests/compare-excel.py` — el nivel 3, automatizado
 
 ```bash
