@@ -80,6 +80,26 @@ justamente en ese parseo.
 
 Cualquier fila con `dif_vs_crudo ≠ 0` o `saltos ≠ 0` es un bug.
 
+## 3. `./tests/compare-excel.py` — el nivel 3, automatizado
+
+```bash
+./tests/compare-excel.py "~/Downloads/Sales By Account Report-08.31.2026.xlsx"
+```
+
+Parsea el `.xlsx` de cero — sin `openpyxl`, sin `pandas`, sin una línea del código de la
+app — y suma `Billable Units` y `Gross Sales` por semana y producto. Comparás su salida
+contra la tabla del NIVEL 3 del script de consola.
+
+Esto es lo que ninguno de los otros dos puede ver: si el **cargador** perdió filas al leer
+el archivo. Los otros trabajan sobre `_dmRawAll`, que ya es el resultado de esa lectura.
+
+**Verificado el 2026-09-02** con `Sales By Account Report-08.31.2026.xlsx` (8.796 filas):
+**12 de 12** combinaciones semana × producto coinciden exactas, en unidades y en dólares.
+
+Lo que prueba y lo que no: confirma que la app leyó bien el archivo. **No** confirma que el
+archivo sea un extracto completo de WholesaleWare — para eso hay que correr el reporte de
+nuevo (filtrando por `Target Fulfillment Date`) y comparar contra él.
+
 ## Por qué corren así
 
 La app es un solo HTML sin build step, y `node` normalmente no está instalado en esta
