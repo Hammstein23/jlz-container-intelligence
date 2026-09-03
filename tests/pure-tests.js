@@ -409,4 +409,24 @@ ok('existe la ventana de 26 y también se mide con slice', /_rw\.slice\(-26\)/.t
 ok('el override de 13 semanas también compara contra la ventana, no contra la vida entera',
    /_ov13\s*\+=[^;]*_rw\.slice\(-13\)/.test(_nsrc));
 
+// ════ Quién es direct-ship depende del PRODUCTO ═════════════════════════════
+// El par es cliente+producto: Sol-ti en turmeric, Whole Foods en garlic. La UI tenía "Sol-ti"
+// hardcodeado en tres lugares, así que la pantalla de garlic decía "Sol-ti direct-ship" cuando
+// las 74 cs/sem eran de Whole Foods. Un cliente leyendo eso saca la conclusión equivocada.
+group('direct-ship · la etiqueta nombra a la cuenta real, no a Sol-ti');
+
+var _PAIRS = { 'sol-ti|turmeric':true, 'whole foods market|garlic':true };
+dsIsOn = function(cust, prod){ return !!_PAIRS[String(cust||'').trim().toLowerCase()+'|'+prod]; };
+var _MDL = { customers:[ {c:'Whole Foods Market'}, {c:'Sol-ti'}, {c:"Albert's Organics"} ] };
+
+check('garlic nombra a Whole Foods', dsLabelFor('garlic', _MDL), 'Whole Foods Market direct-ship');
+check('turmeric nombra a Sol-ti',    dsLabelFor('turmeric', _MDL), 'Sol-ti direct-ship');
+check('un producto sin direct-ship no inventa un nombre', dsLabelFor('shallots', _MDL), 'direct-ship');
+check('solo devuelve las cuentas del producto pedido', dsNamesFor('garlic', _MDL).join(','), 'Whole Foods Market');
+
+_PAIRS['sol-ti|garlic'] = true;
+check('con dos cuentas las nombra a las dos', dsLabelFor('garlic', _MDL), 'Whole Foods Market + Sol-ti direct-ship');
+_PAIRS["albert's organics|garlic"] = true;
+check('con tres o más, cuenta en vez de enumerar', dsLabelFor('garlic', _MDL), '3 accounts direct-ship');
+
 summary();

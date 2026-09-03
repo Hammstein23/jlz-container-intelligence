@@ -14827,6 +14827,24 @@ function isDirectShipRow(r){
   if(!r) return false;
   return dsIsOn(r.c, r.prod||'ginger');
 }
+// El par es cliente+PRODUCTO, así que quién despacha directo cambia según el producto: Sol-ti en
+// turmeric, Whole Foods en garlic. La UI tenía "Sol-ti" hardcodeado en tres lugares y por eso la
+// pantalla de garlic decía "Sol-ti direct-ship" cuando en realidad era Whole Foods.
+function dsNamesFor(prod, model){
+  var m = model || ((typeof _dmModel !== 'undefined') ? _dmModel : null);
+  var out = [];
+  if(m && Array.isArray(m.customers)) m.customers.forEach(function(c){
+    if(c && c.c && dsIsOn(c.c, prod)) out.push(c.c);
+  });
+  return out;
+}
+function dsLabelFor(prod, model){
+  var n = dsNamesFor(prod, model);
+  if(!n.length) return 'direct-ship';
+  if(n.length === 1) return n[0] + ' direct-ship';
+  if(n.length === 2) return n[0] + ' + ' + n[1] + ' direct-ship';
+  return n.length + ' accounts direct-ship';
+}
 // Averaging window (weeks) for the direct-ship business figure. Default 26 — a lumpy order-driven
 // account only lands a few POs in 13 wks, so a longer window gives a steadier sizing number.
 // Selectable (3/6/13/26) mirroring the stock-buy demand window. Never affects the buy math.
@@ -15531,7 +15549,7 @@ function invmAnalysisHTML(s){
     + (s.directShipCases>0 ? ('<div style="margin:6px 0 2px;padding:8px 11px;border:1px solid var(--gray-200);border-radius:8px;background:var(--gray-50);font-family:var(--fm);font-size:11.5px;line-height:1.55">'
         + '<div style="font-weight:700;color:var(--gray-600);text-transform:uppercase;letter-spacing:.04em;font-size:10px;margin-bottom:3px">Business split · this origin</div>'
         + '<div><span style="color:var(--jlz);font-weight:700">'+f(s.weeklyCases)+' cs/wk</span> stock-buy <span style="color:var(--gray-400)">— drives the order below</span></div>'
-        + '<div><span style="color:#7c3aed;font-weight:700">~'+f(s.directShipCases)+' cs/wk</span> Sol-ti direct-ship <span style="color:var(--gray-400)">— order-driven, ships on confirmation · no stock, doesn\'t drive the buy</span></div>'
+        + '<div><span style="color:#7c3aed;font-weight:700">~'+f(s.directShipCases)+' cs/wk</span> '+((typeof dsLabelFor==='function')?dsLabelFor(s.p):'direct-ship')+' <span style="color:var(--gray-400)">— order-driven, ships on confirmation · no stock, doesn\'t drive the buy</span></div>'
         + '<div style="margin-top:2px;color:var(--gray-500)">Total business ≈ <b>'+f(s.weeklyCases+s.directShipCases)+' cs/wk</b> <span style="color:var(--gray-400)">· both on the '+(s.win||13)+'-wk window</span></div>'
       + '</div>') : '')
     + '<div class="ipv-kpis">'
@@ -23678,6 +23696,7 @@ function renderDmRunRate(){
   // Planner already excludes it; this keeps the Demand-tab run-rate consistent. Customer Intelligence and
   // revenue read _dmModel directly (untouched) so Sol-ti stays visible there.
   var m = mTotal, dsCases = 0;
+  var _hpProd = (typeof getActiveProduct==='function') ? getActiveProduct() : ((typeof productFocus==='function')?productFocus():'ginger');
   try{
     if(typeof dmFilteredRows==='function' && typeof isDirectShipRow==='function' && typeof dmBuildModel==='function'){
       var _rows = dmFilteredRows();
@@ -23750,10 +23769,10 @@ function renderDmRunRate(){
   }
   rows += '<tr class="tot"><td class="l">Total</td><td>'+Math.max(tot, Math.round(bigRR)).toLocaleString()+'</td><td></td></tr>';
   host.innerHTML = '<div class="card dmrr">'
-    + '<div class="dmrr-top"><div class="dmrr-k">Run-rate · what they buy per week'+(dsCases>=1?' <span style="color:var(--gray-400);font-weight:400;text-transform:none">· stockable (Sol-ti shown apart)</span>':'')+'</div>'+seg+'</div>'
+    + '<div class="dmrr-top"><div class="dmrr-k">Run-rate · what they buy per week'+(dsCases>=1?' <span style="color:var(--gray-400);font-weight:400;text-transform:none">· stockable ('+((typeof dsLabelFor==='function')?dsLabelFor(_hpProd, mTotal):'direct-ship')+' shown apart)</span>':'')+'</div>'+seg+'</div>'
     + '<div class="dmrr-bigrow"><div class="dmrr-big">'+bigRR.toLocaleString()+'</div><div class="dmrr-u">cs/wk</div><div class="dmrr-role">'+(win===26?'26-week smooth':win===13?'13-week base':win===6?'6-week momentum':'3-week spot')+'</div></div>'
     + dmSoldAsHTML(bigRR*cl, cl, m.presMix)
-    + (dsCases>=1 ? ('<div style="font-family:var(--fm);font-size:11px;line-height:1.5;margin:-2px 0 10px;color:#7c3aed">＋ <b>~'+Math.round(dsCases).toLocaleString()+' cs/wk</b> Sol-ti direct-ship <span style="color:var(--gray-400)">— order-driven, ships from supplier · excluded from this run-rate (never touches stock)</span></div>') : '')
+    + (dsCases>=1 ? ('<div style="font-family:var(--fm);font-size:11px;line-height:1.5;margin:-2px 0 10px;color:#7c3aed">＋ <b>~'+Math.round(dsCases).toLocaleString()+' cs/wk</b> '+((typeof dsLabelFor==='function')?dsLabelFor(_hpProd, mTotal):'direct-ship')+' <span style="color:var(--gray-400)">— order-driven, ships from supplier · excluded from this run-rate (never touches stock)</span></div>') : '')
     + '<div class="dmrr-rib '+rc+'">'+rt+'</div>'
     + '<div class="dmrr-step"><div class="dmrr-h">Average of the '+win+' weeks it uses</div><div class="dmrr-wks">'+wksHtml+'</div><div class="dmrr-math">'+mathHtml+'</div>'+(m.nowcast?('<div style="font-size:10px;margin-top:5px;line-height:1.5">'+(_hasPrelim?'<span style="color:#b45309">⏳ preliminary (invoicing still catching up)</span>':'')+(_hasPrelim&&_hasNow?' &nbsp;·&nbsp; ':'')+(_hasNow?'<span style="color:#7c3aed">📋 booked orders (not yet invoiced)</span>':'')+' — most current read</div>'):'')+'</div>'
     + '<div class="dmrr-step"><div class="dmrr-h">Built from these customers <span class="dmrr-hs">— each account’s run-rate in the window</span></div><table class="dmrr-tbl"><tbody>'+rows+'</tbody></table>'
@@ -24812,7 +24831,28 @@ function cxKpis(m){
   const _quietCs = _feedsPlan ? m.customers.filter(c=>c.fcQuiet && ((typeof qaPct==='function')?qaPct(c.c)===0:false)).reduce((s,c)=>s+((c.rrLbs||0)/(m.caseLb||DM_CASE_LB)),0) : 0;
   const _qkNote = _quietCs>0 ? ' \u00b7 '+cxFmtN(_quietCs)+' cs/wk removed from plan' : '';
   return '<div class="cx-kpis">'
-    + '<div class="cx-kpi"><div class="v">'+cxFmtN(m.runRate13/(m.caseLb||DM_CASE_LB))+' '+dmRunRateDelta()+'</div><div class="l">Run-rate cases/wk'+cxInfo('Average cases sold per week over the most recent fully-reported weeks (~13). Your current demand speed \u2014 this is the number that feeds the Buy Planner. 1 case = '+(m.caseLb||DM_CASE_LB)+' lb, post-shrink.')+'</div><div class="x">'+cxFmtN(m.runRate13)+' lbs/wk \u00b7 post-shrink'+_qkNote+'</div></div>'
+    + (function(){
+        // Este KPI mostraba runRate13 SIEMPRE, ignorando la ventana elegida, y con el direct-ship
+        // adentro — decía 40 cs/wk en garlic mientras la Zona 3 decía 19. Dos números distintos para
+        // lo mismo en la misma pantalla. Ahora usa la ventana activa y separa el direct-ship, que
+        // nunca toca inventario.
+        var _cl = m.caseLb || DM_CASE_LB;
+        var _p  = (typeof getActiveProduct==='function') ? getActiveProduct() : 'ginger';
+        var _w  = (typeof dmWindow==='function') ? dmWindow(_p) : 13;
+        var _agg = (_w===3 ? (m.runRate3||m.runRate13) : _w===6 ? (m.runRate6||m.runRate13)
+                  : _w===26 ? (m.runRate26||m.runRate13) : m.runRate13) || 0;
+        var _k = (_w===3)?'rr3Cases':(_w===6)?'rr6Cases':(_w===26)?'rr26Cases':'rrCases';
+        var _ds = 0;
+        (m.customers||[]).forEach(function(c){ if(c && c.c && (typeof dsIsOn==='function') && dsIsOn(c.c,_p))
+          _ds += (c[_k]!=null?c[_k]:c.rrCases)||0; });
+        var _stock = Math.max(0, _agg/_cl - _ds);
+        var _dsNote = (_ds >= 1)
+          ? (' \u00b7 <span style="color:#7c3aed">+'+cxFmtN(_ds)+' cs/wk '+((typeof dsLabelFor==='function')?dsLabelFor(_p,m):'direct-ship')+'</span>')
+          : '';
+        return '<div class="cx-kpi"><div class="v">'+cxFmtN(_stock)+' '+dmRunRateDelta()+'</div><div class="l">Run-rate cases/wk'
+          + cxInfo('Stockable demand: average cases sold per week over the last '+_w+' weeks, EXCLUDING direct-ship accounts (they ship supplier \u2192 customer and never enter inventory). This is the number that feeds the Buy Planner. 1 case = '+_cl+' lb, post-shrink.')
+          + '</div><div class="x">'+cxFmtN(_stock*_cl)+' lbs/wk \u00b7 '+_w+'-wk window'+_dsNote+_qkNote+'</div></div>';
+      })()
     + '<div class="cx-kpi"><div class="v">'+active+'</div><div class="l">Active clients</div><div class="x">'+quiet+' going quiet</div></div>'
     + '<div class="cx-kpi risk"><div class="v">'+Math.round(conc)+'%</div><div class="l">Concentration \u00b7 top 2'+cxInfo('Combined share of total volume held by your two largest accounts. High = your revenue leans on very few customers (a risk if one of them leaves or pauses).')+'</div><div class="x">share of total volume</div></div>'
     + '<div class="cx-kpi"><div class="v">'+bm+'</div><div class="l">Blended gross margin'+cxInfo('Total gross profit \u00f7 total gross sales across all customers, over the last 13 weeks. \u201cGross\u201d = FOB price minus full cost, before shrink and holding cost (those arrive in Step 2 = true margin).')+'</div><div class="x">'+(m.blendMg!=null?'last 13 wks \u00b7 shrink/holding pending':'upload for $')+'</div></div>'
