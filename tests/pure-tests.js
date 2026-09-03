@@ -544,11 +544,24 @@ var _svg=dmComboSVG([
   {week:'2026-07-13', cases:90,  px:2.20, gs:5940, lbs:2700},
   {week:'2026-07-20', cases:40,  px:0,    gs:0,    lbs:0, inc:true}
 ], null);
-check('hay un tooltip por semana', (_svg.match(/<title>/g)||[]).length, 3);
-ok('el tooltip trae las cajas',  /120 cases/.test(_svg));
-ok('y el precio de esa semana',  /\$2\.06\/lb/.test(_svg));
-ok('marca la semana en curso',   /week in progress/.test(_svg));
-ok('una semana sin precio no inventa uno', /no price/.test(_svg));
+// El <title> nativo de SVG NO se renderiza (probado con el mouse 3 s encima sin que apareciera nada),
+// así que los datos van en atributos y los dibuja un tooltip propio.
+ok('ya no usa el <title> nativo, que no se veía', !/<title>/.test(_svg));
+check('hay una columna de hover por semana', (_svg.match(/class="dm-hit"/g)||[]).length, 3);
+ok('cada columna lleva sus datos', /data-cs="120"/.test(_svg) && /data-px="2\.06"/.test(_svg));
+ok('y el bruto de esa semana', /data-gs="7416"/.test(_svg));
+ok('marca la semana en curso', /data-inc="1"/.test(_svg));
+ok('una semana sin precio queda vacía, no inventa un valor', /data-px=""/.test(_svg));
+
+// ── el año en el eje, solo cuando cambia ──
+var _cross=dmComboSVG([
+  {week:'2025-12-15', cases:10, px:2, gs:20, lbs:10},
+  {week:'2025-12-22', cases:10, px:2, gs:20, lbs:10},
+  {week:'2026-01-05', cases:10, px:2, gs:20, lbs:10}
+], null);
+check('el año aparece una vez por cada año presente', (_cross.match(/>20\d\d</g)||[]).length, 2);
+ok('y son los dos años del rango', /">2025</.test(_cross) && /">2026</.test(_cross));
+ok('dentro de un solo año no se repite', (_svg.match(/>20\d\d</g)||[]).length === 1);
 
 // ════ Trend & Price · una sola ventana ══════════════════════════════════════
 // El selector propio de la zona (4/13/26/52) mezclaba la VENTANA (que promedia y alimenta el plan)
@@ -559,7 +572,7 @@ cxWeekNo=function(){ return 1; };
 var _w=[]; for(var _i=0;_i<26;_i++) _w.push({week:'2026-0'+((_i%9)+1)+'-01', cases:100+_i, px:2, gs:200, lbs:100});
 var _sv=dmComboSVG(_w, {winFrom:20, winTo:26});
 ok('dibuja el sombreado de la ventana', /fill-opacity="0\.05"/.test(_sv));
-check('y una columna de hover por cada una de las 26 semanas', (_sv.match(/<title>/g)||[]).length, 26);
+check('y una columna de hover por cada una de las 26 semanas', (_sv.match(/class="dm-hit"/g)||[]).length, 26);
 var _sv2=dmComboSVG(_w, null);
 ok('sin ventana indicada no sombrea nada', !/fill-opacity="0\.05"/.test(_sv2));
 

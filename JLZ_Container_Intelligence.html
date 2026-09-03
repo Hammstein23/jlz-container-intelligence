@@ -24061,6 +24061,7 @@ function dmComboSVG(show, opts){
   s+='<text x="11" y="'+(T+ph/2)+'" text-anchor="middle" font-family="var(--fb)" font-size="9" fill="#6b7280" transform="rotate(-90 11 '+(T+ph/2)+')">cases / wk</text>';
   if(pv.length) s+='<text x="'+(W-9)+'" y="'+(T+ph/2)+'" text-anchor="middle" font-family="var(--fb)" font-size="9" fill="var(--amber-600)" transform="rotate(90 '+(W-9)+' '+(T+ph/2)+')">$/lb</text>';
   const step=Math.max(1,Math.ceil(m/13));
+  let _lastYr=null;
   show.forEach((d,i)=>{ const x=cx(i)-bw/2;
     if(d.isFuture){
       const cc=d.committed||0, dd=d.direct||0;
@@ -24070,7 +24071,17 @@ function dmComboSVG(show, opts){
       const v=d.cases, y=yC(v), hh=T+ph-y;
       s+='<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(0,hh).toFixed(1)+'" rx="1.5" fill="'+(d.inc?'url(#dmHatch)':'var(--jlz)')+'"'+(d.inc?'':' fill-opacity="0.9"')+'/>';
     }
-    if(i%step===0){ const lab='W'+((typeof cxWeekNo==='function')?cxWeekNo(d.week):''); s+='<text x="'+cx(i).toFixed(1)+'" y="'+(H-B+14)+'" text-anchor="middle" font-family="var(--fm)" font-size="8.5" fill="#9ca3af">'+lab+'</text>'; }
+    if(i%step===0){
+      const lab='W'+((typeof cxWeekNo==='function')?cxWeekNo(d.week):'');
+      s+='<text x="'+cx(i).toFixed(1)+'" y="'+(H-B+14)+'" text-anchor="middle" font-family="var(--fm)" font-size="8.5" fill="#9ca3af">'+lab+'</text>';
+      // El año va debajo y SOLO cuando cambia: con 26 semanas el rango cruza fin de año y "W02" al lado
+      // de "W50" no dice de qué año es cada uno. Repetirlo en cada etiqueta sería ruido.
+      const yr=String(d.week).slice(0,4);
+      if(yr && yr!==_lastYr){
+        s+='<text x="'+cx(i).toFixed(1)+'" y="'+(H-B+24)+'" text-anchor="middle" font-family="var(--fm)" font-size="8.5" font-weight="700" fill="#6b7280">'+yr+'</text>';
+        _lastYr=yr;
+      }
+    }
   });
   const pts=show.map((d,i)=>({i,d})).filter(o=>!o.d.inc && o.d.px>0);
   if(pts.length){
@@ -24088,18 +24099,17 @@ function dmComboSVG(show, opts){
     s+='<line x1="'+dx.toFixed(1)+'" y1="'+T+'" x2="'+dx.toFixed(1)+'" y2="'+(T+ph)+'" stroke="#cfd8dd" stroke-width="1" stroke-dasharray="2 3"/>';
     s+='<text x="'+(dx+4).toFixed(1)+'" y="'+(T+9)+'" font-family="var(--fb)" font-size="8.5" fill="#9ca3af">forecast →</text>';
   }
-  // Capa de hover: una columna transparente por semana, encima de todo, con un <title> nativo. Sin
-  // esto el gráfico no decía nada al pasar el mouse — había que leer las barras contra los ejes.
+  // Capa de hover: una columna transparente por semana, encima de todo. Los datos van en atributos y
+  // los dibuja un tooltip PROPIO (dmWireChartTip), no el <title> nativo de SVG: el nativo NO llegaba a
+  // renderizarse — verificado pasando el mouse 3 segundos sobre una barra sin que apareciera nada.
   show.forEach((d,i)=>{
     const x=cx(i)-(pw/Math.max(1,m))/2;
     const wl=(typeof cxWeekNo==='function' && cxWeekNo(d.week)) ? ('W'+cxWeekNo(d.week)) : d.week;
-    const cs=Math.round(d.cases||0).toLocaleString('en-US');
-    const px=(d.px>0) ? ('$'+(d.px).toFixed(2)+'/lb') : 'no price';
-    const gs=(d.gs>0) ? (' · $'+Math.round(d.gs).toLocaleString('en-US')+' gross') : '';
-    const inc=d.inc ? ' · week in progress' : '';
-    s+='<rect x="'+x.toFixed(1)+'" y="'+T+'" width="'+(pw/Math.max(1,m)).toFixed(1)+'" height="'+ph+'"'
-      +' fill="transparent" style="cursor:crosshair">'
-      +'<title>'+dmEsc(wl+' · '+d.week+'\n'+cs+' cases · '+px+gs+inc)+'</title></rect>';
+    s+='<rect class="dm-hit" x="'+x.toFixed(1)+'" y="'+T+'" width="'+(pw/Math.max(1,m)).toFixed(1)+'" height="'+ph+'"'
+      +' fill="transparent" style="cursor:crosshair"'
+      +' data-wk="'+dmEsc(wl)+'" data-date="'+dmEsc(d.week)+'"'
+      +' data-cs="'+Math.round(d.cases||0)+'" data-px="'+(d.px>0?d.px.toFixed(2):'')+'"'
+      +' data-gs="'+Math.round(d.gs||0)+'" data-inc="'+(d.inc?'1':'')+'"></rect>';
   });
   return s+'</svg>';
 }
@@ -24144,6 +24154,38 @@ function dmFocusRows(){
     return dmRowOrigin(r) === _dmOrigin;
   });
 }
+// Tooltip propio del gráfico. El <title> nativo de SVG no se renderizaba, y además llegaría con el
+// retardo del sistema y sin estilo. Este aparece al instante y resalta la columna sobre la que estás.
+function dmWireChartTip(host){
+  if(!host || host._tipWired) return;
+  host._tipWired = true;
+  host.style.position = 'relative';
+  const tip = document.createElement('div');
+  tip.className = 'dm-tip'; tip.style.display = 'none';
+  host.appendChild(tip);
+  const hide = function(){ tip.style.display='none';
+    host.querySelectorAll('.dm-hit.on').forEach(function(x){ x.classList.remove('on'); }); };
+  host.addEventListener('mouseleave', hide);
+  host.addEventListener('mousemove', function(ev){
+    const hit = ev.target && ev.target.closest ? ev.target.closest('.dm-hit') : null;
+    if(!hit){ hide(); return; }
+    host.querySelectorAll('.dm-hit.on').forEach(function(x){ if(x!==hit) x.classList.remove('on'); });
+    hit.classList.add('on');
+    const px = hit.getAttribute('data-px'), gs = +hit.getAttribute('data-gs') || 0;
+    tip.innerHTML = '<b>' + hit.getAttribute('data-wk') + '</b> <span class="d">' + hit.getAttribute('data-date') + '</span>'
+      + (hit.getAttribute('data-inc') ? '<span class="p">week in progress</span>' : '')
+      + '<div class="r"><span>Cases</span><b>' + (+hit.getAttribute('data-cs')).toLocaleString('en-US') + '</b></div>'
+      + '<div class="r"><span>$/lb</span><b>' + (px ? ('$'+px) : '\u2014') + '</b></div>'
+      + (gs > 0 ? '<div class="r"><span>Gross</span><b>$' + gs.toLocaleString('en-US') + '</b></div>' : '');
+    const hb = host.getBoundingClientRect();
+    tip.style.display = 'block';
+    let x = ev.clientX - hb.left + 14, y = ev.clientY - hb.top + 12;
+    if(x + tip.offsetWidth > hb.width - 4) x = ev.clientX - hb.left - tip.offsetWidth - 14;
+    if(y + tip.offsetHeight > hb.height - 4) y = Math.max(4, hb.height - tip.offsetHeight - 4);
+    tip.style.left = Math.max(4, x) + 'px';
+    tip.style.top  = y + 'px';
+  });
+}
 function dmRenderTrendPrice(){
   const titleEl=document.getElementById('dm-combo-title'); if(!titleEl) return;
   const fp=(typeof productFocus==='function')?productFocus():'ginger';
@@ -24184,6 +24226,7 @@ function dmRenderTrendPrice(){
   }
   const ch=document.getElementById('dm-chart');
   if(!dmOpts) dmOpts={winFrom:Math.max(0, lastComp.length-win), winTo:lastComp.length};
+  if(ch) dmWireChartTip(ch);
   if(ch) ch.innerHTML = combined.length ? dmComboSVG(combined, dmOpts)
     : '<div style="padding:24px;text-align:center;color:var(--gray-400);font-size:12px">No '+meta.label.toLowerCase()+' sales'+(_dmOrigin!=='All'?' from '+_dmOrigin:'')+' in the loaded data.</div>';
   const nh=document.getElementById('dm-note');
@@ -24347,6 +24390,13 @@ function dmZoneStyles(){ return '<style>'
 + '.dm-ch .ttl{font-size:13px;font-weight:700}'
 + '.dm-accent{width:9px;height:9px;border-radius:2px;background:var(--jlz);flex:none}'
 + '.dm-span{margin-left:auto;font-family:var(--fm);font-size:10px;color:var(--gray-400);letter-spacing:.02em;text-align:right}'
++ '.dm-hit.on{fill:var(--jlz);fill-opacity:.07}'
++ '.dm-tip{position:absolute;z-index:20;pointer-events:none;background:var(--white);border:1px solid var(--gray-300);border-radius:7px;box-shadow:var(--shadow-md);padding:8px 10px;font-family:var(--fm);font-size:11px;line-height:1.5;min-width:132px}'
++ '.dm-tip b{font-weight:700}'
++ '.dm-tip .d{color:var(--gray-400);margin-left:5px}'
++ '.dm-tip .p{display:block;color:#b45309;font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;margin-top:2px}'
++ '.dm-tip .r{display:flex;justify-content:space-between;gap:14px;margin-top:3px;border-top:1px solid var(--gray-100);padding-top:3px}'
++ '.dm-tip .r span{color:var(--gray-500)}'
 + '.dm-winsel button{border:none;background:none;font:inherit;font-size:11px;font-weight:600;color:var(--gray-500);padding:3px 9px;border-radius:4px;cursor:pointer;font-family:var(--fm)}'
 + '.dm-winsel button.on{background:var(--white);color:var(--jlz);box-shadow:var(--shadow-sm)}'
 + '.dm-cb{padding:15px 16px}'
