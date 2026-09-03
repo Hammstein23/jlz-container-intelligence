@@ -2633,6 +2633,12 @@ function authInjectLogo() {
       .dmc-tag.pending{color:#b45309;background:#fffbeb;}
       .dmc-tag.stale{color:#b42318;background:#fef2f2;}
       .dmc-tag.shipped{color:#0369a1;background:#f0f9ff;}
+      .dbu-tbl .hp-a{border-left:1px dashed var(--gray-300)}
+      .dbu-tbl .hp-b{color:#b45309}
+      .dbu-tbl .hp-t{font-weight:700;background:#FFF7E6}
+      .dbu-tbl tr.dbu-sub th{font-size:8px;letter-spacing:.04em;text-transform:uppercase;color:var(--gray-400);padding:2px 8px 5px;font-weight:700}
+      .dbu-tbl tr.dbu-sub th.hp-b{color:#b45309}
+      .dbu-tbl .firm{display:block;font-size:9px;color:var(--gray-400);font-weight:600;margin-top:1px}
       .dmc-sh{border:1px solid var(--gray-200);background:var(--white);color:var(--gray-500);border-radius:5px;font-family:var(--fm);font-size:9px;font-weight:700;padding:1px 6px;margin-left:6px;cursor:pointer;white-space:nowrap;}
       .dmc-sh:hover{border-color:#0369a1;color:#0369a1;}
       .dmc-chip.csh{border-left:3px solid #0369a1;background:#f8fcff;}
@@ -24548,10 +24554,20 @@ function renderBuildupPanel(){
     }
     return tot > 0 ? tot.toLocaleString() : '<span class="z">0</span>';
   };
+  // La semana en curso se abre en TRES sub-columnas: facturado | sin facturar | total. Un solo número
+  // no alcanza: son dos cosas de naturaleza distinta (una ya facturada, la otra vendida y todavía no) y
+  // sin la suma a la vista la fila no se entiende. Las demás semanas siguen con una sola celda.
   var histCell = function(wk, i, tot, booked){
-    return '<td class="hist' + (i === histWeeks.length - 1 ? ' hist-last' : '') + (wk === partialWk ? ' hist-part' : '') + '">'
-         + fmtHist(tot, (wk === partialWk ? (booked || 0) : 0)) + '</td>';
+    var last = (i === histWeeks.length - 1);
+    var n = function(v){ return v > 0 ? v.toLocaleString() : '<span class="z">0</span>'; };
+    if(wk !== partialWk)
+      return '<td class="hist' + (last ? ' hist-last' : '') + '">' + n(tot) + '</td>';
+    var b = booked || 0, inv = Math.max(0, tot - b);
+    return '<td class="hist hist-part hp-a">' + n(inv) + '</td>'
+         + '<td class="hist hist-part hp-b">' + n(b) + '</td>'
+         + '<td class="hist hist-part hp-t' + (last ? ' hist-last' : '') + '">' + n(tot) + '</td>';
   };
+  var HIST_COLS = histWeeks.length + (partialWk ? 2 : 0);
   var histBooked = histWeeks.map(function(wk){
     var t = 0; _custsIn(wk).forEach(function(cust){ if(!_isDS(cust)) t += bookedCases(cust, wk); }); return Math.round(t);
   });
@@ -24568,7 +24584,15 @@ function renderBuildupPanel(){
           ? ('<span style="color:#b45309"> \u00b7 quiet, ' + (_qaF[c.c] === 0 ? 'fuera del plan' : Math.round(_qaF[c.c]*100) + '% en el plan') + '</span>')
           : '') + '</div></td>';
     histWeeks.forEach(function(wk, i){ body += histCell(wk, i, actualCases(c.c, wk), bookedCases(c.c, wk)); });
-    weeks.forEach(function(w, i){ var cv = cell(c, w.weekStartISO); colTot[i] += cv.v; body += '<td class="' + cv.k + '">' + (cv.v > 0 ? cv.v.toLocaleString() : '0') + '</td>'; });
+    // Cuando el pronóstico tapa a una orden ya puesta (run-rate > committed) el número visible no dice
+    // que parte de esa semana YA está vendida — Whole Foods tenía 261 cs en firme para la W37 detrás de
+    // un run-rate de 371. Se anota debajo, sin cambiar el número que usa el plan.
+    weeks.forEach(function(w, i){
+      var cv = cell(c, w.weekStartISO); colTot[i] += cv.v;
+      var cmw = Math.round((com[w.weekStartISO] && com[w.weekStartISO][c.c]) || 0);
+      body += '<td class="' + cv.k + '">' + (cv.v > 0 ? cv.v.toLocaleString() : '0')
+            + ((cmw > 0 && cv.k === 'r') ? '<span class="firm">' + cmw.toLocaleString() + ' en firme</span>' : '') + '</td>';
+    });
     body += '</tr>';
   });
   var resid = weeks.map(function(w, i){ return Math.max(0, planTot[i] - colTot[i]); });
@@ -24577,11 +24601,11 @@ function renderBuildupPanel(){
   var usesLine = isG ? 'The column total is what the Buy Planner uses.' : ('The column total is your weekly ' + esc(pl) + ' demand — buy to it.');
   var h = dmZoneLabel(5,'Forward build-up','next 7 weeks — run-rate + committed, per customer') + '<div class="card dbu">';
   h += '<div class="dbu-hd"><div class="dbu-t">Demand build-up by customer</div><div class="dbu-s">How the projected weekly demand is built — invoiced run-rate + allocated (committed) orders. ' + usesLine + '</div></div>';
-  h += '<div class="dbu-lg"><span><i class="sw a"></i>Allocated — real order placed</span><span><i class="sw r"></i>Run-rate — projected from history</span><span><b class="bd od">OD</b>order-driven <b class="bd st">ST</b>steady</span><span><b style="color:#b45309">+N</b>&nbsp;ya vendido, sin facturar (semana en curso)</span></div>';
+  h += '<div class="dbu-lg"><span><i class="sw a"></i>Allocated — real order placed</span><span><i class="sw r"></i>Run-rate — projected from history</span><span><b class="bd od">OD</b>order-driven <b class="bd st">ST</b>steady</span><span><b style="color:#b45309">sin facturar</b>&nbsp;vendido, todavía no facturado</span><span><i class="sw r"></i><b>N en firme</b>&nbsp;parte de esa semana ya vendida</span></div>';
   h += '<div class="dbu-wrap"><table class="dbu-tbl"><thead>';
   if(histWeeks.length){
     h += '<tr class="dbu-grp"><th class="c"></th>'
-       + '<th class="hist-grp" colspan="' + histWeeks.length + '">ACTUAL &middot; last ' + (partialWk?(histWeeks.length-1):histWeeks.length) + ' wk (the run-rate window)' + (partialWk?' &middot; <span style="color:#b45309">◐ current week not averaged</span>':'') + '</th>'
+       + '<th class="hist-grp" colspan="' + HIST_COLS + '">ACTUAL &middot; last ' + (partialWk?(histWeeks.length-1):histWeeks.length) + ' wk (the run-rate window)' + (partialWk?' &middot; <span style="color:#b45309">◐ current week not averaged</span>':'') + '</th>'
        + '<th class="proj-grp" colspan="' + weeks.length + '">PROJECTED</th></tr>';
   }
   h += '<tr><th class="c">Customer · run-rate</th>';
@@ -24589,14 +24613,30 @@ function renderBuildupPanel(){
     var wn = (typeof cxWeekNo === 'function' && cxWeekNo(wk)) ? ('W' + cxWeekNo(wk)) : shortD(wk);
     var nm = nowMark[wk];              // completed with booked orders (not fully invoiced yet)
     var isPart = (wk === partialWk);   // current week, still in progress → shown but NOT in the average
-    h += '<th class="hist' + (i === histWeeks.length - 1 ? ' hist-last' : '') + (nm?' hist-now':'') + (isPart?' hist-part':'') + '"'
-       + (isPart?' title="Week in progress — shown for visibility, NOT included in the run-rate average"'
+    h += '<th class="hist' + (i === histWeeks.length - 1 && !isPart ? ' hist-last' : '') + (nm?' hist-now':'') + (isPart?' hist-part':'') + '"'
+       + (isPart?' colspan="3" title="Week in progress — shown for visibility, NOT included in the run-rate average"'
                :(nm?' title="Completed with booked (unshipped) orders — this week is not fully invoiced yet"':'')) + '>'
        + wn + (isPart?'<sup class="pc">◐</sup>':(nm?'<sup class="nc">●</sup>':'')) + '<br><span>' + (isPart?'in progress':shortD(wk)) + '</span></th>';
   });
   weeks.forEach(function(w){ h += '<th>W' + w.weekNum + '<br><span>' + shortD(w.weekStartISO) + '</span></th>'; });
-  h += '</tr></thead><tbody>' + body;
-  var histPad = function(cls){ var s=''; histWeeks.forEach(function(wk,i){ s += '<td class="hist' + (i===histWeeks.length-1?' hist-last':'') + (wk===partialWk?' hist-part':'') + (cls?(' '+cls):'') + '"></td>'; }); return s; };
+  h += '</tr>';
+  if(partialWk){
+    // Sub-encabezado: solo la semana en curso lleva etiquetas; el resto van vacías para no desalinear.
+    h += '<tr class="dbu-sub"><th class="c"></th>';
+    histWeeks.forEach(function(wk, i){
+      if(wk !== partialWk){ h += '<th class="hist' + (i === histWeeks.length - 1 ? ' hist-last' : '') + '"></th>'; return; }
+      h += '<th class="hist hist-part hp-a">facturado</th>'
+         + '<th class="hist hist-part hp-b">sin facturar</th>'
+         + '<th class="hist hist-part hp-t' + (i === histWeeks.length - 1 ? ' hist-last' : '') + '">total</th>';
+    });
+    weeks.forEach(function(){ h += '<th></th>'; });
+    h += '</tr>';
+  }
+  h += '</thead><tbody>' + body;
+  var histPad = function(cls){ var s=''; histWeeks.forEach(function(wk,i){
+    var n = (wk===partialWk) ? 3 : 1;
+    for(var k=0;k<n;k++) s += '<td class="hist' + ((i===histWeeks.length-1 && k===n-1)?' hist-last':'') + (wk===partialWk?' hist-part':'') + (cls?(' '+cls):'') + '"></td>';
+  }); return s; };
   // "Other small accounts" used to be an unexplained lump. Name the accounts inside it: any account with
   // sales in the ACTUAL weeks that the model doesn't track individually (under 1 cs/wk, or lapsed) still
   // shows up here by name, so the number is traceable instead of a black box.
@@ -24621,6 +24661,11 @@ function renderBuildupPanel(){
     return Math.max(0, Math.round((histTot[i] || 0) - s));
   });
   // Row = the named accounts + whatever is left unattributable, and one expandable detail row per account.
+  var _othBkd = histWeeks.map(function(wk, i){
+    var s = histResid[i] || 0;                       // el residual son órdenes booked sin cliente asignado
+    extras.forEach(function(c){ s += bookedCases(c, wk); });
+    return Math.round(s);
+  });
   var _othTot = histWeeks.map(function(wk, i){
     var s = histResid[i] || 0;
     extras.forEach(function(c){ s += actualCases(c, wk); });
@@ -24636,10 +24681,7 @@ function renderBuildupPanel(){
       : '';
     h += '<tr class="oth oth-sum"><td class="c"><span class="nm">Other small accounts</span>' + _cap
        + '<div class="mt">under 1 cs/wk or lapsed</div></td>';
-    histWeeks.forEach(function(wk, i){
-      h += '<td class="hist' + (i===histWeeks.length-1?' hist-last':'') + (wk===partialWk?' hist-part':'') + '">'
-        + (_othTot[i] >= 1 ? _othTot[i].toLocaleString() : '<span class="z">0</span>') + '</td>';
-    });
+    histWeeks.forEach(function(wk, i){ h += histCell(wk, i, (_othTot[i] || 0), (_othBkd[i] || 0)); });
     resid.forEach(function(x){ h += '<td class="r">' + (x >= 1 ? x.toLocaleString() : '0') + '</td>'; });
     h += '</tr>';
     // The accounts inside it, by name. Their PROJECTED cells are 0 on purpose: the aggregate run-rate
@@ -24656,9 +24698,7 @@ function renderBuildupPanel(){
       h += '<tr class="oth oth-det ' + _oid + '" style="display:none"><td class="c" style="padding-left:22px">'
          + '<span class="nm" style="font-weight:500;color:var(--gray-500)">Sin cuenta asignada</span>'
          + '<div class="mt">órdenes booked de la semana nowcasteada</div></td>';
-      histWeeks.forEach(function(wk, i){
-        h += '<td class="hist' + (i===histWeeks.length-1?' hist-last':'') + (wk===partialWk?' hist-part':'') + '">'
-          + (histResid[i] >= 1 ? histResid[i].toLocaleString() : '<span class="z">0</span>') + '</td>'; });
+      histWeeks.forEach(function(wk, i){ h += histCell(wk, i, (histResid[i] || 0), (histResid[i] || 0)); });
       weeks.forEach(function(){ h += '<td class="r"><span class="z">0</span></td>'; });
       h += '</tr>';
     }
