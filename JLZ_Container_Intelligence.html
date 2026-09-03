@@ -14873,7 +14873,11 @@ function invmDirectShipCases(p,origin){
   if(!Object.keys(wk).length) return 0;
   var dmax=(typeof dmGlobalDataMax==='function')?dmGlobalDataMax():'';
   var anchor=dmax?new Date(dmax):new Date();
-  var N=(typeof dmWindow==='function')?dmWindow(p,origin):13;   // Sol-ti direct-ship follows the same demand window
+  // La ventana del direct-ship es la SUYA (dsWindow, 26 por defecto), no la del stock. El comentario
+  // de arriba ya lo decía pero el código usaba dmWindow: con la ventana corta de turmeric (3 semanas)
+  // Sol-ti daba 0 cs/wk — compró en la semana del 10-ago y no en las tres últimas. Una cuenta
+  // order-driven pone pocas POs por trimestre; promediarla en 3 semanas la apaga o la dispara.
+  var N=(typeof dsWindow==='function')?dsWindow():13;
   var weeks=[], seen={};
   for(var i=0;i<N;i++){ var d=new Date(anchor); d.setDate(d.getDate()-7*i); var k=(typeof dmWeekKey==='function')?dmWeekKey(d):null; if(k&&!seen[k]){ seen[k]=1; weeks.push(k); } }
   if(!weeks.length) return 0;
@@ -24181,8 +24185,8 @@ function dmLineOrigins(p){
 // Números de UNA línea. El run-rate sale del MISMO camino que usa la Zona 3 (dmBuildModel sobre las
 // filas de la línea, sin direct-ship, y después el nowcast): calcularlo por una vía paralela sobre la
 // serie cruda daba números que no coincidían con el resto de la pantalla — el error que se repitió
-// todo el día. El direct-ship usa `invmDirectShipCases`, que ya aplica dsWindow() (26 semanas por
-// defecto): con la ventana corta del stock una cuenta grumosa salta de 233 a 700 de una semana a otra.
+// todo el día. El direct-ship sale de `invmDirectShipCases`, que promedia sobre dsWindow() (26 semanas
+// por defecto) porque una cuenta order-driven pone pocas POs por trimestre y una ventana corta la apaga.
 function dmLineStats(p, o){
   var meta = dmProductMeta(p), cl = meta.caseLb;
   var win = (typeof dmWindow === 'function') ? dmWindow(p, o) : 13;

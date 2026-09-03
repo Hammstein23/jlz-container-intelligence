@@ -459,41 +459,57 @@ check('sin filtro · queda vacío en storage', getActiveOrigin(), '');
 
 // ════ Zona 1 · líneas producto+origen ═══════════════════════════════════════
 // Antes eran 4 tarjetas por producto, con run-rate fijo en 13 semanas y CON direct-ship adentro:
-// garlic mostraba 41 cs/wk cuando su demanda de stock eran 19.
-group('dmLineStats · run-rate por producto+origen, sin direct-ship');
+// garlic mostraba 41 cs/wk cuando su demanda de stock eran 19. dmLineStats es una COMPOSICIÓN: elige
+// las filas, la ventana y de qué store sale el stock. El modelo en sí ya se prueba más arriba, así que
+// acá se stubbea para poder afirmar exactamente qué le llega y qué agregado se elige.
+group('dmLineStats · qué filas, qué ventana, qué store');
 
 DM_ACCENT={ginger:'#0d5026',garlic:'#b45309',shallots:'#7c3aed',turmeric:'#b42318'};
 productLabel=function(p){ return p; };
 productCaseLb=function(p){ return p==='shallots'?50:30; };
 dmRowOrigin=function(r){ return r.oitem||''; };
-dmWindow=function(){ return 3; };
 isDirectShipRow=function(r){ return !!(r && r.c==='Whole Foods Market' && r.prod==='garlic'); };
 invmProductStats=function(p,o){ return {onHandCases:(p==='garlic'?48:0)}; };
 bpInvState=function(){ return {rows:{A:{cases:2184}}}; };
+nowcastProductModel=function(m){ return m; };
 
-// 6 semanas completas: garlic California, 20 cs/sem de stock + 100 cs/sem de Whole Foods direct-ship
+var _seen=null, _win=3;
+dmWindow=function(){ return _win; };
+// el modelo devuelve un agregado distinto por ventana, para poder afirmar cuál se eligió
+dmBuildModel=function(rows,_a,cl,p){
+  _seen={n:rows.length, custs:rows.map(function(r){return r.c;}).filter(function(v,i,a){return a.indexOf(v)===i;})};
+  return { runRate3:30*cl, runRate6:60*cl, runRate13:130*cl, runRate26:260*cl,
+           weeklyReliable:[{lbs:10*cl},{lbs:10*cl},{lbs:10*cl},{lbs:20*cl},{lbs:20*cl},{lbs:20*cl}] };
+};
+invmDirectShipCases=function(p,o){ return p==='garlic' ? 74 : 0; };
+
 _dmRawAll=[];
 for(var _w=0;_w<6;_w++){
   var _d=new Date(Date.UTC(2026,5,1)+_w*7*86400000).toISOString().slice(0,10);
-  _dmRawAll.push({d:_d, prod:'garlic', oitem:'California', c:"Albert's Organics", lbs:20*30, gs:20*30*3, units:20, type:'Sale'});
-  _dmRawAll.push({d:_d, prod:'garlic', oitem:'California', c:'Whole Foods Market', lbs:100*30, gs:100*30*3, units:100, type:'Sale'});
-  _dmRawAll.push({d:_d, prod:'ginger', oitem:'Peru',       c:"Albert's Organics", lbs:800*30, gs:800*30*2, units:800, type:'Sale'});
-  _dmRawAll.push({d:_d, prod:'ginger', oitem:'Hawaii',     c:"Albert's Organics", lbs:5*30,   gs:5*30*4,   units:5,   type:'Sale'});
+  _dmRawAll.push({d:_d, prod:'garlic', oitem:'California', c:"Albert's Organics",  lbs:20*30, units:20, type:'Sale'});
+  _dmRawAll.push({d:_d, prod:'garlic', oitem:'California', c:'Whole Foods Market', lbs:100*30, units:100, type:'Sale'});
+  _dmRawAll.push({d:_d, prod:'ginger', oitem:'Peru',       c:"Albert's Organics",  lbs:800*30, units:800, type:'Sale'});
+  _dmRawAll.push({d:_d, prod:'ginger', oitem:'Hawaii',     c:"Albert's Organics",  lbs:5*30,  units:5,   type:'Sale'});
 }
 dmGlobalDataMax=function(){ return '2026-07-20'; };
 
 var _g=dmLineStats('garlic','California');
-check('el run-rate de garlic deja fuera el direct-ship', Math.round(_g.rr), 20);
-check('y lo reporta aparte',                             Math.round(_g.ds), 100);
-check('cobertura = on hand / run-rate de stock',         Math.round(_g.cover*10)/10, 2.4);
+ok('al modelo solo le llegan las filas de stock — Whole Foods queda fuera',
+   _seen.custs.length===1 && _seen.custs[0]==="Albert's Organics");
+check('con ventana 3 toma runRate3', Math.round(_g.rr), 30);
+check('el direct-ship viene de invmDirectShipCases (dsWindow), no de la ventana del stock', _g.ds, 74);
+check('cobertura = on hand / run-rate de stock', Math.round(_g.cover*10)/10, 1.6);
+
+_win=6;  check('con ventana 6 toma runRate6',  Math.round(dmLineStats('garlic','California').rr), 60);
+_win=26; check('con ventana 26 toma runRate26', Math.round(dmLineStats('garlic','California').rr), 260);
+_win=3;
 
 var _gp=dmLineStats('ginger','Peru');
-check('ginger-Peru toma el stock de su propio store (bpInv)', Math.round(_gp.onHand), 2184);
-check('y no se mezcla con Hawaii',                            Math.round(_gp.rr), 800);
+check('ginger-Peru saca el stock de su propio store (bpInv)', _gp.onHand, 2184);
+ok('las filas de Hawaii no entran en la línea de Peru', _seen.n===6);
 var _gh=dmLineStats('ginger','Hawaii');
-check('ginger-Hawaii es su propia línea', Math.round(_gh.rr), 5);
+check('ginger-Hawaii usa el store product-aware', _gh.onHand, 0);
 ok('sin direct-ship no hay nota', _gh.ds < 1);
-
 check('los orígenes salen con el de más volumen primero', dmLineOrigins('ginger').join(','), 'Peru,Hawaii');
 
 summary();
