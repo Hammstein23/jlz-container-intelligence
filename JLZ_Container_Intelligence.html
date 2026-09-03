@@ -11852,6 +11852,19 @@ function hybridSalesForWeek(wk, salesDemand, model, product, extraOrders) {
   // committed for THIS week per customer, and each customer's LAST committed week (its "known horizon")
   var comThis = {}, comLast = {};
   var _hp = product || 'ginger';
+  // ── Direct-ship NUNCA es demanda de stock ────────────────────────────────────────────────────────
+  // Esas cuentas despachan puerto → cliente y no tocan el almacén. El caller ya las saca de la base
+  // (salesBase), así que volver a sumar su committed acá las cuenta DOS veces contra el inventario —
+  // y como tampoco se dibujan como fila, el volumen cae sin dueño en "Other small accounts".
+  // Garlic 2026-09-03: Whole Foods es direct-ship con 140 cs committed → +82 cajas fantasma y un
+  // "Buy 111" de producto que jamás pasa por cámara.
+  var _hpDS = function(cust){ try { return (typeof isDirectShipRow === 'function') && isDirectShipRow({ c: cust, prod: _hp }); } catch(e){ return false; } };
+  // La tasa por cliente tiene que usar la MISMA ventana que la base que mandó el caller; si no, el
+  // "excedente sobre el run-rate" se mide contra otro promedio (garlic: base armada con rr6Cases=37,
+  // excedente medido contra rrCases de 13 semanas=58).
+  var _hpWin = (typeof dmWindow === 'function') ? dmWindow(_hp) : 13;
+  var _hpKey = (_hpWin === 3) ? 'rr3Cases' : (_hpWin === 6) ? 'rr6Cases' : 'rrCases';
+  var _hpRr = function(c){ return (c[_hpKey] != null ? c[_hpKey] : c.rrCases) || 0; };
   var _acc = function(cust, w, cases){
     if (!cust || !w) return;
     if (w === wk) comThis[cust] = (comThis[cust] || 0) + (+cases || 0);
@@ -11869,7 +11882,8 @@ function hybridSalesForWeek(wk, salesDemand, model, product, extraOrders) {
   custs.forEach(function(c){
     if (!c || !c.c) return;
     seen[c.c] = 1;
-    var rr = c.rrCases || 0, cm = comThis[c.c] || 0, last = comLast[c.c];
+    if (_hpDS(c.c)) return;                        // direct-ship: fuera de la demanda de stock
+    var rr = _hpRr(c), cm = comThis[c.c] || 0, last = comLast[c.c];
     if (c.sporadic) {
       // Order-driven. WITHIN its committed horizon (week ≤ its last committed week) the committed IS the
       // known demand → use it, drop the smeared average (0 in the weeks it didn't order). BEYOND the
@@ -11881,7 +11895,7 @@ function hybridSalesForWeek(wk, salesDemand, model, product, extraOrders) {
       adj += Math.max(0, cm - rr);                 // steady: excess over run-rate only
     }
   });
-  Object.keys(comThis).forEach(function(cust){ if (!seen[cust]) adj += comThis[cust]; });   // unknown accounts → full committed
+  Object.keys(comThis).forEach(function(cust){ if (!seen[cust] && !_hpDS(cust)) adj += comThis[cust]; });   // unknown accounts → full committed (direct-ship excluido)
   return Math.max(0, salesDemand + adj);
 }
 // ── Direct-ship (per-container, on the order object) ──
@@ -23475,7 +23489,14 @@ function dmBuildModel(raw, weeklyOnly, caseLb, prodKey){
   let _rrOvrDeltaLbs = 0, _rrOvrDelta6Lbs = 0, _rrOvrDelta3Lbs = 0;
   const customers = Object.keys(_meaningful).map(c => {
     const cd = custDetail ? custDetail[c] : null;
-    const rrLbs = _avgW(c, rateWeeks);
+    // Las tres tasas por cliente tienen que medirse sobre la MISMA ventana que su agregado, o las filas
+    // y el TOTAL hablan de períodos distintos y la tabla no suma. `rrLbs` promediaba sobre `rateWeeks`
+    // ENTERO — 184 semanas, desde 2023-02-20 — mientras que `runRate13` es `mean(avgSeries.slice(-13))`.
+    // O sea: las filas mostraban el promedio histórico de vida y el TOTAL el run-rate de 13 semanas.
+    // Medido el 2026-09-03 en ginger: filas 1.110 vs TOTAL 780, con Christopher Ranch en 229 cs/sem
+    // (42.097 cajas ÷ 184 semanas) cuando en las últimas 13 semanas vendió 9, y cinco cuentas que no
+    // compraron NADA en 13 semanas cargando tasa igual. Con la ventana, la suma da 779 ≈ 780.
+    const rrLbs = _avgW(c, (reliableWeeks.length ? reliableWeeks : allWeeks).slice(-13));
     const rr6Lbs = _avgW(c, (reliableWeeks.length ? reliableWeeks : allWeeks).slice(-6));   // per-customer reaction windows
     const rr3Lbs = _avgW(c, (reliableWeeks.length ? reliableWeeks : allWeeks).slice(-3));
     // Order-driven (sporadic) classification: ordered in only a small fraction of the reliable weeks →
@@ -24359,7 +24380,7 @@ function dmcRenderChips() {
   getCommitted().forEach(function(c, i) {
     if(_cmProd(c) !== prod) return;                 // this product only; i stays the true array index for removal
     var manualBadge = (c.source === 'manual') ? '<span class="dmc-tag manual" title="Entered by hand — not from the Unshipped import.">manual</span>' : '';
-    var tag = _cmShipped(c) ? '<span class="dmc-tag shipped" title="Ya salió del almacén, falta facturar. Cuenta como volumen movido, pero NO descuenta stock — el conteo físico ya está neto de estas cajas.">despachado · s/facturar</span>'
+    var tag = _cmShipped(c) ? '<span class="dmc-tag shipped" title="Already left the warehouse, invoice not issued yet. Counts as volume moved, but does NOT reduce stock — the physical count is already net of these cases.">shipped · not invoiced</span>'
             : c.stale ? '<span class="dmc-tag stale" title="Badly overdue and still open — likely a stray. Still counted; remove with × if it is dead.">stale · review</span>'
             : c.pending ? '<span class="dmc-tag pending" title="Fulfillment date has passed but no invoice yet — still counted in demand, just awaiting invoice.">pending invoice</span>'
             : '<span class="dmc-tag">from warehouse</span>';
@@ -24367,8 +24388,8 @@ function dmcRenderChips() {
     var accent = _cmShipped(c) ? ' csh' : (c.stale ? ' cst' : (c.pending ? ' cpe' : (c.source === 'manual' ? ' cmn' : '')));
     // Marcar es SIEMPRE mejor que borrar: borrar hace desaparecer el volumen del build-up.
     var shBtn = '<button class="dmc-sh" onclick="dmcToggleShipped(' + i + ')" title="'
-      + (_cmShipped(c) ? 'Volver a: todavía está en el almacén' : 'Ya salió del almacén y falta facturar. Deja de descontar stock, pero el volumen se sigue viendo.')
-      + '">' + (_cmShipped(c) ? 'sigue acá' : 'ya salió') + '</button>';
+      + (_cmShipped(c) ? 'Undo — it is still in the warehouse' : 'Already shipped, invoice pending. Stops reducing stock, but the volume stays visible.')
+      + '">' + (_cmShipped(c) ? 'undo' : 'mark shipped') + '</button>';
     html += '<div class="dmc-chip' + accent + '"><span><b>' + libEsc(c.customer) + '</b> · ' + when + ' · ' + c.cases + ' cs ' + manualBadge + tag + '</span>'
       + shBtn + '<button class="dmc-rm" onclick="dmcRemoveInv(' + i + ')" title="Remove">×</button></div>';
   });
@@ -24550,7 +24571,7 @@ function renderBuildupPanel(){
     if(booked > 0){
       var inv = tot - booked;
       return (inv > 0 ? inv.toLocaleString() : '0')
-           + '<span class="bkd" title="ya vendido, sin facturar todavía">+' + booked.toLocaleString() + '</span>';
+           + '<span class="bkd" title="Sold, not yet invoiced">+' + booked.toLocaleString() + '</span>';
     }
     return tot > 0 ? tot.toLocaleString() : '<span class="z">0</span>';
   };
@@ -24576,12 +24597,12 @@ function renderBuildupPanel(){
   var body = '';
   shown.forEach(function(c){
     var dsBtn = '<button onclick="dsToggle(\'' + String(c.c).replace(/'/g,"\\'") + '\',\'' + prod + '\')" '
-      + 'title="Marcar como direct-ship: su volumen deja de contar como demanda de inventario para ' + esc(prod) + '" '
+      + 'title="Mark as direct-ship: its volume stops counting as stock demand for ' + esc(prod) + '" '
       + 'style="margin-left:6px;border:1px solid var(--gray-200);background:var(--white);color:var(--gray-400);border-radius:5px;'
-      + 'font-family:var(--fm);font-size:9px;font-weight:700;padding:1px 5px;cursor:pointer">no entra a inventario</button>';
+      + 'font-family:var(--fm);font-size:9px;font-weight:700;padding:1px 5px;cursor:pointer">not stock demand</button>';
     body += '<tr><td class="c"><span class="nm">' + esc(c.c) + '</span><span class="bd ' + (c.sporadic ? 'od' : 'st') + '">' + (c.sporadic ? 'OD' : 'ST') + '</span>' + dsBtn + '<div class="mt">rr ' + Math.round(_rrOf(c)) + ' cs'
       + ((_qaF[c.c] != null && _qaF[c.c] < 1)
-          ? ('<span style="color:#b45309"> \u00b7 quiet, ' + (_qaF[c.c] === 0 ? 'fuera del plan' : Math.round(_qaF[c.c]*100) + '% en el plan') + '</span>')
+          ? ('<span style="color:#b45309"> \u00b7 quiet, ' + (_qaF[c.c] === 0 ? 'out of the plan' : Math.round(_qaF[c.c]*100) + '% in the plan') + '</span>')
           : '') + '</div></td>';
     histWeeks.forEach(function(wk, i){ body += histCell(wk, i, actualCases(c.c, wk), bookedCases(c.c, wk)); });
     // Cuando el pronóstico tapa a una orden ya puesta (run-rate > committed) el número visible no dice
@@ -24591,7 +24612,7 @@ function renderBuildupPanel(){
       var cv = cell(c, w.weekStartISO); colTot[i] += cv.v;
       var cmw = Math.round((com[w.weekStartISO] && com[w.weekStartISO][c.c]) || 0);
       body += '<td class="' + cv.k + '">' + (cv.v > 0 ? cv.v.toLocaleString() : '0')
-            + ((cmw > 0 && cv.k === 'r') ? '<span class="firm">' + cmw.toLocaleString() + ' en firme</span>' : '') + '</td>';
+            + ((cmw > 0 && cv.k === 'r') ? '<span class="firm">' + cmw.toLocaleString() + ' already sold</span>' : '') + '</td>';
     });
     body += '</tr>';
   });
@@ -24601,7 +24622,7 @@ function renderBuildupPanel(){
   var usesLine = isG ? 'The column total is what the Buy Planner uses.' : ('The column total is your weekly ' + esc(pl) + ' demand — buy to it.');
   var h = dmZoneLabel(5,'Forward build-up','next 7 weeks — run-rate + committed, per customer') + '<div class="card dbu">';
   h += '<div class="dbu-hd"><div class="dbu-t">Demand build-up by customer</div><div class="dbu-s">How the projected weekly demand is built — invoiced run-rate + allocated (committed) orders. ' + usesLine + '</div></div>';
-  h += '<div class="dbu-lg"><span><i class="sw a"></i>Allocated — real order placed</span><span><i class="sw r"></i>Run-rate — projected from history</span><span><b class="bd od">OD</b>order-driven <b class="bd st">ST</b>steady</span><span><b style="color:#b45309">sin facturar</b>&nbsp;vendido, todavía no facturado</span><span><i class="sw r"></i><b>N en firme</b>&nbsp;parte de esa semana ya vendida</span></div>';
+  h += '<div class="dbu-lg"><span><i class="sw a"></i>Allocated — real order placed</span><span><i class="sw r"></i>Run-rate — projected from history</span><span><b class="bd od">OD</b>order-driven <b class="bd st">ST</b>steady</span><span><b style="color:#b45309">not invoiced</b>&nbsp;sold, invoice not issued yet</span><span><b style="color:var(--gray-400)">N already sold</b>&nbsp;part of that week is already booked</span></div>';
   h += '<div class="dbu-wrap"><table class="dbu-tbl"><thead>';
   if(histWeeks.length){
     h += '<tr class="dbu-grp"><th class="c"></th>'
@@ -24625,8 +24646,8 @@ function renderBuildupPanel(){
     h += '<tr class="dbu-sub"><th class="c"></th>';
     histWeeks.forEach(function(wk, i){
       if(wk !== partialWk){ h += '<th class="hist' + (i === histWeeks.length - 1 ? ' hist-last' : '') + '"></th>'; return; }
-      h += '<th class="hist hist-part hp-a">facturado</th>'
-         + '<th class="hist hist-part hp-b">sin facturar</th>'
+      h += '<th class="hist hist-part hp-a">invoiced</th>'
+         + '<th class="hist hist-part hp-b">not invoiced</th>'
          + '<th class="hist hist-part hp-t' + (i === histWeeks.length - 1 ? ' hist-last' : '') + '">total</th>';
     });
     weeks.forEach(function(){ h += '<th></th>'; });
@@ -24677,7 +24698,7 @@ function renderBuildupPanel(){
     var _cap = _nDet
       ? '<button onclick="dmToggleOther(\'' + _oid + '\',this)" style="border:1px solid var(--gray-200);background:var(--white);'
         + 'color:var(--gray-500);border-radius:5px;font-family:var(--fm);font-size:9px;font-weight:700;padding:1px 5px;'
-        + 'margin-left:6px;cursor:pointer">▸ ver las ' + _nDet + '</button>'
+        + 'margin-left:6px;cursor:pointer">▸ show the ' + _nDet + '</button>'
       : '';
     h += '<tr class="oth oth-sum"><td class="c"><span class="nm">Other small accounts</span>' + _cap
        + '<div class="mt">under 1 cs/wk or lapsed</div></td>';
@@ -24689,15 +24710,15 @@ function renderBuildupPanel(){
     extras.forEach(function(cust){
       h += '<tr class="oth oth-det ' + _oid + '" style="display:none"><td class="c" style="padding-left:22px">'
          + '<span class="nm" style="font-weight:500;color:var(--gray-500)">' + esc(cust) + '</span>'
-         + '<div class="mt">' + (_mdlRr[cust] != null ? ('rr ' + (Math.round(_mdlRr[cust]*10)/10) + ' cs') : 'sin run-rate — dejó de comprar') + '</div></td>';
+         + '<div class="mt">' + (_mdlRr[cust] != null ? ('rr ' + (Math.round(_mdlRr[cust]*10)/10) + ' cs') : 'no run-rate — stopped buying') + '</div></td>';
       histWeeks.forEach(function(wk, i){ h += histCell(wk, i, actualCases(cust, wk), bookedCases(cust, wk)); });
       weeks.forEach(function(){ h += '<td class="r"><span class="z">0</span></td>'; });
       h += '</tr>';
     });
     if(histResid.some(function(x){ return x >= 1; })){
       h += '<tr class="oth oth-det ' + _oid + '" style="display:none"><td class="c" style="padding-left:22px">'
-         + '<span class="nm" style="font-weight:500;color:var(--gray-500)">Sin cuenta asignada</span>'
-         + '<div class="mt">órdenes booked de la semana nowcasteada</div></td>';
+         + '<span class="nm" style="font-weight:500;color:var(--gray-500)">Unattributed</span>'
+         + '<div class="mt">booked orders with no customer breakdown</div></td>';
       histWeeks.forEach(function(wk, i){ h += histCell(wk, i, (histResid[i] || 0), (histResid[i] || 0)); });
       weeks.forEach(function(){ h += '<td class="r"><span class="z">0</span></td>'; });
       h += '</tr>';
@@ -24722,13 +24743,13 @@ function renderBuildupPanel(){
     h += dsList.map(function(c){
       return '<span style="display:inline-flex;align-items:center;gap:6px;margin:0 8px 6px 0;padding:3px 8px;border-radius:6px;'
         + 'background:#ede9fe;border:1px solid #c4b5fd;font-size:11px;color:#5b21b6">'
-        + '<b>' + esc(c.c) + '</b> <span style="font-family:var(--fm);color:#7c3aed">' + Math.round(c.rrCases||0) + ' cs/sem</span>'
+        + '<b>' + esc(c.c) + '</b> <span style="font-family:var(--fm);color:#7c3aed">' + Math.round(c.rrCases||0) + ' cs/wk</span>'
         + '<button onclick="dsToggle(\'' + String(c.c).replace(/'/g,"\\'") + '\',\'' + prod + '\')" '
-        + 'title="Volver a contarlo como demanda de inventario" '
+        + 'title="Count it as stock demand again" '
         + 'style="border:none;background:none;color:#7c3aed;cursor:pointer;font-size:13px;line-height:1;padding:0 2px">&times;</button></span>';
     }).join('');
   } else {
-    h += '<span style="font-size:11px;color:var(--gray-400)">Ninguna. Usá el botón <i>no entra a inventario</i> en la fila de un cliente para marcarlo.</span>';
+    h += '<span style="font-size:11px;color:var(--gray-400)">None. Use the <i>not stock demand</i> button on a customer row to mark one.</span>';
   }
   h += '</div>';
   h += '</div>';
