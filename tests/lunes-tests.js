@@ -54,6 +54,21 @@ function withLots(snippet, lots, extra){
 }
 function run(code){ _capture(true); try { eval(code); } finally { _capture(false); } return _logs.join('\n'); }
 
+// Los snippets se direccionan por CONTENIDO, no por posición. Con índices fijos, agregar un
+// bloque nuevo al runbook rompía tests que no tenían nada que ver (pasó el 2026-09-03 al sumar
+// el chequeo de órdenes committed vencidas). Cada marcador tiene que matchear UN solo bloque.
+var _ALL = []; for (var _si = 1; _si <= SNIPPET_COUNT; _si++) _ALL.push(eval('SNIPPET_' + _si));
+function snipBy(re, what){
+  var m = _ALL.filter(function(s){ return re.test(s); });
+  if (m.length !== 1) throw new Error('snipBy: ' + what + ' matcheó ' + m.length + ' bloque(s), esperaba 1');
+  return m[0];
+}
+var S_GINGER   = snipBy(/bpInvSave/,          'snippet A · ginger-Perú por PO');
+var S_PROD     = snipBy(/prodInvSave/,        'snippet B · product-aware');
+var S_3B       = snipBy(/availCases/,         'paso 3b · doble descuento');
+var S_CONSOLE  = snipBy(/invariants-console/, 'paso 4b · chequeo de consola');
+var S_VENCIDAS = snipBy(/vencida/,            'paso 2 · committed vencido sin facturar');
+
 // ════ Snippet B — los cuatro productos del store product-aware ══════════════
 group('Snippet B — inventario por producto');
 
@@ -63,7 +78,7 @@ var NUEVO = [
   { lot:'2260876', origin:'Fiji', supplier:'Sbimal', cases:7,   avgCost:83, received:'2026-04-28' },  // venía excluido
   { lot:'2620621', origin:'Fiji', supplier:'Sbimal', cases:60,  avgCost:74, received:'2026-08-28' }   // nuevo
 ];
-var out = run(withLots(SNIPPET_2, NUEVO));
+var out = run(withLots(S_PROD, NUEVO));
 var lots = _prodInv.turmeric.lots;
 var byLot = {}; lots.forEach(function(l){ byLot[l.lot] = l; });
 
@@ -84,7 +99,7 @@ ok('NO toca los otros productos', _prodInv.garlic.lots.length === 1 && _prodInv.
 
 // Un producto que todavía no existe en el store no debe romper.
 reset();
-run(withLots(SNIPPET_2.replace("var PROD = 'turmeric'", "var PROD = 'shallots'"),
+run(withLots(S_PROD.replace("var PROD = 'turmeric'", "var PROD = 'shallots'"),
              [{ lot:'S1', origin:'California', supplier:'Peri and Sons', cases:30, avgCost:64, received:'2026-08-25' }]));
 ok('crea el producto si no existía', _prodInv.shallots && _prodInv.shallots.lots.length === 1);
 check('con los valores por defecto', _prodInv.shallots.serviceLevel, 95);
@@ -93,7 +108,7 @@ check('con los valores por defecto', _prodInv.shallots.serviceLevel, 95);
 group('Snippet A — ginger-Perú por PO');
 
 reset();
-var out2 = run(withLots(SNIPPET_1, [
+var out2 = run(withLots(S_GINGER, [
   { po:'2410367', cases:404 },
   { po:'2432242', cases:476 },
   { po:'9999999', cases:100 }        // no está en Orders
@@ -135,12 +150,12 @@ ok('las dos convenciones son opuestas — no se puede cargar igual en ambos',
 
 // ════ El runbook no perdió ningún snippet ═══════════════════════════════════
 group('Integridad del runbook');
-check('sigue teniendo los 4 bloques de código', SNIPPET_COUNT, 4);
-ok('el snippet A es el de ginger-Perú (por PO)', /bpInvSave/.test(SNIPPET_1) && /jlzPo/.test(SNIPPET_1));
-ok('el snippet B es el product-aware', /prodInvSave/.test(SNIPPET_2) && /excluded/.test(SNIPPET_2));
-ok('el snippet B hace REEMPLAZO total, no merge', /\.lots = LOTS/.test(SNIPPET_2));
-ok('el paso 3b muestra on-hand, committed y available', /onHandCases/.test(SNIPPET_3) && /committedCases/.test(SNIPPET_3) && /availCases/.test(SNIPPET_3));
-ok('el paso 3b también cubre ginger-Perú, que vive en el otro store', /bpInvState/.test(SNIPPET_3) && /committedInvForWeek/.test(SNIPPET_3));
+check('sigue teniendo los 5 bloques de código', SNIPPET_COUNT, 5);
+ok('el snippet A es el de ginger-Perú (por PO)', /bpInvSave/.test(S_GINGER) && /jlzPo/.test(S_GINGER));
+ok('el snippet B es el product-aware', /prodInvSave/.test(S_PROD) && /excluded/.test(S_PROD));
+ok('el snippet B hace REEMPLAZO total, no merge', /\.lots = LOTS/.test(S_PROD));
+ok('el paso 3b muestra on-hand, committed y available', /onHandCases/.test(S_3B) && /committedCases/.test(S_3B) && /availCases/.test(S_3B));
+ok('el paso 3b también cubre ginger-Perú, que vive en el otro store', /bpInvState/.test(S_3B) && /committedInvForWeek/.test(S_3B));
 // Cada store tiene que quedar asociado a SU convención: buscar las palabras sueltas no sirve,
 // las dos aparecen en el documento. Se mira la fila de la tabla de cada uno.
 var _row = function(store){                 // la fila de tabla que describe qué se carga en ese store
@@ -157,6 +172,21 @@ ok('el runbook asocia ginger-Perú con cargar LIBRES y sumar el committed',
    /LIBRES/.test(_gRow) && /suma/.test(_gRow));
 ok('el runbook asocia el store product-aware con cargar BRUTAS y restar',
    /BRUTAS/.test(_pRow) && /resta/.test(_pRow));
-ok('el chequeo de consola lleva el cache-buster', /\?v='\s*\+\s*Date\.now\(\)/.test(SNIPPET_4));
+ok('el chequeo de consola lleva el cache-buster', /\?v='\s*\+\s*Date\.now\(\)/.test(S_CONSOLE));
+
+// El chequeo que faltaba el 2026-09-03: una orden committed cuya mercadería YA salió del almacén
+// pero sigue sin facturar se descuenta dos veces y hunde el stock libre (Sol-ti, 1.000 cs).
+ok('el paso 2 filtra el committed por entrega ya vencida',
+   /c\.date\s*<=\s*hoy/.test(S_VENCIDAS) && /type\s*===\s*'inv'/.test(S_VENCIDAS));
+ok('mide cada orden vencida contra el stock, para ver si mueve el plan',
+   /bpInvState/.test(S_VENCIDAS) && /% del stock/.test(S_VENCIDAS));
+ok('nombra la orden y el cliente, no solo el total',
+   /customer/.test(S_VENCIDAS) && /orderNo/.test(S_VENCIDAS));
+ok('separa la que frena el paso de las chicas, para que no se entierre',
+   /FRENA EL PASO/.test(S_VENCIDAS) && /0\.10/.test(S_VENCIDAS) && /chicas/.test(S_VENCIDAS));
+ok('el runbook dice que una orden abierta no prueba que el producto esté',
+   /no prueba que el producto esté en el almacén/.test(RUNBOOK_TEXT));
+ok('el runbook manda confirmar contra el Committed del Sales Desk',
+   /Sales Desk trae su propia columna/.test(RUNBOOK_TEXT));
 
 summary();

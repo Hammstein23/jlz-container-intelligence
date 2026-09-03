@@ -52,6 +52,54 @@ Cubre los 4 productos, pero **ginger solo importa `OG-GIN-30Lbs-PR`** (Perú, ca
 es una regla legacy deliberada de la que depende el plan de compra de ginger. **El committed de
 ginger-Hawaii NO entra por acá** — si hace falta, se carga a mano.
 
+### Las órdenes vencidas y sin facturar NO se dan por buenas — confirmá cada una
+
+El import reporta al final `N pending invoice`. Son órdenes cuya **fecha de entrega ya pasó y
+siguen sin facturar**, y son exactamente el caso peligroso: **la mercadería ya salió del almacén
+pero WholesaleWare no lo registró**. La orden se queda en *Picking*, sigue apareciendo en el
+Unshipped Report, y el app la cuenta como committed contra un stock que **ya no la tiene**. El
+mismo producto se descuenta dos veces y el stock libre queda hundido.
+
+> **Pasó el 2026-09-03 con Sol-ti** (orden 2618081, **1.000 cajas** — el 46% del stock físico):
+> el plan mostró **1.324 cajas libres cuando había 2.184**, y la cobertura 1,7 semanas en vez de
+> 2,4. La orden estaba abierta en WholesaleWare, pero la mercadería ya se había ido.
+
+**Que la orden esté abierta en WholesaleWare no prueba que el producto esté en el almacén.** Son
+dos cosas distintas y hay que verificar la segunda:
+
+```javascript
+// Órdenes committed con la entrega ya vencida — candidatas a "ya salió, falta facturar".
+(function(){
+  var hoy = dmISOLocal ? dmISOLocal(new Date()) : new Date().toISOString().slice(0,10);
+  var wk  = dmWeekKey(new Date());
+  var rows = bpInvState().rows || {};
+  var stock = Object.keys(rows).reduce(function(s,k){ return s+(+((rows[k]||{}).cases)||0); }, 0);
+  var v = getCommitted().filter(function(c){
+      return c.type==='inv' && c.wk>=wk && c.date && c.date<=hoy; })
+    .sort(function(a,b){ return b.cases-a.cases; });
+  if(!v.length){ console.log('%c OK · ninguna orden committed vencida ','background:#0d5026;color:#fff'); return; }
+  var pesa = function(c){ return stock>0 && c.cases/stock >= 0.10; };
+  v.filter(pesa).forEach(function(c){
+    console.warn('FRENA EL PASO · '+(c.customer||'?')+' · '+c.cases+' cs ('+
+                 Math.round(c.cases/stock*100)+'% del stock) · '+(c.product||'ginger')+
+                 ' · entrega '+c.date+' vencida · orden '+(c.orderNo||'?'));
+  });
+  var chicas = v.filter(function(c){ return !pesa(c); });
+  if(chicas.length) console.log('  y '+chicas.length+' vencidas chicas (<10% del stock): '+
+    chicas.map(function(c){ return (c.customer||'?')+' '+c.cases+'cs'; }).join(', '));
+})();
+```
+
+Por cada una, preguntale a Juan: **¿esa mercadería ya salió del almacén?**
+
+- **Si ya salió** → no es committed. Sacala del store antes de cargar el inventario, o el stock
+  libre queda corto por esa cantidad. El arreglo de fondo es de **WholesaleWare** (facturarla o
+  marcarla despachada); mientras no se haga, **el lunes siguiente vuelve a entrar**.
+- **Si sigue en cámara** → es committed legítimo, se cuenta normal.
+
+Cualquiera que pese más del ~10% del stock **frena el paso**: no cargues el inventario hasta
+resolverla, porque mueve el plan de compra entero.
+
 ## Paso 3 — Inventario físico de los 4 productos
 
 Fuente: **WholesaleWare → Sales Desk**, con la data hasta ayer (domingo).
@@ -167,6 +215,12 @@ Sales Desk** — en los dos stores, aunque lleguen ahí por caminos opuestos.
   gross" = eso + el committed de la semana. Si el gross te da **más** que las cajas físicas del
   Sales Desk, cargaste el bruto en vez del libre.
 
+**Y antes de creerle al número: el committed del app tiene que parecerse al que reserva
+WholesaleWare.** El Sales Desk trae su propia columna `Committed`. Si la del app es **mucho más
+alta**, hay órdenes que el app cuenta como reservadas y WholesaleWare no — señal de que esa
+mercadería ya no está. El 2026-09-03: app **1.150**, Sales Desk **349**; la diferencia era Sol-ti.
+Confirmalas con el chequeo del Paso 2 antes de seguir.
+
 ```javascript
 // ginger-Perú (store propio): lo cargado = LIBRE; la app le suma el committed de la semana.
 (function(){
@@ -236,6 +290,7 @@ Tabla corta: run-rate y cobertura por producto, y qué comprar según el Buy Pla
 | Sheet sync *"unauthorized / timed out"* | Arranque en frío de Apps Script, **no** el token. Típico en el primer pull del día. Reintentá una vez. |
 | Cambios que no aparecen tras desplegar | Caché. **Cmd+Shift+R**. Ya se perdió una sesión entera de debugging por esto. |
 | PO sin fecha de llegada | Purchase Orders: el filtro por defecto es "Scheduled Delivery Date = Today" y deja la lista vacía. Elegí **Custom Date Range** y **tipeá** la fecha (setearla por JS no funciona, React la revierte). |
+| El stock libre da mucho menos que las cajas del Sales Desk | Una orden committed cuya mercadería **ya salió** pero sigue sin facturar (típico: se quedó en *Picking*). Se descuenta dos veces. Corré el chequeo de vencidas del Paso 2 y confirmá cada una. |
 | Un lote excluido volvió a contar | El reemplazo total pisó su marca. El snippet B ya lo previene; si pasó, re-marcalo con `invmProdToggleLotExcl`. |
 
 **Nunca:** pedirle a Juan que pegue el token de la API en el chat · borrar un lote "excluded" de la
