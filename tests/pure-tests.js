@@ -550,4 +550,17 @@ ok('y el precio de esa semana',  /\$2\.06\/lb/.test(_svg));
 ok('marca la semana en curso',   /week in progress/.test(_svg));
 ok('una semana sin precio no inventa uno', /no price/.test(_svg));
 
+// ════ Trend & Price · una sola ventana ══════════════════════════════════════
+// El selector propio de la zona (4/13/26/52) mezclaba la VENTANA (que promedia y alimenta el plan)
+// con el SPAN del gráfico (cuánta historia se dibuja). Hacer zoom para mirar estacionalidad cambiaba
+// cuántos contenedores comprar.
+group('dmComboSVG · sombrea la ventana activa dentro del span fijo');
+cxWeekNo=function(){ return 1; };
+var _w=[]; for(var _i=0;_i<26;_i++) _w.push({week:'2026-0'+((_i%9)+1)+'-01', cases:100+_i, px:2, gs:200, lbs:100});
+var _sv=dmComboSVG(_w, {winFrom:20, winTo:26});
+ok('dibuja el sombreado de la ventana', /fill-opacity="0\.05"/.test(_sv));
+check('y una columna de hover por cada una de las 26 semanas', (_sv.match(/<title>/g)||[]).length, 26);
+var _sv2=dmComboSVG(_w, null);
+ok('sin ventana indicada no sombrea nada', !/fill-opacity="0\.05"/.test(_sv2));
+
 summary();

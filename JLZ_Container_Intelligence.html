@@ -23896,7 +23896,6 @@ function dmEmptyStateHTML(){
 //  the move. Built from _dmRawAll so all products are available regardless of
 //  which one is currently focused.
 // ============================================================================
-let _dmWin = 13;                         // comparison/chart window for Trend & Price
 const DM_ACCENT = { ginger:'var(--jlz)', turmeric:'#b45309', garlic:'#7c3aed', shallots:'#0e7490' };
 // Sellable weeks in cold storage before material quality decay (placeholder — refined with real data).
 const PRODUCT_SHELF_LIFE = { ginger:8, turmeric:5, garlic:16, shallots:16 };
@@ -24047,6 +24046,11 @@ function dmComboSVG(show, opts){
   const cx=i=>L+pw*(i+0.5)/Math.max(1,m);
   const yC=v=>T+ph-(v/maxC)*ph, yP=v=>T+ph-(hi===lo?0.5:(v-lo)/(hi-lo))*ph;
   let s='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;display:block">';
+  // Sombreado de la ventana activa: el gráfico muestra 26 semanas, pero solo estas promedian.
+  if(opts && opts.winTo>opts.winFrom){
+    const xa=cx(opts.winFrom)-bw/2-2, xb=cx(opts.winTo-1)+bw/2+2;
+    s+='<rect x="'+Math.max(L,xa).toFixed(1)+'" y="'+T+'" width="'+Math.max(0,Math.min(L+pw,xb)-Math.max(L,xa)).toFixed(1)+'" height="'+ph+'" fill="var(--jlz)" fill-opacity="0.05"/>';
+  }
   s+='<defs><pattern id="dmHatch" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="4" height="4" fill="var(--jlz-light)"/><line x1="0" y1="0" x2="0" y2="4" stroke="var(--jlz)" stroke-width="1" stroke-opacity="0.45"/></pattern>'
     +'<pattern id="dmStripe" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="4" stroke="var(--jlz)" stroke-width="1.2" stroke-opacity="0.5"/></pattern></defs>';
   for(let g=0;g<=4;g++){ const v=maxC*g/4,y=yC(v);
@@ -24103,10 +24107,14 @@ function dmComboSVG(show, opts){
 function dmZoneLabel(n,title,hint){
   return '<div class="dm-zl"><span class="n">'+n+'</span><span class="t">'+title+'</span>'+(hint?'<span class="h">'+hint+'</span>':'')+'</div>';
 }
+// El selector propio de esta zona (4/13/26/52) desapareció: mezclaba DOS cosas. La ventana es el
+// período que promedia y que alimenta el plan de compra; el span del gráfico es cuánta historia se
+// dibuja, que no alimenta nada. Fundidos en un control, hacer zoom para mirar estacionalidad te
+// cambiaba cuántos contenedores comprar. Ahora la ventana es una sola —la del producto, que se
+// elige en la zona 2— y el gráfico son 26 semanas fijas con esa ventana sombreada adentro.
 function dmTrendPriceShell(){
-  const ws=[4,13,26,52].map(w=>'<button data-w="'+w+'" class="'+(w===_dmWin?'on':'')+'">'+w+'w</button>').join('');
   return '<div class="dm-card">'
-    + '<div class="dm-ch"><span class="dm-accent" id="dm-combo-accent"></span><span class="ttl" id="dm-combo-title">\u2014</span><div class="dm-winsel" id="dm-winsel">'+ws+'</div></div>'
+    + '<div class="dm-ch"><span class="dm-accent" id="dm-combo-accent"></span><span class="ttl" id="dm-combo-title">\u2014</span><span class="dm-span" id="dm-span"></span></div>'
     + '<div class="dm-cb">'
       + '<div class="dm-readout" id="dm-readout"></div>'
       + '<div id="dm-chart" style="width:100%;overflow:hidden"></div>'
@@ -24141,7 +24149,10 @@ function dmRenderTrendPrice(){
   const fp=(typeof productFocus==='function')?productFocus():'ginger';
   const meta=dmProductMeta(fp), cl=meta.caseLb, dmax=dmGlobalDataMax();
   const series=dmProductSeries(dmFocusRows(), cl, dmax);
-  const cmp=dmSeriesCompare(series, _dmWin);
+  // La ventana del producto, la misma que usan las tarjetas, el run-rate y el plan. Antes era _dmWin
+  // (13 fijo) y por eso ginger mostraba 780 acá y 884 arriba: dos números para lo mismo.
+  const win=(typeof dmWindow==='function')?dmWindow(fp, (_dmOrigin&&_dmOrigin!=='All')?_dmOrigin:''):13;
+  const cmp=dmSeriesCompare(series, win);
   var _dsInTP=0; try{ if(typeof invmDirectShipCases==='function') _dsInTP=invmDirectShipCases(fp, (_dmOrigin&&_dmOrigin!=='All')?_dmOrigin:'all')||0; }catch(e){}
   titleEl.textContent = meta.label + ' \u2014 weekly cases vs price' + (_dmOrigin!=='All' ? ' \u00b7 '+_dmOrigin : '');
   const ac=document.getElementById('dm-combo-accent'); if(ac) ac.style.background=meta.accent;
@@ -24151,10 +24162,13 @@ function dmRenderTrendPrice(){
      // ventas, direct-ship incluido. Pero eso la hace distinta del run-rate de las zonas 1 y 2, que es
      // solo stock — turmeric muestra 254 acá y 88 arriba. Se dice en la propia fila en vez de dejar dos
      // números sin explicar en la misma pantalla.
-     '<div class="dm-ro"><div class="rl">Cases / wk <span style="font-weight:400;color:var(--gray-400)">· all sales</span></div><div class="rv">'+dmFmt0(cmp.casesNow)+' '+dmDeltaTag(cmp.dCases)+'</div><div class="rcmp">prior '+dmFmt0(cmp.casesPrior)+' \u00b7 '+_dmWin+'w vs '+_dmWin+'w'+(_dsInTP>=1?(' \u00b7 incl. '+dmFmt0(_dsInTP)+' direct-ship'):'')+'</div></div>'
+     '<div class="dm-ro"><div class="rl">Cases / wk <span style="font-weight:400;color:var(--gray-400)">· all sales</span></div><div class="rv">'+dmFmt0(cmp.casesNow)+' '+dmDeltaTag(cmp.dCases)+'</div><div class="rcmp">prior '+dmFmt0(cmp.casesPrior)+' \u00b7 '+win+'w vs '+win+'w'+(_dsInTP>=1?(' \u00b7 incl. '+dmFmt0(_dsInTP)+' direct-ship'):'')+'</div></div>'
     +'<div class="dm-ro"><div class="rl">$/lb sell price</div><div class="rv">'+dmMoney2(cmp.pxNow)+' '+dmDeltaTag(cmp.dPx)+'</div><div class="rcmp">prior '+dmMoney2(cmp.pxPrior)+' \u00b7 vol-weighted</div></div>'
     +'<div class="dm-ro"><div class="rl">Implied $ / wk</div><div class="rv">$'+dmFmt0(cmp.casesNow*cl*cmp.pxNow)+'</div><div class="rcmp">cases \u00d7 '+cl+'lb \u00d7 $/lb</div></div>';
-  const comp=series.filter(s=>!s.inc), lastComp=comp.slice(-_dmWin), tail=series.filter(s=>s.inc), show=lastComp.concat(tail);
+  const DM_SPAN=26;                                   // span del gráfico: FIJO, para no confundirlo con la ventana
+  const comp=series.filter(s=>!s.inc), lastComp=comp.slice(-DM_SPAN), tail=series.filter(s=>s.inc), show=lastComp.concat(tail);
+  const spanEl=document.getElementById('dm-span');
+  if(spanEl) spanEl.textContent='last '+DM_SPAN+' weeks (fixed) \u00b7 shaded = the '+win+'-wk window driving the numbers';
   // B1: append forward committed (+ ginger direct-ship) weeks — now per product, from each product's committed.
   let combined=show, dmOpts=null;
   if(show.length && typeof dmForwardWeeks==='function'){
@@ -24165,17 +24179,18 @@ function dmRenderTrendPrice(){
       // run-rate reference line: ginger uses its plan run-rate; other products use the focused model's.
       let _rrLbs=(_fp==='ginger' && typeof dmEffectiveRunRateLbs==='function') ? dmEffectiveRunRateLbs()
                : ((typeof _dmModel!=='undefined' && _dmModel && _dmModel.runRate13>0) ? _dmModel.runRate13 : null);
-      dmOpts={firstFutureIdx:show.length, rrCases:(_rrLbs>0?_rrLbs/cl:0)};
+      dmOpts={firstFutureIdx:show.length, rrCases:(_rrLbs>0?_rrLbs/cl:0), winFrom:Math.max(0, lastComp.length-win), winTo:lastComp.length};
     }
   }
   const ch=document.getElementById('dm-chart');
+  if(!dmOpts) dmOpts={winFrom:Math.max(0, lastComp.length-win), winTo:lastComp.length};
   if(ch) ch.innerHTML = combined.length ? dmComboSVG(combined, dmOpts)
     : '<div style="padding:24px;text-align:center;color:var(--gray-400);font-size:12px">No '+meta.label.toLowerCase()+' sales'+(_dmOrigin!=='All'?' from '+_dmOrigin:'')+' in the loaded data.</div>';
   const nh=document.getElementById('dm-note');
   const e=dmElasticity(cmp.dCases, cmp.dPx);
   if(nh) nh.innerHTML = show.length ? '<div class="dm-note '+e.cls+'"><span class="ic">'+e.ic+'</span><div><span class="lead">'+e.lead+'</span>'+e.body+'</div></div>' : '';
   const fh=document.getElementById('dm-foot');
-  if(fh) fh.textContent = show.length ? ('Weekly cases (1 case = '+cl+' lb) \u00b7 price = gross sales \u00f7 lb \u00b7 hatched = incomplete current week \u00b7 prior period = the '+_dmWin+' complete weeks before the current window.') : '';
+  if(fh) fh.textContent = show.length ? ('Weekly cases (1 case = '+cl+' lb) \u00b7 price = gross sales \u00f7 lb \u00b7 hatched = incomplete current week \u00b7 prior period = the '+win+' complete weeks before it.') : '';
 }
 // ── Zona 1 · una tarjeta por producto + ORIGEN ────────────────────────────────────────────────────
 // La unidad que Juan maneja no es "ginger": es ginger-Perú (contenedores de mar, 1.300 cs, 37 días)
@@ -24331,7 +24346,7 @@ function dmZoneStyles(){ return '<style>'
 + '.dm-ch{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--gray-100)}'
 + '.dm-ch .ttl{font-size:13px;font-weight:700}'
 + '.dm-accent{width:9px;height:9px;border-radius:2px;background:var(--jlz);flex:none}'
-+ '.dm-winsel{margin-left:auto;display:inline-flex;background:var(--gray-100);border-radius:6px;padding:2px;gap:2px}'
++ '.dm-span{margin-left:auto;font-family:var(--fm);font-size:10px;color:var(--gray-400);letter-spacing:.02em;text-align:right}'
 + '.dm-winsel button{border:none;background:none;font:inherit;font-size:11px;font-weight:600;color:var(--gray-500);padding:3px 9px;border-radius:4px;cursor:pointer;font-family:var(--fm)}'
 + '.dm-winsel button.on{background:var(--white);color:var(--jlz);box-shadow:var(--shadow-sm)}'
 + '.dm-cb{padding:15px 16px}'
@@ -24391,8 +24406,6 @@ function renderDemand(){
   dmRenderPulse();
   dmRenderTrendPrice();
   try { if (typeof renderDmRunRate === 'function') renderDmRunRate(); } catch(e){ console.warn('dm-runrate:', e); }
-  const dmws = host.querySelector('#dm-winsel');
-  if (dmws) dmws.addEventListener('click', e=>{ const b=e.target.closest('button'); if(!b) return; _dmWin=+b.dataset.w; dmws.querySelectorAll('button').forEach(x=>x.classList.toggle('on', x===b)); dmRenderTrendPrice(); });
   if (typeof renderCommittedPanel === 'function') renderCommittedPanel(m);
   if (typeof renderBuildupPanel === 'function') renderBuildupPanel();
   if (typeof renderDemandAccuracy === 'function') renderDemandAccuracy();
