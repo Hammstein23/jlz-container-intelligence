@@ -1,4 +1,9 @@
 // Invariants of the demand model, checked against the REAL functions lifted out of
+
+// Secciones de más abajo reemplazan `hybridSalesForWeek` por stubs; guardamos la REAL acá arriba
+// (el archivo se concatena después de app.js) para poder probarla de verdad más adelante.
+var HYBRID_REAL = hybridSalesForWeek;
+
 // JLZ_Container_Intelligence.html. Each group locks in a bug that was found and fixed
 // on 2026-09-01, so a regression fails here instead of quietly changing a buy plan.
 
@@ -312,5 +317,61 @@ var mono = true, prevC = -1;
   prevC = c;
 });
 ok('la cobertura crece de forma monótona con el stock', mono);
+
+// ════ El origen elegido manda ═══════════════════════════════════════════════
+// Juan abrió Ginger → Hawaii y el build-up listaba los clientes de PERÚ: para ginger el modelo
+// era siempre `_dmModelG` (todos los orígenes, el de producción del Buy Planner), ignorando el
+// selector. La auditoría por producto no lo agarraba porque el par producto+ORIGEN nunca se probaba.
+group('Build-up · respeta el origen elegido');
+
+productFocus = function(){ return 'ginger'; };
+dmWindow = function(){ return 13; };
+isDirectShipRow = function(){ return false; };
+dmEffectiveRunRateLbs = function(){ return 892 * 30; };
+PRODUCTS = { ginger: { shrinkPct: 14 } };
+var _mk = function(custs, wkCust, rr){ return { caseLb:30, runRate13:rr*30, runRate6:rr*30, runRate3:rr*30,
+  rateWeeks:['2026-07-20','2026-07-27','2026-08-03','2026-08-10','2026-08-17','2026-08-24'],
+  partialWeek:{week:'2026-08-31'}, nowcastWeeks:{}, wkCust:wkCust, customers:custs }; };
+_dmModelG = _mk([{c:"Whole Foods Market",rrCases:371,rr6Cases:371,rr3Cases:371,sporadic:false},
+                 {c:"Sol-ti",rrCases:233,rr6Cases:233,rr3Cases:233,sporadic:true}],
+                {'2026-08-24':{"Whole Foods Market":371*30}}, 892);
+_dmModel  = _mk([{c:"Kailani Farms",rrCases:8,rr6Cases:8,rr3Cases:8,sporadic:false}],
+                {'2026-08-24':{"Kailani Farms":8*30}}, 8);
+COMMITTED = [];
+var _names = function(){ var o=[],re=/class="nm"[^>]*>([^<]+)</g,m;
+  while((m=re.exec(_out))) if(m[1]!=='Other small accounts' && m[1]!=='Unattributed') o.push(m[1]);
+  return o; };
+
+_dmOrigin = 'Hawaii'; renderBuildupPanel();
+var _haw = _names();
+check('con Hawaii elegido se lista 1 cliente', _haw.length, 1);
+check('y es el de Hawaii', _haw[0], 'Kailani Farms');
+ok('NO se cuelan los clientes de Peru', _haw.indexOf('Whole Foods Market') < 0 && _haw.indexOf('Sol-ti') < 0);
+ok('y el pie no promete el número del Buy Planner (ese es el modelo global)',
+   !/what the Buy Planner uses/.test(_out));
+
+_dmOrigin = ''; renderBuildupPanel();
+var _all = _names();
+ok('sin origen elegido vuelve al modelo de producción', _all.indexOf('Whole Foods Market') >= 0);
+ok('y ahí sí es el número del Buy Planner', /what the Buy Planner uses/.test(_out));
+
+// ════ Direct-ship nunca es demanda de stock ═════════════════════════════════
+// Whole Foods despacha garlic de puerto al cliente. El caller lo saca de la base pero
+// hybridSalesForWeek le volvía a sumar el committed → +82 cajas fantasma en "Other small accounts"
+// y un "Buy 111" de producto que no pasa por cámara.
+group('hybridSalesForWeek · direct-ship fuera de la demanda de stock');
+hybridSalesForWeek = HYBRID_REAL;   // volver a la función real: arriba quedó stubbeada
+var _mdl = { customers:[{c:'Whole Foods Market', rrCases:58, rr6Cases:37, rr3Cases:74, sporadic:true},
+                        {c:"Albert's Organics", rrCases:31, rr6Cases:20, rr3Cases:18, sporadic:false}] };
+COMMITTED = [{prod:'garlic', wk:'2026-09-07', customer:'Whole Foods Market', cases:140, type:'inv', origin:'California'}];
+_cmProd = function(c){ return c.prod; };
+dmWindow = function(){ return 6; };
+
+isDirectShipRow = function(r){ return r && r.c === 'Whole Foods Market'; };
+check('direct-ship: su committed NO infla el plan', Math.round(hybridSalesForWeek('2026-09-07', 23, _mdl, 'garlic')), 23);
+isDirectShipRow = function(){ return false; };
+check('sin direct-ship, la misma orden sí entra', Math.round(hybridSalesForWeek('2026-09-07', 23, _mdl, 'garlic')), 23 + (140 - 37));
+ok('y usa la ventana activa (rr6=37), no rrCases de 13 semanas (58)',
+   Math.round(hybridSalesForWeek('2026-09-07', 23, _mdl, 'garlic')) !== 23 + (140 - 58));
 
 summary();

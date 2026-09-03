@@ -24377,8 +24377,13 @@ function dmcRenderChips() {
   var box = document.getElementById('dmc-chips'); if(!box) return;
   var prod = (typeof productFocus === 'function') ? productFocus() : 'ginger';
   var html = '';
+  // El origen elegido manda también acá: sin esto, la solapa Hawaii lista las órdenes de Perú (todas las
+  // importadas son OG-GIN-30Lbs-PR). Mismo criterio que el build-up: una entrada SIN origen (cargada a
+  // mano) se muestra siempre; solo se descarta la que declara OTRO origen.
+  var _chipOrigin = (typeof _dmOrigin !== 'undefined' && _dmOrigin && _dmOrigin !== 'All' && _dmOrigin !== 'all') ? _dmOrigin : '';
   getCommitted().forEach(function(c, i) {
     if(_cmProd(c) !== prod) return;                 // this product only; i stays the true array index for removal
+    if(_chipOrigin && typeof _cmOriginFor === 'function'){ var _co = _cmOriginFor(c); if(_co && _co !== _chipOrigin) return; }
     var manualBadge = (c.source === 'manual') ? '<span class="dmc-tag manual" title="Entered by hand — not from the Unshipped import.">manual</span>' : '';
     var tag = _cmShipped(c) ? '<span class="dmc-tag shipped" title="Already left the warehouse, invoice not issued yet. Counts as volume moved, but does NOT reduce stock — the physical count is already net of these cases.">shipped · not invoiced</span>'
             : c.stale ? '<span class="dmc-tag stale" title="Badly overdue and still open — likely a stray. Still counted; remove with × if it is dead.">stale · review</span>'
@@ -24433,8 +24438,15 @@ function renderBuildupPanel(){
   var host = document.getElementById('dm-buildup'); if(!host) return;
   var prod = (typeof productFocus === 'function') ? productFocus() : 'ginger';
   var isG = (prod === 'ginger');
-  var m = isG ? ((typeof _dmModelG !== 'undefined' && _dmModelG) ? _dmModelG : null)
-             : ((typeof _dmModel !== 'undefined' && _dmModel) ? _dmModel : null);
+  // ── El modelo TIENE que respetar el origen elegido ───────────────────────────────────────────────
+  // `_dmModelG` es el modelo de producción de ginger: TODOS los orígenes y CON direct-ship, y es el que
+  // alimenta el Buy Planner. Usarlo siempre que el producto sea ginger significa que, con Hawaii
+  // seleccionado, la tabla lista los clientes de Perú bajo la solapa de Hawaii (el 2026-09-03 `_dmModel`
+  // tenía 1 cliente y se dibujaban 14). Solo se usa cuando NO hay un origen concreto elegido.
+  var _selOrigin = (typeof _dmOrigin !== 'undefined' && _dmOrigin && _dmOrigin !== 'All' && _dmOrigin !== 'all') ? _dmOrigin : '';
+  var _useG = isG && !_selOrigin;
+  var m = _useG ? ((typeof _dmModelG !== 'undefined' && _dmModelG) ? _dmModelG : null)
+                : ((typeof _dmModel !== 'undefined') ? _dmModel : null);
   if (!m || !Array.isArray(m.customers) || !m.customers.length
       || typeof bpFutureWeeks !== 'function' || typeof hybridSalesForWeek !== 'function'){ host.innerHTML = ''; return; }
   var caseLb = m.caseLb || DM_CASE_LB;
@@ -24470,7 +24482,7 @@ function renderBuildupPanel(){
     : (1 / (1 - _shrinkPct / 100));
   // The model `m` is already filtered to the active origin, so the committed store must be too — otherwise
   // Hawaii's booked turmeric lands in the Fiji view (same origin leak already fixed in dmBuild's nowcast).
-  var _bpOrigin = (typeof _dmOrigin !== 'undefined' && _dmOrigin && _dmOrigin !== 'All') ? _dmOrigin : '';
+  var _bpOrigin = _selOrigin;
   var com = {}, comLast = {};
   (typeof getCommitted === 'function' ? getCommitted() : []).forEach(function(c){
     if(!c || c.type !== 'inv' || !c.wk || _cmProd(c) !== prod) return;
@@ -24619,7 +24631,7 @@ function renderBuildupPanel(){
   var resid = weeks.map(function(w, i){ return Math.max(0, planTot[i] - colTot[i]); });
   var total = weeks.map(function(w, i){ return colTot[i] + resid[i]; });
   var pl = (typeof productLabel === 'function') ? productLabel(prod) : prod;
-  var usesLine = isG ? 'The column total is what the Buy Planner uses.' : ('The column total is your weekly ' + esc(pl) + ' demand — buy to it.');
+  var usesLine = _useG ? 'The column total is what the Buy Planner uses.' : ('The column total is your weekly ' + esc(pl) + ' demand — buy to it.');
   var h = dmZoneLabel(5,'Forward build-up','next 7 weeks — run-rate + committed, per customer') + '<div class="card dbu">';
   h += '<div class="dbu-hd"><div class="dbu-t">Demand build-up by customer</div><div class="dbu-s">How the projected weekly demand is built — invoiced run-rate + allocated (committed) orders. ' + usesLine + '</div></div>';
   h += '<div class="dbu-lg"><span><i class="sw a"></i>Allocated — real order placed</span><span><i class="sw r"></i>Run-rate — projected from history</span><span><b class="bd od">OD</b>order-driven <b class="bd st">ST</b>steady</span><span><b style="color:#b45309">not invoiced</b>&nbsp;sold, invoice not issued yet</span><span><b style="color:var(--gray-400)">N already sold</b>&nbsp;part of that week is already booked</span></div>';
