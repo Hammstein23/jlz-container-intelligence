@@ -175,7 +175,7 @@ Orders y volvé a correr.
 (function(){
   var PROD = 'turmeric';                       // ginger | turmeric | garlic | shallots
   var LOTS = [
-    // {lot:'2620621', origin:'Fiji', supplier:'Sbimal', cases:150, avgCost:72, received:'2026-08-28'},
+    // {lot:'2620621', origin:'Fiji', supplier:'Sbimal', cases:150, avgCost:72, received:'2026-08-28', sku:'OG-TUR-30Lbs-PR-FJ'},
   ];
   var st = prodInvState();
   if(!st[PROD]) st[PROD] = { serviceLevel:95, demandOverride:null, lots:[] };
@@ -201,6 +201,12 @@ Orders y volvé a correr.
 })();
 ```
 
+**Copiá también el `sku`** (columna SKU del Sales Desk). Es lo que deja restar el committed de la línea
+correcta: Colossal y Super Jumbo son los dos garlic de 30 lb, pero son productos distintos, y sin el SKU
+las 140 cajas comprometidas de Colossal se descuentan del Super Jumbo que tenés en cámara — que fue lo que
+puso el disponible de garlic en 0 el 2026-09-03. Sin `sku` el código cae al peso del pack, que ya alcanza
+para turmeric y shallots pero no distingue las dos líneas de garlic.
+
 Repetí el B por producto. **Reemplazo total en los dos**: lo que ya no aparece en el Sales Desk se va.
 Con POs nuevos, hacé antes un dry-run (mismo snippet con `console.table` y sin guardar).
 
@@ -222,6 +228,16 @@ mercadería ya no está. El 2026-09-03: app **1.150**, Sales Desk **349**; la di
 Confirmalas con el chequeo del Paso 2 antes de seguir.
 
 ```javascript
+// Committed que NO se descontó por ser de otro pack/línea (5/10/20 lb, u otra variedad).
+// Debe ser producto trabajado que vive en sus propios lotes — si acá aparece algo de 30/50 lb
+// que sí tenés en cámara, es que al lote le falta el `sku`.
+(function(){
+  var sk = (typeof window!=='undefined' && window._prodCommittedSkipped) || {};
+  var hay = Object.keys(sk).filter(function(k){ return (sk[k].cases||0) > 0; });
+  if(!hay.length){ console.log('committed descartado por pack: nada'); return; }
+  hay.forEach(function(k){ console.log('  ' + k + ' — ' + sk[k].cases + ' cs fuera del descuento: ' + sk[k].skus.join(', ')); });
+})();
+
 // ginger-Perú (store propio): lo cargado = LIBRE; la app le suma el committed de la semana.
 (function(){
   var st = bpInvState();

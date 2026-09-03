@@ -2632,6 +2632,10 @@ function authInjectLogo() {
       .dmc-tag.manual{color:#3730a3;background:#e0e7ff;}
       .dmc-tag.pending{color:#b45309;background:#fffbeb;}
       .dmc-tag.stale{color:#b42318;background:#fef2f2;}
+      .dmc-tag.shipped{color:#0369a1;background:#f0f9ff;}
+      .dmc-sh{border:1px solid var(--gray-200);background:var(--white);color:var(--gray-500);border-radius:5px;font-family:var(--fm);font-size:9px;font-weight:700;padding:1px 6px;margin-left:6px;cursor:pointer;white-space:nowrap;}
+      .dmc-sh:hover{border-color:#0369a1;color:#0369a1;}
+      .dmc-chip.csh{border-left:3px solid #0369a1;background:#f8fcff;}
       .dmc-chip.cpe{border-left:3px solid #f59e0b;}
       .dmc-chip.cmn{border-left:3px solid #6366f1;}
       .dmc-chip.cst{border-left:3px solid #ef4444;}
@@ -11814,9 +11818,19 @@ function removeCommitted(idx) {
   return all;
 }
 // Σ warehouse-committed cases for a week key (per-customer entries summed).
+// ── Tercer estado de una orden committed ─────────────────────────────────────
+// Una orden vive en tres estados, no dos: (1) vendida sin despachar, (2) vendida, despachada y
+// facturada, (3) vendida y DESPACHADA pero todavía SIN FACTURAR. El (3) no existía: la orden seguía
+// abierta en WholesaleWare, volvía en el Unshipped Report y descontaba stock que ya no estaba —
+// mientras que borrarla hacía desaparecer el volumen. `shipped` marca el (3): sigue contando como
+// volumen movido (se ve en el build-up) pero NO reserva inventario (el floor count ya está neto).
+// Caso que lo motivó: Sol-ti, orden 2618081, 1.000 cs, 2026-09-03.
+function _cmShipped(c){ return !!(c && c.shipped); }
+// Llave estable de una entrada importada, para que la marca sobreviva al re-import de cada lunes.
+function _cmKey(c){ return String((c && c.orderNo) || '') + '|' + String((c && c.sku) || '') + '|' + String((c && c.wk) || ''); }
 function committedInvForWeek(wk, product) {
   var p = product || 'ginger';
-  return getCommitted().reduce(function(s, c){ return s + ((c.wk === wk && c.type === 'inv' && _cmProd(c) === p) ? (c.cases || 0) : 0); }, 0);
+  return getCommitted().reduce(function(s, c){ return s + ((c.wk === wk && c.type === 'inv' && !_cmShipped(c) && _cmProd(c) === p) ? (c.cases || 0) : 0); }, 0);
 }
 // Hybrid weekly sales demand (raw cases, pre-shrink). Starts from the run-rate baseline (salesDemand)
 // and adjusts per account:
@@ -11966,7 +11980,17 @@ function parseOpenOrders(rows, fulfilledMax) {
 }
 // Replace the import-sourced committed rows with a fresh set; manual rows untouched.
 function importCommittedOpenOrders(entries) {
-  var kept = getCommitted().filter(function(c){ return c.source !== 'import'; });
+  var prev = getCommitted();
+  // Las marcas "despachado, sin facturar" TIENEN que sobrevivir al re-import: la orden sigue abierta en
+  // WholesaleWare hasta que se factura, así que el Unshipped Report la devuelve todas las semanas. Sin
+  // esto la marca se pisa cada lunes y la orden vuelve a descontar stock en silencio — la misma trampa
+  // que las marcas `excluded` de los lotes de inventario.
+  var wasShipped = {};
+  prev.forEach(function(c){ if(_cmShipped(c)) wasShipped[_cmKey(c)] = 1; });
+  var restored = 0;
+  (entries || []).forEach(function(c){ if(wasShipped[_cmKey(c)]){ c.shipped = true; restored++; } });
+  window._dmcShippedKept = restored;
+  var kept = prev.filter(function(c){ return c.source !== 'import'; });
   var all = kept.concat(entries || []);
   saveCommitted(all);
   return all;
@@ -14986,7 +15010,37 @@ function prodCommittedTotal(p,origin){
   // it was the root of the turmeric/garlic/shallots error). No seed fallback either: absent committed
   // means 0, never a stale hard-coded snapshot that reappears after the store is cleared.
   var nowWk=(typeof dmWeekKey==='function')?dmWeekKey(new Date()):'';
-  var all=(typeof getCommitted==='function'?getCommitted():[]).filter(function(c){ return c && c.type==='inv' && _cmProd(c)===p && (!nowWk || (c.wk && String(c.wk)>=nowWk)); });
+  var all=(typeof getCommitted==='function'?getCommitted():[]).filter(function(c){ return c && c.type==='inv' && !_cmShipped(c) && _cmProd(c)===p && (!nowWk || (c.wk && String(c.wk)>=nowWk)); });
+  // ── Solo el committed del MISMO pack que se compra ──────────────────────────────────────────────
+  // Los packs chicos (5/10/20 lb) son producto YA TRABAJADO y viven en sus propios lotes — los W-lots de
+  // River Road, que el inventario excluye a propósito. Restar su committed del inventario de 30/50 lb
+  // descuenta contra cajas que no son las suyas y hunde el disponible hasta 0 (availCases está clampeado).
+  // El 2026-09-03: garlic restaba 143 cs de las cuales NINGUNA era el Super Jumbo que había en cámara, y
+  // shallots restaba cajas de 20 lb contra sacos de 50 — los tres productos pedían comprar de más.
+  // Si los lotes traen `sku`, se afina al SKU exacto (Colossal y Super Jumbo son los dos de 30 lb, pero
+  // son líneas distintas). Sin `sku` en los lotes se cae al pack, que ya arregla turmeric y shallots.
+  var _caseLb=(typeof productCaseLb==='function')?productCaseLb(p):30;
+  var _lots=(typeof prodInvFor==='function')?((prodInvFor(p)||{}).lots||[]):[];
+  var _lotSku={}, _haveSku=false;
+  _lots.forEach(function(l){ if(l && l.sku && !l.excluded){ _lotSku[String(l.sku).toUpperCase()]=1; _haveSku=true; } });
+  var _packOf=function(c){ var k=(typeof ooClassifySku==='function')?ooClassifySku(c.sku):null; return k?k.packLbs:null; };
+  var _matches=function(c){
+    if(_haveSku) return !!_lotSku[String(c.sku||'').toUpperCase()];
+    var pk=_packOf(c);
+    return (pk==null) ? true : (Math.abs(pk-_caseLb) < 0.01);   // sin SKU legible (entradas a mano) → se cuenta
+  };
+  var _skipped=all.filter(function(c){ return !_matches(c); });
+  all=all.filter(_matches);
+  // Nunca en silencio: lo que se dejó afuera queda a la vista para el chequeo del lunes.
+  try{
+    if(typeof window!=='undefined'){
+      window._prodCommittedSkipped = window._prodCommittedSkipped || {};
+      window._prodCommittedSkipped[p+'|'+(origin||'all')] = {
+        cases: _skipped.reduce(function(t,c){ return t+(c.cases||0); },0),
+        skus: _skipped.map(function(c){ return (c.sku||'?')+' '+c.cases+'cs'; })
+      };
+    }
+  }catch(e){}
   var sum=function(a){ return a.reduce(function(t,c){ return t+(c.cases||0); }, 0); };
   if(!origin || origin==='all') return sum(all);
   var tagged=all.filter(function(c){ return _cmOriginFor(c); });     // origin-carrying (field or derived from SKU)
@@ -24299,13 +24353,18 @@ function dmcRenderChips() {
   getCommitted().forEach(function(c, i) {
     if(_cmProd(c) !== prod) return;                 // this product only; i stays the true array index for removal
     var manualBadge = (c.source === 'manual') ? '<span class="dmc-tag manual" title="Entered by hand — not from the Unshipped import.">manual</span>' : '';
-    var tag = c.stale ? '<span class="dmc-tag stale" title="Badly overdue and still open — likely a stray. Still counted; remove with × if it is dead.">stale · review</span>'
+    var tag = _cmShipped(c) ? '<span class="dmc-tag shipped" title="Ya salió del almacén, falta facturar. Cuenta como volumen movido, pero NO descuenta stock — el conteo físico ya está neto de estas cajas.">despachado · s/facturar</span>'
+            : c.stale ? '<span class="dmc-tag stale" title="Badly overdue and still open — likely a stray. Still counted; remove with × if it is dead.">stale · review</span>'
             : c.pending ? '<span class="dmc-tag pending" title="Fulfillment date has passed but no invoice yet — still counted in demand, just awaiting invoice.">pending invoice</span>'
             : '<span class="dmc-tag">from warehouse</span>';
     var when = dmcDateLabel(c.date) || dmcWeekLabel(c.wk);
-    var accent = c.stale ? ' cst' : (c.pending ? ' cpe' : (c.source === 'manual' ? ' cmn' : ''));
+    var accent = _cmShipped(c) ? ' csh' : (c.stale ? ' cst' : (c.pending ? ' cpe' : (c.source === 'manual' ? ' cmn' : '')));
+    // Marcar es SIEMPRE mejor que borrar: borrar hace desaparecer el volumen del build-up.
+    var shBtn = '<button class="dmc-sh" onclick="dmcToggleShipped(' + i + ')" title="'
+      + (_cmShipped(c) ? 'Volver a: todavía está en el almacén' : 'Ya salió del almacén y falta facturar. Deja de descontar stock, pero el volumen se sigue viendo.')
+      + '">' + (_cmShipped(c) ? 'sigue acá' : 'ya salió') + '</button>';
     html += '<div class="dmc-chip' + accent + '"><span><b>' + libEsc(c.customer) + '</b> · ' + when + ' · ' + c.cases + ' cs ' + manualBadge + tag + '</span>'
-      + '<button class="dmc-rm" onclick="dmcRemoveInv(' + i + ')" title="Remove">×</button></div>';
+      + shBtn + '<button class="dmc-rm" onclick="dmcRemoveInv(' + i + ')" title="Remove">×</button></div>';
   });
   if(prod === 'ginger'){
     (typeof getOrders === 'function' ? getOrders() : []).forEach(function(o) {
@@ -24317,6 +24376,15 @@ function dmcRenderChips() {
     });
   }
   box.innerHTML = html || '<div class="dmc-hint">Nothing committed yet.</div>';
+}
+function dmcToggleShipped(i) {
+  var all = getCommitted(); if(!all[i]) return;
+  all[i].shipped = !all[i].shipped;
+  saveCommitted(all);
+  renderCommittedPanel();
+  if(typeof renderBuildupPanel === 'function') renderBuildupPanel();
+  if(typeof renderBuyPlanner === 'function') try{ renderBuyPlanner(); }catch(e){}
+  if(typeof invmReRender === 'function') try{ invmReRender(); }catch(e){}
 }
 function dmcRemoveInv(i) { removeCommitted(i); renderCommittedPanel(); if(typeof renderBuildupPanel==='function') renderBuildupPanel(); }
 function dmcRemoveDirect(po, i) { removeDirectShip(po, i); renderCommittedPanel(); if(typeof renderBuildupPanel==='function') renderBuildupPanel(); }
