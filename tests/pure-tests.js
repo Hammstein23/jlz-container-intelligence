@@ -429,4 +429,71 @@ check('con dos cuentas las nombra a las dos', dsLabelFor('garlic', _MDL), 'Whole
 _PAIRS["albert's organics|garlic"] = true;
 check('con tres o más, cuenta en vez de enumerar', dsLabelFor('garlic', _MDL), '3 accounts direct-ship');
 
+// ════ Un solo alcance para toda la app ══════════════════════════════════════
+// Había cuatro orígenes independientes con tres centinelas para "sin filtro" ('All','all','') y tres
+// productos aparte. Elegir turmeric-Hawaii en Demand dejaba Inventory en 'all': cuatro pantallas
+// mirando cosas distintas a la vez.
+group('jlzSyncScope · producto y origen compartidos');
+
+PRODUCT_ACTIVE_LS='jlz_active_product'; ORIGIN_ACTIVE_LS='jlz_active_origin';
+var _LS={}; localStorage = { setItem:function(k,v){ _LS[k]=v; }, getItem:function(k){ return _LS[k]||null; } };
+INVM_PRODUCT='ginger'; BP_PRODUCT='ginger'; SIM_PRODUCT='ginger';
+_dmOrigin='All'; INVM_ORIGIN='all'; BP_ORIGIN=''; SIM_ORIGIN='';
+
+jlzSyncScope('turmeric','Hawaii');
+check('el producto llega a Inventory', INVM_PRODUCT, 'turmeric');
+check('y al Buy Planner',              BP_PRODUCT,   'turmeric');
+check('y al Simulator',                SIM_PRODUCT,  'turmeric');
+check('el origen llega a Demand',      _dmOrigin,    'Hawaii');
+check('y a Inventory',                 INVM_ORIGIN,  'Hawaii');
+check('y al Buy Planner',              BP_ORIGIN,    'Hawaii');
+check('y al Simulator',                SIM_ORIGIN,   'Hawaii');
+check('queda persistido', getActiveOrigin(), 'Hawaii');
+
+// "sin filtro" tiene tres centinelas distintos: cada módulo recibe el suyo
+jlzSyncScope(null, 'all');
+check('sin filtro · Demand usa All',    _dmOrigin,   'All');
+check('sin filtro · Inventory usa all', INVM_ORIGIN, 'all');
+check('sin filtro · Buy Planner usa vacío', BP_ORIGIN, '');
+check('sin filtro · queda vacío en storage', getActiveOrigin(), '');
+
+// ════ Zona 1 · líneas producto+origen ═══════════════════════════════════════
+// Antes eran 4 tarjetas por producto, con run-rate fijo en 13 semanas y CON direct-ship adentro:
+// garlic mostraba 41 cs/wk cuando su demanda de stock eran 19.
+group('dmLineStats · run-rate por producto+origen, sin direct-ship');
+
+DM_ACCENT={ginger:'#0d5026',garlic:'#b45309',shallots:'#7c3aed',turmeric:'#b42318'};
+productLabel=function(p){ return p; };
+productCaseLb=function(p){ return p==='shallots'?50:30; };
+dmRowOrigin=function(r){ return r.oitem||''; };
+dmWindow=function(){ return 3; };
+isDirectShipRow=function(r){ return !!(r && r.c==='Whole Foods Market' && r.prod==='garlic'); };
+invmProductStats=function(p,o){ return {onHandCases:(p==='garlic'?48:0)}; };
+bpInvState=function(){ return {rows:{A:{cases:2184}}}; };
+
+// 6 semanas completas: garlic California, 20 cs/sem de stock + 100 cs/sem de Whole Foods direct-ship
+_dmRawAll=[];
+for(var _w=0;_w<6;_w++){
+  var _d=new Date(Date.UTC(2026,5,1)+_w*7*86400000).toISOString().slice(0,10);
+  _dmRawAll.push({d:_d, prod:'garlic', oitem:'California', c:"Albert's Organics", lbs:20*30, gs:20*30*3, units:20, type:'Sale'});
+  _dmRawAll.push({d:_d, prod:'garlic', oitem:'California', c:'Whole Foods Market', lbs:100*30, gs:100*30*3, units:100, type:'Sale'});
+  _dmRawAll.push({d:_d, prod:'ginger', oitem:'Peru',       c:"Albert's Organics", lbs:800*30, gs:800*30*2, units:800, type:'Sale'});
+  _dmRawAll.push({d:_d, prod:'ginger', oitem:'Hawaii',     c:"Albert's Organics", lbs:5*30,   gs:5*30*4,   units:5,   type:'Sale'});
+}
+dmGlobalDataMax=function(){ return '2026-07-20'; };
+
+var _g=dmLineStats('garlic','California');
+check('el run-rate de garlic deja fuera el direct-ship', Math.round(_g.rr), 20);
+check('y lo reporta aparte',                             Math.round(_g.ds), 100);
+check('cobertura = on hand / run-rate de stock',         Math.round(_g.cover*10)/10, 2.4);
+
+var _gp=dmLineStats('ginger','Peru');
+check('ginger-Peru toma el stock de su propio store (bpInv)', Math.round(_gp.onHand), 2184);
+check('y no se mezcla con Hawaii',                            Math.round(_gp.rr), 800);
+var _gh=dmLineStats('ginger','Hawaii');
+check('ginger-Hawaii es su propia línea', Math.round(_gh.rr), 5);
+ok('sin direct-ship no hay nota', _gh.ds < 1);
+
+check('los orígenes salen con el de más volumen primero', dmLineOrigins('ginger').join(','), 'Peru,Hawaii');
+
 summary();

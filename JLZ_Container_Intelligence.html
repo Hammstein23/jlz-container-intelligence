@@ -14730,8 +14730,8 @@ function invmTab(x){ INVM_TAB=x; renderInventory(); }
 // run-rate) → weeks of cover → an ANALYTICALLY-derived target cover (lead time + safety stock,
 // safety = z·CV·√lead) → suggested order. No shelf-life, no CIF (delivered purchase, no incoterms).
 var PROD_INV_LS='jlz_prod_inv_v1';
-function invmSetProduct(p){ INVM_PRODUCT=p; var og=invmOriginsFor(p); INVM_ORIGIN=(p==='ginger')?'Peru':((og&&og[0])||'all'); renderInventory(); }
-function invmSetOrigin(o){ INVM_ORIGIN=o||'all'; renderInventory(); }
+function invmSetProduct(p){ var og=invmOriginsFor(p); jlzSyncScope(p, (p==='ginger')?'Peru':((og&&og[0])||'')); renderInventory(); jlzRepaintScope('renderInventory'); try{ dmRebuildView(); }catch(e){} }
+function invmSetOrigin(o){ jlzSyncScope(null, o); renderInventory(); jlzRepaintScope('renderInventory'); try{ dmRebuildView(); }catch(e){} }
 // Re-render whichever product views are showing (Inventory and/or the Buy Planner product view),
 // since demand/service/lot edits feed both. Cheap for Inventory; only refreshes BP when its product view is open.
 function invmReRender(){
@@ -15586,8 +15586,8 @@ function invmWindowToggle(p, origin){
 }
 // Buy Planner product view (turmeric/garlic/shallots): analysis + forward projection. Ginger keeps its full planner.
 var BP_PRODUCT='ginger', BP_ORIGIN='';
-function bpSetProduct(p){ BP_PRODUCT=p; var og=invmOriginsFor(p); BP_ORIGIN=(p==='ginger')?'Peru':((og&&og[0])||''); if(typeof renderBuyPlanner==='function') renderBuyPlanner(); }
-function bpSetOrigin(o){ BP_ORIGIN=o||''; if(typeof renderBuyPlanner==='function') renderBuyPlanner(); }
+function bpSetProduct(p){ var og=invmOriginsFor(p); jlzSyncScope(p, (p==='ginger')?'Peru':((og&&og[0])||'')); if(typeof renderBuyPlanner==='function') renderBuyPlanner(); jlzRepaintScope('renderBuyPlanner'); try{ dmRebuildView(); }catch(e){} }
+function bpSetOrigin(o){ jlzSyncScope(null, o); if(typeof renderBuyPlanner==='function') renderBuyPlanner(); jlzRepaintScope('renderBuyPlanner'); try{ dmRebuildView(); }catch(e){} }
 function bpRenderProduct(p){
   var origins=invmOriginsFor(p);
   if(origins.length && origins.indexOf(BP_ORIGIN)<0) BP_ORIGIN=origins[0];   // always per-origin
@@ -15604,8 +15604,8 @@ function bpRenderProduct(p){
 }
 // Simulator product view (turmeric/garlic/shallots + ginger-Hawaii): projection + what-if, per product+origin.
 var SIM_PRODUCT='ginger', SIM_ORIGIN='';
-function simSetProduct(p){ SIM_PRODUCT=p; var og=invmOriginsFor(p); SIM_ORIGIN=(p==='ginger')?'Peru':((og&&og[0])||''); if(typeof renderSimulator==='function') renderSimulator(); }
-function simSetOrigin(o){ SIM_ORIGIN=o||''; if(typeof renderSimulator==='function') renderSimulator(); }
+function simSetProduct(p){ var og=invmOriginsFor(p); jlzSyncScope(p, (p==='ginger')?'Peru':((og&&og[0])||'')); if(typeof renderSimulator==='function') renderSimulator(); jlzRepaintScope('renderSimulator'); try{ dmRebuildView(); }catch(e){} }
+function simSetOrigin(o){ jlzSyncScope(null, o); if(typeof renderSimulator==='function') renderSimulator(); jlzRepaintScope('renderSimulator'); try{ dmRebuildView(); }catch(e){} }
 function simRenderProduct(p){
   var origins=invmOriginsFor(p);
   if(origins.length && origins.indexOf(SIM_ORIGIN)<0) SIM_ORIGIN=origins[0];
@@ -23146,17 +23146,46 @@ function dmRenderFilterBar(){
   if (sup) sup.innerHTML = dmSupplierNamesForActive().map(n => '<option>' + dmEsc(n) + '</option>').join('');
 }
 
+// ── UN SOLO alcance (producto + origen) para toda la app ─────────────────────────────────────────
+// Había cuatro estados de origen independientes (_dmOrigin, INVM_ORIGIN, BP_ORIGIN, SIM_ORIGIN) con
+// TRES centinelas distintos para "sin filtro" ('All', 'all', ''), y tres productos aparte
+// (INVM_PRODUCT, BP_PRODUCT, SIM_PRODUCT). Elegir turmeric-Hawaii en Demand dejaba Inventory en
+// 'all' y el Buy Planner en lo suyo: cuatro pantallas mirando cosas distintas al mismo tiempo.
+var ORIGIN_ACTIVE_LS = 'jlz_active_origin';
+function getActiveOrigin(){ try{ return localStorage.getItem(ORIGIN_ACTIVE_LS) || ''; }catch(e){ return ''; } }
+function jlzSyncScope(prod, origin){
+  // Asignación directa a propósito: las cinco son var/let del mismo script. Envolverlas en try/catch
+  // haría que un rename futuro falle EN SILENCIO y las pantallas volvieran a desincronizarse sin aviso.
+  if (prod){
+    try { localStorage.setItem(PRODUCT_ACTIVE_LS, prod); } catch(e){}   // solo el storage puede fallar
+    INVM_PRODUCT = prod;
+    BP_PRODUCT   = prod;
+    SIM_PRODUCT  = prod;
+  }
+  var v = (!origin || origin === 'all' || origin === 'All') ? '' : String(origin);
+  try { localStorage.setItem(ORIGIN_ACTIVE_LS, v); } catch(e){}
+  _dmOrigin   = v || 'All';    // Demand usa 'All' como "sin filtro"
+  INVM_ORIGIN = v || 'all';    // Inventory usa 'all'
+  BP_ORIGIN   = v;             // Buy Planner y Simulator usan ''
+  SIM_ORIGIN  = v;
+}
+// Repinta las otras vistas para que no queden mostrando el alcance anterior.
+function jlzRepaintScope(except){
+  var f = function(n){ if(except !== n && typeof window[n] === 'function'){ try{ window[n](); }catch(e){} } };
+  f('renderInventory'); f('renderBuyPlanner'); f('renderSimulator');
+}
 function jlzSetProduct(k){
   if (k !== 'all' && !PRODUCTS[k]) return;
-  try { localStorage.setItem(PRODUCT_ACTIVE_LS, k); } catch(e){}
-  _dmOrigin = 'All';                 // reset origin when the product changes
+  jlzSyncScope(k, '');               // al cambiar de producto el origen vuelve a "todos", en TODAS las vistas
   dmRenderFilterBar();
   dmRebuildView();
+  jlzRepaintScope();
 }
 function dmSetOrigin(o){
-  _dmOrigin = o || 'All';
+  jlzSyncScope(null, o);
   dmRenderFilterBar();
   dmRebuildView();
+  jlzRepaintScope();
 }
 
 function dmEsc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
@@ -24129,25 +24158,108 @@ function dmRenderTrendPrice(){
   const fh=document.getElementById('dm-foot');
   if(fh) fh.textContent = show.length ? ('Weekly cases (1 case = '+cl+' lb) \u00b7 price = gross sales \u00f7 lb \u00b7 hatched = incomplete current week \u00b7 prior period = the '+_dmWin+' complete weeks before the current window.') : '';
 }
+// ── Zona 1 · una tarjeta por producto + ORIGEN ────────────────────────────────────────────────────
+// La unidad que Juan maneja no es "ginger": es ginger-Perú (contenedores de mar, 1.300 cs, 37 días)
+// y ginger-Hawaii, dos negocios con proveedor, lead time y cobertura propios. Antes eran 4 tarjetas
+// por producto con el run-rate fijo en 13 semanas y CON el direct-ship adentro: garlic mostraba
+// 41 cs/wk cuando su demanda de stock eran 19 (las otras 22 son Whole Foods, que no toca cámara).
+// El orden es FIJO (ginger → turmeric → garlic → shallots): la urgencia va en la franja de color y
+// en la cobertura, no en la posición — una tarjeta que salta de puesto hay que releerla cada semana.
+var DM_LINE_ORDER = ['ginger','turmeric','garlic','shallots'];
+
+// Orígenes con ventas de un producto, el de más volumen primero.
+function dmLineOrigins(p){
+  var vol = {};
+  (_dmRawAll||[]).forEach(function(r){
+    if((r.prod||'ginger') !== p) return;
+    var o = (typeof dmRowOrigin === 'function') ? dmRowOrigin(r) : '';
+    if(o) vol[o] = (vol[o]||0) + (r.lbs||0);
+  });
+  return Object.keys(vol).sort(function(a,b){ return vol[b]-vol[a]; });
+}
+
+// Números de UNA línea. El run-rate sale del MISMO camino que usa la Zona 3 (dmBuildModel sobre las
+// filas de la línea, sin direct-ship, y después el nowcast): calcularlo por una vía paralela sobre la
+// serie cruda daba números que no coincidían con el resto de la pantalla — el error que se repitió
+// todo el día. El direct-ship usa `invmDirectShipCases`, que ya aplica dsWindow() (26 semanas por
+// defecto): con la ventana corta del stock una cuenta grumosa salta de 233 a 700 de una semana a otra.
+function dmLineStats(p, o){
+  var meta = dmProductMeta(p), cl = meta.caseLb;
+  var win = (typeof dmWindow === 'function') ? dmWindow(p, o) : 13;
+  var rows = (_dmRawAll||[]).filter(function(r){
+    return (r.prod||'ginger')===p && (!o || dmRowOrigin(r)===o);
+  });
+  var stockRows = rows.filter(function(r){ try{ return !isDirectShipRow(r); }catch(e){ return true; } });
+  var m = null;
+  try{
+    m = dmBuildModel(stockRows, false, cl, p);
+    if(m && typeof nowcastProductModel === 'function') m = nowcastProductModel(m, p, o || 'all');
+  }catch(e){}
+  var agg = m ? ((win===3 ? (m.runRate3||m.runRate13)
+                : win===6 ? (m.runRate6||m.runRate13)
+                : win===26 ? (m.runRate26||m.runRate13) : m.runRate13) || 0) : 0;
+  var rr = agg / cl;
+  var ser = (m && Array.isArray(m.weeklyReliable)) ? m.weeklyReliable : [];
+  var mean = function(a){ return a.length ? a.reduce(function(t,x){ return t+(x.lbs||0); },0)/a.length/cl : 0; };
+  var prior = mean(ser.slice(Math.max(0, ser.length-2*win), Math.max(0, ser.length-win)));
+  var ds = 0;
+  try{ if(typeof invmDirectShipCases === 'function') ds = invmDirectShipCases(p, o || 'all') || 0; }catch(e){}
+  var onHand = 0;
+  if(p === 'ginger' && o === 'Peru'){
+    try{ var st = bpInvState();
+      onHand = Object.keys(st.rows||{}).reduce(function(t,k){ return t + (+((st.rows[k]||{}).cases)||0); }, 0);
+    }catch(e){}
+  } else {
+    try{ var ps = invmProductStats(p, o); if(ps) onHand = ps.onHandCases || 0; }catch(e){}
+  }
+  return { win:win, rr:rr, dRR:(prior > 0 ? (rr-prior)/prior*100 : null),
+           ds:ds, onHand:onHand, cover:(rr > 0 ? onHand/rr : null),
+           spark:ser.slice(-13).map(function(x){ return (x.lbs||0)/cl; }),
+           unit:(p === 'shallots' ? 'sacks' : 'cs') };
+}
+function dmSelectLine(p, o){
+  if(typeof jlzSyncScope === 'function') jlzSyncScope(p, o||'');
+  try{ dmRenderFilterBar(); }catch(e){}
+  try{ dmRebuildView(); }catch(e){}
+  try{ if(typeof jlzRepaintScope === 'function') jlzRepaintScope(); }catch(e){}
+}
 function dmRenderPulse(){
   const host=document.getElementById('dm-pulse'); if(!host) return;
   if(!_dmRawAll || !_dmRawAll.length){ host.innerHTML=''; return; }
-  const order=['ginger','garlic','shallots','turmeric'];
-  const dmax=dmGlobalDataMax(), active=(typeof getActiveProduct==='function')?getActiveProduct():'ginger';
-  host.innerHTML = order.map(p=>{
-    const meta=dmProductMeta(p), cl=meta.caseLb;
-    const rows=(_dmRawAll||[]).filter(r => (r.prod||'ginger')===p);
-    const series=dmProductSeries(rows, cl, dmax);
-    const cmp=dmSeriesCompare(series, 13);
-    const sparkArr=series.filter(s=>!s.inc).map(s=>s.cases);
-    return '<div class="dm-pc'+(p===active?' on':'')+'" data-p="'+p+'" style="--ac:'+meta.accent+'">'
-      +'<div class="pname">'+dmEsc(meta.label)+' <span class="ptag">ORG</span></div>'
-      +'<div class="prr">'+dmFmt0(cmp.casesNow)+' <small>cs/wk</small> '+dmDeltaTag(cmp.dCases)+'</div>'
-      +'<div class="pspark">'+dmSparkSVG(sparkArr)+'</div>'
-      +'<div class="pfoot"><span class="ppx">'+dmMoney2(cmp.pxNow)+'/lb</span> '+dmDeltaTag(cmp.dPx)+'</div>'
+  const active=(typeof getActiveProduct==='function')?getActiveProduct():'ginger';
+  const actO=(typeof getActiveOrigin==='function')?getActiveOrigin():'';
+  var lines=[];
+  DM_LINE_ORDER.forEach(function(p){
+    var origins=dmLineOrigins(p);
+    if(!origins.length) origins=[''];
+    origins.forEach(function(o){ lines.push({p:p, o:o, s:dmLineStats(p,o)}); });
+  });
+  // Resumen: la demanda de stock total y cuántas líneas están por quedarse sin producto.
+  var totRR=0, totDS=0, alerta=0;
+  lines.forEach(function(L){ totRR+=L.s.rr; totDS+=L.s.ds; if(L.s.cover!=null && L.s.cover<1.5) alerta++; });
+  var sev=function(c){ return (c==null) ? 'var(--gray-300)' : (c<1.5 ? '#b42318' : (c<3 ? '#b45309' : 'var(--jlz)')); };
+  var head='<div class="dm-lsum">'
+    + '<div><span class="k">Stock demand</span><span class="v">'+dmFmt0(totRR)+'</span> <small>cs/wk</small></div>'
+    + (totDS>=1 ? '<div><span class="k">Direct-ship</span><span class="v" style="color:#7c3aed">'+dmFmt0(totDS)+'</span> <small>cs/wk · never enters stock</small></div>' : '')
+    + '<div><span class="k">Lines needing attention</span><span class="v"'+(alerta?' style="color:#b42318"':'')+'>'+alerta+'</span> <small>of '+lines.length+'</small></div>'
+  + '</div>';
+  host.innerHTML = head + '<div class="dm-lgrid">' + lines.map(function(L){
+    var p=L.p, o=L.o, s=L.s, meta=dmProductMeta(p);
+    var on=(p===active && (actO||'')===(o||''));
+    return '<div class="dm-pc dm-ln'+(on?' on':'')+'" data-p="'+dmEsc(p)+'" data-o="'+dmEsc(o)+'"'
+      + ' style="--ac:'+meta.accent+';--sev:'+sev(s.cover)+'">'
+      +'<div class="pname">'+dmEsc(meta.label)+'<span class="porig">· '+dmEsc(o||'all')+'</span> <span class="ptag">ORG</span></div>'
+      +'<div class="prr">'+dmFmt0(s.rr)+' <small>cs/wk</small> '+dmDeltaTag(s.dRR)+'</div>'
+      +'<div class="psub">run-rate · '+s.win+'-wk window · stock only</div>'
+      +'<div class="pcells">'
+        +'<div><span class="ck">Cover</span><span class="cv" style="color:var(--sev)">'+(s.cover!=null?(Math.round(s.cover*10)/10)+' wks':'&mdash;')+'</span></div>'
+        +'<div><span class="ck">On hand</span><span class="cv">'+dmFmt0(s.onHand)+' '+s.unit+'</span></div>'
+      +'</div>'
+      + (s.ds>=1 ? '<div class="pds">+'+dmFmt0(s.ds)+' cs/wk <span>'+dmEsc((typeof dsLabelFor==='function')?dsLabelFor(p):'direct-ship')+'</span></div>' : '')
+      +'<div class="pspark">'+dmSparkSVG(s.spark)+'</div>'
     +'</div>';
-  }).join('');
-  host.querySelectorAll('.dm-pc').forEach(el=>el.onclick=()=>{ if(typeof jlzSetProduct==='function') jlzSetProduct(el.dataset.p); });
+  }).join('') + '</div>';
+  host.querySelectorAll('.dm-ln').forEach(function(el){ el.onclick=function(){ dmSelectLine(el.dataset.p, el.dataset.o); }; });
   const allb=document.getElementById('dm-all-btn'); if(allb) allb.classList.toggle('on', active==='all');
 }
 // Run-rate KPI delta for the active scope (matches the headline value's divisor).
@@ -24170,7 +24282,22 @@ function dmZoneStyles(){ return '<style>'
 + '.dm-allbtn.on{background:var(--jlz);border-color:var(--jlz);color:#fff}'
 + '.dm-delta{font-size:12px;font-weight:700;font-family:var(--fm)}'
 + '.dm-delta.up{color:var(--green-600)} .dm-delta.dn{color:var(--red-600)} .dm-delta.fl{color:var(--gray-400)}'
-+ '.dm-pulse{display:grid;grid-template-columns:repeat(4,1fr);gap:11px}'
++ '.dm-pulse{display:block}'
++ '.dm-lsum{display:flex;flex-wrap:wrap;gap:8px 26px;align-items:baseline;background:var(--gray-50);border:1px solid var(--gray-200);border-left:3px solid var(--jlz);border-radius:var(--r);padding:10px 14px;margin-bottom:11px}'
++ '.dm-lsum .k{display:block;font-family:var(--fm);font-size:9px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--gray-400)}'
++ '.dm-lsum .v{font-family:var(--fm);font-size:19px;font-weight:700;letter-spacing:-.01em;font-variant-numeric:tabular-nums}'
++ '.dm-lsum small{font-size:10px;color:var(--gray-400);font-family:var(--fm)}'
++ '.dm-lgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(238px,1fr));gap:11px}'
++ '.dm-ln:before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--sev)}'
++ '.dm-ln .porig{font-weight:500;color:var(--gray-500)}'
++ '.dm-ln .psub{font-family:var(--fm);font-size:9.5px;color:var(--gray-400);letter-spacing:.03em;margin-top:3px}'
++ '.dm-ln .pcells{display:flex;margin-top:10px;border-top:1px solid var(--gray-200);padding-top:8px}'
++ '.dm-ln .pcells>div{flex:1;min-width:0}'
++ '.dm-ln .pcells>div+div{border-left:1px solid var(--gray-200);padding-left:10px}'
++ '.dm-ln .ck{display:block;font-family:var(--fm);font-size:9px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--gray-400)}'
++ '.dm-ln .cv{font-family:var(--fm);font-size:14px;font-weight:700;font-variant-numeric:tabular-nums}'
++ '.dm-ln .pds{margin-top:9px;padding-top:8px;border-top:1px dashed var(--gray-200);font-family:var(--fm);font-size:10px;font-weight:700;color:#7c3aed}'
++ '.dm-ln .pds span{font-weight:400;color:var(--gray-400)}'
 + '.dm-pc{background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:13px 14px 12px;cursor:pointer;position:relative;overflow:hidden;transition:transform .12s ease,box-shadow .12s ease,border-color .12s ease}'
 + '.dm-pc:hover{transform:translateY(-2px);box-shadow:var(--shadow-md);border-color:var(--gray-300)}'
 + '.dm-pc.on{border-color:var(--ac,var(--jlz));box-shadow:0 0 0 2px var(--jlz-light)}'
