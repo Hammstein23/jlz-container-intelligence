@@ -374,4 +374,39 @@ check('sin direct-ship, la misma orden sí entra', Math.round(hybridSalesForWeek
 ok('y usa la ventana activa (rr6=37), no rrCases de 13 semanas (58)',
    Math.round(hybridSalesForWeek('2026-09-07', 23, _mdl, 'garlic')) !== 23 + (140 - 58));
 
+// ════ El nowcast tiene que respetar la ventana ══════════════════════════════
+// `rrCases` se recalculaba con avgCust(c, _rw) sobre TODAS las semanas (184, desde 2023), no las 13
+// de su agregado. Arreglar dmBuildModel no alcanzaba: el nowcast lo volvía a pisar. Efecto real:
+// Christopher Ranch marcaba 229 cs/sem cuando en 13 semanas vendió 120 cajas en UNA semana (≈9).
+group('nowcastProductModel · rrCases mide 13 semanas, no toda la historia');
+
+var LONG = [];
+for (var _i = 0; _i < 30; _i++){
+  var _d = new Date(Date.UTC(2026, 1, 2) + _i * 7 * 86400000);
+  LONG.push(_d.toISOString().slice(0, 10));
+}
+var _wc = {};
+LONG.forEach(function(w){ _wc[w] = {}; });
+_wc[LONG[5]]['OLD WHALE']   = 30 * 2000;   // vendió muchísimo, pero hace 25 semanas
+_wc[LONG[20]]['RECENT LUMP'] = 30 * 120;   // 120 cajas en UNA semana, dentro de las últimas 13
+var _wkly = LONG.map(function(w){
+  var t = 0; Object.keys(_wc[w]).forEach(function(c){ t += _wc[w][c]; }); return { week:w, lbs:t };
+});
+var LONGBASE = { caseLb:30, wkCust:_wc, weekly:_wkly, weeklyReliable:_wkly, rateWeeks:LONG,
+  customers:[ { c:'OLD WHALE', rrCases:999, rr26Cases:999, rr6Cases:0, rr3Cases:0, sporadic:false, ovr:{} } ] };
+COMMITTED = [];
+var NM = nowcastProductModel(LONGBASE, 'turmeric', 'Fiji');
+ok('el nowcast no rompe con un historial largo', !!(NM && NM.customers && NM.customers.length === 1));
+
+// Guard de código: el nowcast recalcula las tasas por cliente, y ahí volvía a perderse la ventana.
+// Arreglar dmBuildModel no alcanzaba — esta segunda copia lo pisaba y Christopher Ranch seguía
+// marcando 229 cs/sem con 120 cajas vendidas en UNA semana de 13. Se verifica sobre la fuente real
+// porque el recálculo solo corre cuando hay semanas nowcasteadas, y eso no se puede forzar acá.
+var _nsrc = String(nowcastProductModel);
+ok('rrCases NO se promedia sobre toda la historia', !/avgCust\(c\.c,\s*_rw\)/.test(_nsrc));
+ok('rrCases se mide sobre las últimas 13 semanas', /avgCust\(c\.c,\s*_rw\.slice\(-13\)\)/.test(_nsrc));
+ok('existe la ventana de 26 y también se mide con slice', /_rw\.slice\(-26\)/.test(_nsrc));
+ok('el override de 13 semanas también compara contra la ventana, no contra la vida entera',
+   /_ov13\s*\+=[^;]*_rw\.slice\(-13\)/.test(_nsrc));
+
 summary();

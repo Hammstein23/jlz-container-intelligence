@@ -11863,7 +11863,7 @@ function hybridSalesForWeek(wk, salesDemand, model, product, extraOrders) {
   // "excedente sobre el run-rate" se mide contra otro promedio (garlic: base armada con rr6Cases=37,
   // excedente medido contra rrCases de 13 semanas=58).
   var _hpWin = (typeof dmWindow === 'function') ? dmWindow(_hp) : 13;
-  var _hpKey = (_hpWin === 3) ? 'rr3Cases' : (_hpWin === 6) ? 'rr6Cases' : 'rrCases';
+  var _hpKey = (_hpWin === 3) ? 'rr3Cases' : (_hpWin === 6) ? 'rr6Cases' : (_hpWin === 26) ? 'rr26Cases' : 'rrCases';
   var _hpRr = function(c){ return (c[_hpKey] != null ? c[_hpKey] : c.rrCases) || 0; };
   var _acc = function(cust, w, cases){
     if (!cust || !w) return;
@@ -14942,6 +14942,7 @@ function nowcastProductModel(m, p, origin){
   if(curEntry) out.partialWeek={week:curEntry.week, lbs:curEntry.lbs, partial:true};
   out.weeklyReliable=avgSeries;
   out.runRate13=Math.round(mean(avgSeries.slice(-13)));
+  out.runRate26=Math.round(mean(avgSeries.slice(-26)));   // la UI ofrece 26 semanas; sin esto caía a 13
   out.runRate6=Math.round(mean(avgSeries.slice(-6)));
   out.runRate3=Math.round(mean(avgSeries.slice(-3)));
   series=avgSeries;   // rateWeeks below must list only the averaged weeks
@@ -14980,22 +14981,28 @@ function nowcastProductModel(m, p, origin){
     // series, which knows nothing about them — so re-measure each override against its NOWCASTED model rate
     // and put that difference back. Without this, pinning an account silently stopped working the moment
     // the product had any booked order.
-    var _ov13=0, _ov6=0, _ov3=0;
+    var _ov13=0, _ov26=0, _ov6=0, _ov3=0;
     out.customers=m.customers.map(function(c){
       if(!c || !c.c) return c;
       var n=Object.assign({}, c);
       if(c.ovr && c.ovr.rr){          // the user's explicit number — never recomputed, in any window
-        _ov13 += (c.rrCases||0) - avgCust(c.c,_rw);
+        _ov13 += (c.rrCases||0) - avgCust(c.c,_rw.slice(-13));
+        _ov26 += (c.rr26Cases!=null?c.rr26Cases:c.rrCases||0) - avgCust(c.c,_rw.slice(-26));
         _ov6  += (c.rr6Cases!=null?c.rr6Cases:c.rrCases||0) - avgCust(c.c,_rw.slice(-6));
         _ov3  += (c.rr3Cases!=null?c.rr3Cases:c.rrCases||0) - avgCust(c.c,_rw.slice(-3));
         return n;
       }
-      n.rrCases=avgCust(c.c,_rw); n.rrLbs=Math.round(n.rrCases*caseLb);
+      // MISMA ventana que su agregado. `_rw` son TODAS las semanas (184, desde 2023): sin el slice esto
+      // volvía a pisar rrCases con el promedio de vida, incluso con dmBuildModel ya arreglado — por eso
+      // Christopher Ranch seguía marcando 229 cs/sem cuando en 13 semanas vendió 120 cajas en UNA semana.
+      n.rrCases=avgCust(c.c,_rw.slice(-13)); n.rrLbs=Math.round(n.rrCases*caseLb);
+      n.rr26Cases=avgCust(c.c,_rw.slice(-26));
       n.rr6Cases=avgCust(c.c,_rw.slice(-6));
       n.rr3Cases=avgCust(c.c,_rw.slice(-3));
       return n;
     });
     out.runRate13=Math.round(out.runRate13 + _ov13*caseLb);
+    out.runRate26=Math.round((out.runRate26||out.runRate13) + _ov26*caseLb);
     out.runRate6 =Math.round(out.runRate6  + _ov6*caseLb);
     out.runRate3 =Math.round(out.runRate3  + _ov3*caseLb);
   }
@@ -15099,7 +15106,7 @@ function invmProductStats(p,origin){
   var rrWin=0;
   if(m){ var _wr=Array.isArray(m.weeklyReliable)?m.weeklyReliable:[]; var _sl=_wr.slice(-win);
     rrWin=_sl.length ? _sl.reduce(function(s,w){ return s+(w.lbs||0); },0)/_sl.length
-                     : ((win===3?(m.runRate3||m.runRate13):win===6?(m.runRate6||m.runRate13):m.runRate13)||0); }
+                     : ((win===3?(m.runRate3||m.runRate13):win===6?(m.runRate6||m.runRate13):win===26?(m.runRate26||m.runRate13):m.runRate13)||0); }
   var ovr=(store.demandOverride!=null&&store.demandOverride!=='')?parseFloat(store.demandOverride):null;
   var weeklyLbs=(ovr!=null&&ovr>0)?ovr*caseLb:rrWin;                      // windowed run-rate; override is entered in cases
   var weeklyCases=weeklyLbs>0?weeklyLbs/caseLb:0;
@@ -23497,6 +23504,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb, prodKey){
     // (42.097 cajas ÷ 184 semanas) cuando en las últimas 13 semanas vendió 9, y cinco cuentas que no
     // compraron NADA en 13 semanas cargando tasa igual. Con la ventana, la suma da 779 ≈ 780.
     const rrLbs = _avgW(c, (reliableWeeks.length ? reliableWeeks : allWeeks).slice(-13));
+    const rr26Lbs = _avgW(c, (reliableWeeks.length ? reliableWeeks : allWeeks).slice(-26));
     const rr6Lbs = _avgW(c, (reliableWeeks.length ? reliableWeeks : allWeeks).slice(-6));   // per-customer reaction windows
     const rr3Lbs = _avgW(c, (reliableWeeks.length ? reliableWeeks : allWeeks).slice(-3));
     // Order-driven (sporadic) classification: ordered in only a small fraction of the reliable weeks →
@@ -23535,6 +23543,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb, prodKey){
       // An override is a weekly rate, so it applies to EVERY window — otherwise pinning an account does
       // nothing in the products whose reaction window is 3 or 6 weeks (turmeric, garlic, shallots).
       rrLbs: Math.round(rrLbsEff), rrCases: rrLbsEff / caseLb,
+      rr26Cases: (ovr.rr ? rrLbsEff : rr26Lbs) / caseLb,
       rr6Cases: (ovr.rr ? rrLbsEff : rr6Lbs) / caseLb, rr3Cases: (ovr.rr ? rrLbsEff : rr3Lbs) / caseLb, sporadic,
       rr6CasesModel: rr6Lbs / caseLb, rr3CasesModel: rr3Lbs / caseLb,
       rrLbsModel: Math.round(rrLbs), rrCasesModel: rrLbs / caseLb, sporadicModel, statusModel, fcQuietModel, ovr,
@@ -23636,7 +23645,7 @@ function dmEffectiveRunRateLbs(){
   const m = qaModelG();
   if (!m || !(m.runRate13 > 0)) return null;
   const win = (typeof dmWindow === 'function') ? dmWindow('ginger') : 13;   // ginger plan uses ginger's own reaction window
-  const base = (win === 3 ? (m.runRate3 || m.runRate13) : win === 6 ? (m.runRate6 || m.runRate13) : m.runRate13);
+  const base = (win === 3 ? (m.runRate3 || m.runRate13) : win === 6 ? (m.runRate6 || m.runRate13) : win === 26 ? (m.runRate26 || m.runRate13) : m.runRate13);
   let ex = 0;
   qaQuietList().forEach(x => { ex += (x.rrLbs || 0) * (1 - qaPct(x.c) / 100); });
   return Math.max(0, base - ex);
@@ -23722,7 +23731,7 @@ function renderDmRunRate(){
   var bigRR = (Math.abs(adj) <= 1) ? avgC : rr[win];           // headline = the traceable number unless a real override moves it
   var ovr = (Math.abs(adj) >= 2) ? (' <span style="color:#b45309;font-weight:600">'+(adj>0?'+':'')+adj.toLocaleString()+' manual override → <b>'+rr[win].toLocaleString()+'</b></span>') : '';
   var mathHtml = (win<=6 ? ('( '+wc.map(function(x){ return x.v.toLocaleString(); }).join(' + ')+' ) ÷ '+wc.length+' = <b>'+avgC.toLocaleString()+' cs/wk</b>') : ('mean of these '+wc.length+' weekly totals = <b>'+avgC.toLocaleString()+' cs/wk</b>')) + ovr;
-  var key = win===3 ? 'rr3Cases' : win===6 ? 'rr6Cases' : 'rrCases';
+  var key = (win === 3) ? 'rr3Cases' : (win === 6) ? 'rr6Cases' : (win === 26) ? 'rr26Cases' : 'rrCases';
   var custs = (m.customers||[]).filter(function(c){ return c && c.c && ((c[key]||0) >= 1); }).sort(function(a,b){ return (b[key]||0)-(a[key]||0); });
   var cmax = custs.length ? Math.max.apply(null, custs.map(function(c){ return c[key]||0; })) : 1;
   var shown = custs.slice(0,8), tot=0; custs.forEach(function(c){ tot += Math.round(c[key]||0); });
@@ -24460,7 +24469,7 @@ function renderBuildupPanel(){
     try{ return (typeof isDirectShipRow === 'function') && isDirectShipRow({ c: cust, prod: prod }); }
     catch(e){ return false; }
   };
-  var _rrKeyBase = (_win === 3) ? 'rr3Cases' : (_win === 6) ? 'rr6Cases' : 'rrCases';
+  var _rrKeyBase = (_win === 3) ? 'rr3Cases' : (_win === 6) ? 'rr6Cases' : (_win === 26) ? 'rr26Cases' : 'rrCases';
   var _dsCases = (m.customers || []).reduce(function(s, c){
     return s + ((c && c.c && _isDS(c.c)) ? ((c[_rrKeyBase] != null ? c[_rrKeyBase] : c.rrCases) || 0) : 0);
   }, 0);
@@ -24469,7 +24478,7 @@ function renderBuildupPanel(){
     salesBase = (typeof dmEffectiveRunRateLbs === 'function' && dmEffectiveRunRateLbs() != null)
       ? (dmEffectiveRunRateLbs() / caseLb) : (m.runRate13 / caseLb);
   } else {
-    var _rrW = (_win === 3 ? (m.runRate3 || m.runRate13) : _win === 6 ? (m.runRate6 || m.runRate13) : m.runRate13);
+    var _rrW = (_win === 3 ? (m.runRate3 || m.runRate13) : _win === 6 ? (m.runRate6 || m.runRate13) : _win === 26 ? (m.runRate26 || m.runRate13) : m.runRate13);
     salesBase = _rrW / caseLb;
   }
   salesBase = Math.max(0, salesBase - _dsCases);     // the plan buys stock, not pass-through volume
@@ -24493,7 +24502,7 @@ function renderBuildupPanel(){
   // Per-customer run-rate must use the SAME window as the column total (salesBase), else the
   // total (window-3/6/13) and the rows (fixed 13) disagree and the gap lands in "Other" — a
   // phantom that is really just a window mismatch. Pick the matching per-account field.
-  var _rrKey = (_win === 3) ? 'rr3Cases' : (_win === 6) ? 'rr6Cases' : 'rrCases';
+  var _rrKey = (_win === 3) ? 'rr3Cases' : (_win === 6) ? 'rr6Cases' : (_win === 26) ? 'rr26Cases' : 'rrCases';
   // Ginger only: a quiet account can be held out of the plan (Out / Half / Full). The plan's base
   // already drops it — dmEffectiveRunRateLbs subtracts rrLbs·(1−pct) — so the ROW has to show the
   // same reduction. Without this the table's TOTAL kept claiming the full run-rate while the Buy
@@ -24722,7 +24731,7 @@ function renderBuildupPanel(){
     extras.forEach(function(cust){
       h += '<tr class="oth oth-det ' + _oid + '" style="display:none"><td class="c" style="padding-left:22px">'
          + '<span class="nm" style="font-weight:500;color:var(--gray-500)">' + esc(cust) + '</span>'
-         + '<div class="mt">' + (_mdlRr[cust] != null ? ('rr ' + (Math.round(_mdlRr[cust]*10)/10) + ' cs') : 'no run-rate — stopped buying') + '</div></td>';
+         + '<div class="mt">' + (_mdlRr[cust] != null ? ('rr ' + (Math.round(_mdlRr[cust]*10)/10) + ' cs') : 'too small to track on its own') + '</div></td>';
       histWeeks.forEach(function(wk, i){ h += histCell(wk, i, actualCases(cust, wk), bookedCases(cust, wk)); });
       weeks.forEach(function(){ h += '<td class="r"><span class="z">0</span></td>'; });
       h += '</tr>';
