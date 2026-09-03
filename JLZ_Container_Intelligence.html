@@ -2589,23 +2589,15 @@ function authInjectLogo() {
     <!-- ZONE 1: Product pulse — the primary product selector (cards) -->
     <div class="dm-zl" style="margin-top:4px"><span class="n">1</span><span class="t">Product</span>
       <button type="button" id="dm-all-btn" class="dm-allbtn" onclick="jlzSetProduct('all')">All products</button>
+      <button type="button" id="dm-allo-btn" class="dm-allbtn" onclick="dmSetOrigin('All')" title="Ver el producto con todos sus orígenes juntos — el modelo que alimenta el Buy Planner de ginger">All origins</button>
       <span class="jlz-organic" title="Everything we sell is organic" style="margin-left:8px">Organic</span>
-      <span class="h">run-rate &amp; price &middot; last 13 wks vs prior 13 &middot; click a card to focus</span>
+      <span class="h">run-rate &amp; cover per product+origin &middot; each on its own window &middot; click a line to focus everything</span>
     </div>
     <div class="dm-pulse" id="dm-pulse" style="margin-bottom:6px"></div>
-    <!-- ZONE 2: Origin / Supplier filters -->
-    <div class="dm-zl"><span class="n">2</span><span class="t">Filters</span><span class="h">narrow the focused product</span></div>
-    <div class="dm-fbar">
-      <div class="dm-frow">
-        <span class="dm-flabel">Origin</span>
-        <div class="dm-seg" id="dm-fbar-origin"></div>
-      </div>
-      <div class="dm-frow">
-        <span class="dm-flabel">Supplier</span>
-        <select class="dm-sup" id="dm-fbar-sup" disabled title="Supplier-level sales need the Lot # to container link (next step)"></select>
-        <span class="dm-sup-tag">via Lot # &rarr; container link &middot; next step</span>
-      </div>
-    </div>
+    <!-- La zona de filtros se eliminó: cada tarjeta de la zona 1 YA es un producto+origen, así que las
+         pastillas de origen repetían el mismo control. El selector de proveedor estaba deshabilitado
+         desde siempre ("via Lot # → container link · next step") — un control muerto que prometía una
+         función inexistente. El escape a "todos los orígenes" vive ahora en el header de la zona 1. -->
     <div id="dm-msg" style="font-size:11px;font-family:var(--fm);margin-bottom:12px;min-height:14px"></div>
     <div id="dm-body"></div>
     <style>
@@ -24092,6 +24084,19 @@ function dmComboSVG(show, opts){
     s+='<line x1="'+dx.toFixed(1)+'" y1="'+T+'" x2="'+dx.toFixed(1)+'" y2="'+(T+ph)+'" stroke="#cfd8dd" stroke-width="1" stroke-dasharray="2 3"/>';
     s+='<text x="'+(dx+4).toFixed(1)+'" y="'+(T+9)+'" font-family="var(--fb)" font-size="8.5" fill="#9ca3af">forecast →</text>';
   }
+  // Capa de hover: una columna transparente por semana, encima de todo, con un <title> nativo. Sin
+  // esto el gráfico no decía nada al pasar el mouse — había que leer las barras contra los ejes.
+  show.forEach((d,i)=>{
+    const x=cx(i)-(pw/Math.max(1,m))/2;
+    const wl=(typeof cxWeekNo==='function' && cxWeekNo(d.week)) ? ('W'+cxWeekNo(d.week)) : d.week;
+    const cs=Math.round(d.cases||0).toLocaleString('en-US');
+    const px=(d.px>0) ? ('$'+(d.px).toFixed(2)+'/lb') : 'no price';
+    const gs=(d.gs>0) ? (' · $'+Math.round(d.gs).toLocaleString('en-US')+' gross') : '';
+    const inc=d.inc ? ' · week in progress' : '';
+    s+='<rect x="'+x.toFixed(1)+'" y="'+T+'" width="'+(pw/Math.max(1,m)).toFixed(1)+'" height="'+ph+'"'
+      +' fill="transparent" style="cursor:crosshair">'
+      +'<title>'+dmEsc(wl+' · '+d.week+'\n'+cs+' cases · '+px+gs+inc)+'</title></rect>';
+  });
   return s+'</svg>';
 }
 
@@ -24121,9 +24126,14 @@ function dmFocusRows(){
   const fp=(typeof productFocus==='function')?productFocus():'ginger';
   return (_dmRawAll||[]).filter(r => {
     if ((r.prod||'ginger')!==fp) return false;
-    const n = dmNormalizeOrigin(r.origin);
-    if (n.mixed) return false;
-    return (_dmOrigin==='All' || n.origin===_dmOrigin);
+    if (dmNormalizeOrigin(r.origin).mixed) return false;      // las filas de origen mezclado quedan fuera del análisis por origen
+    if (_dmOrigin === 'All') return true;
+    // MISMO resolvedor que las tarjetas, el build-up y el script de invariantes. Antes comparaba contra
+    // dmNormalizeOrigin(r.origin), que lee la columna cruda `origin` — el país del EMBARQUE ("USA",
+    // "Argentina") — mientras el origen del producto vive en `oitem` ("California"). En garlic y shallots
+    // no coincidía NINGUNA de las 581/571 filas: elegir garlic·California dejaba el gráfico vacío con
+    // "No garlic sales from California in the loaded data".
+    return dmRowOrigin(r) === _dmOrigin;
   });
 }
 function dmRenderTrendPrice(){
@@ -24132,11 +24142,16 @@ function dmRenderTrendPrice(){
   const meta=dmProductMeta(fp), cl=meta.caseLb, dmax=dmGlobalDataMax();
   const series=dmProductSeries(dmFocusRows(), cl, dmax);
   const cmp=dmSeriesCompare(series, _dmWin);
+  var _dsInTP=0; try{ if(typeof invmDirectShipCases==='function') _dsInTP=invmDirectShipCases(fp, (_dmOrigin&&_dmOrigin!=='All')?_dmOrigin:'all')||0; }catch(e){}
   titleEl.textContent = meta.label + ' \u2014 weekly cases vs price' + (_dmOrigin!=='All' ? ' \u00b7 '+_dmOrigin : '');
   const ac=document.getElementById('dm-combo-accent'); if(ac) ac.style.background=meta.accent;
   const ro=document.getElementById('dm-readout');
   if(ro) ro.innerHTML =
-     '<div class="dm-ro"><div class="rl">Cases / wk</div><div class="rv">'+dmFmt0(cmp.casesNow)+' '+dmDeltaTag(cmp.dCases)+'</div><div class="rcmp">prior '+dmFmt0(cmp.casesPrior)+' \u00b7 '+_dmWin+'w vs '+_dmWin+'w</div></div>'
+     // Esta zona es COMERCIAL: contesta "¿el precio explica el movimiento?", así que cuenta todas las
+     // ventas, direct-ship incluido. Pero eso la hace distinta del run-rate de las zonas 1 y 2, que es
+     // solo stock — turmeric muestra 254 acá y 88 arriba. Se dice en la propia fila en vez de dejar dos
+     // números sin explicar en la misma pantalla.
+     '<div class="dm-ro"><div class="rl">Cases / wk <span style="font-weight:400;color:var(--gray-400)">· all sales</span></div><div class="rv">'+dmFmt0(cmp.casesNow)+' '+dmDeltaTag(cmp.dCases)+'</div><div class="rcmp">prior '+dmFmt0(cmp.casesPrior)+' \u00b7 '+_dmWin+'w vs '+_dmWin+'w'+(_dsInTP>=1?(' \u00b7 incl. '+dmFmt0(_dsInTP)+' direct-ship'):'')+'</div></div>'
     +'<div class="dm-ro"><div class="rl">$/lb sell price</div><div class="rv">'+dmMoney2(cmp.pxNow)+' '+dmDeltaTag(cmp.dPx)+'</div><div class="rcmp">prior '+dmMoney2(cmp.pxPrior)+' \u00b7 vol-weighted</div></div>'
     +'<div class="dm-ro"><div class="rl">Implied $ / wk</div><div class="rv">$'+dmFmt0(cmp.casesNow*cl*cmp.pxNow)+'</div><div class="rcmp">cases \u00d7 '+cl+'lb \u00d7 $/lb</div></div>';
   const comp=series.filter(s=>!s.inc), lastComp=comp.slice(-_dmWin), tail=series.filter(s=>s.inc), show=lastComp.concat(tail);
@@ -24369,9 +24384,9 @@ function renderDemand(){
     return;
   }
   host.innerHTML = cxStyles() + dmZoneStyles()
-    + dmZoneLabel(3,'Run-rate','what they buy per week — traceable to weeks &amp; customers')
+    + dmZoneLabel(2,'Run-rate','what they buy per week — traceable to weeks &amp; customers')
     + '<div id="dm-runrate"></div>'
-    + dmZoneLabel(4,'Trend &amp; Price','does price explain the move?')
+    + dmZoneLabel(3,'Trend &amp; Price','does price explain the move?')
     + dmTrendPriceShell();
   dmRenderPulse();
   dmRenderTrendPrice();
@@ -24460,7 +24475,7 @@ function renderCommittedPanel(model) {
   var custs = dmcCustomers(m);
   var futures = (typeof bpFutureWeeks === 'function') ? bpFutureWeeks(11).slice(1) : [];  // next 10 weeks (skip the current, still-open week)
   var arriving = isG ? dmcArrivingOrders() : [];
-  var zone = '<div class="dm-zl"><span class="n">6</span><span class="t">Committed orders</span><span class="h">sold, not yet shipped · feeds the ' + (isG ? 'buying plan' : libEsc(pl) + ' build-up') + '</span></div>';
+  var zone = '<div class="dm-zl"><span class="n">5</span><span class="t">Committed orders</span><span class="h">sold, not yet shipped · feeds the ' + (isG ? 'buying plan' : libEsc(pl) + ' build-up') + '</span></div>';
   if(!custs.length) {
     host.innerHTML = zone + '<div class="dmc-card"><div class="dmc-empty">Load a <b>Sales</b> report at the top of this tab to pick customers, then add committed orders here.</div></div>';
     return;
@@ -24791,7 +24806,7 @@ function renderBuildupPanel(){
   var total = weeks.map(function(w, i){ return colTot[i] + resid[i]; });
   var pl = (typeof productLabel === 'function') ? productLabel(prod) : prod;
   var usesLine = _useG ? 'The column total is what the Buy Planner uses.' : ('The column total is your weekly ' + esc(pl) + ' demand — buy to it.');
-  var h = dmZoneLabel(5,'Forward build-up','next 7 weeks — run-rate + committed, per customer') + '<div class="card dbu">';
+  var h = dmZoneLabel(4,'Forward build-up','next 7 weeks — run-rate + committed, per customer') + '<div class="card dbu">';
   h += '<div class="dbu-hd"><div class="dbu-t">Demand build-up by customer</div><div class="dbu-s">How the projected weekly demand is built — invoiced run-rate + allocated (committed) orders. ' + usesLine + '</div></div>';
   h += '<div class="dbu-lg"><span><i class="sw a"></i>Allocated — real order placed</span><span><i class="sw r"></i>Run-rate — projected from history</span><span><b class="bd od">OD</b>order-driven <b class="bd st">ST</b>steady</span><span><b style="color:#b45309">not invoiced</b>&nbsp;sold, invoice not issued yet</span><span><b style="color:var(--gray-400)">N already sold</b>&nbsp;part of that week is already booked</span></div>';
   h += '<div class="dbu-wrap"><table class="dbu-tbl"><thead>';
@@ -25507,7 +25522,7 @@ function renderDemandAccuracy(){
   const realMgBadge = (realMg==null) ? '<span class="dm-bd soon">needs upload</span>'
     : '<span class="dm-bd '+(realMg>=10?'good':realMg>=4?'warn':'bad')+'">'+realMg.toFixed(1)+'%</span>';
 
-  host.innerHTML = dmZoneLabel(7,'Buy confidence','demand reliability \u2192 how much to buy \u2192 real margin \u00b7 '+cxEsc(meta.label)) +
+  host.innerHTML = dmZoneLabel(6,'Buy confidence','demand reliability \u2192 how much to buy \u2192 real margin \u00b7 '+cxEsc(meta.label)) +
     '<div class="dm-card">'
     + '<div class="dm-ch"><span class="dm-accent" style="background:'+meta.accent+'"></span><span class="ttl">'+cxEsc(meta.label)+' \u2014 buy confidence</span></div>'
     + '<div class="dm-cb">'

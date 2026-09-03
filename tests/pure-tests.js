@@ -512,4 +512,42 @@ check('ginger-Hawaii usa el store product-aware', _gh.onHand, 0);
 ok('sin direct-ship no hay nota', _gh.ds < 1);
 check('los orígenes salen con el de más volumen primero', dmLineOrigins('ginger').join(','), 'Peru,Hawaii');
 
+// ════ Trend & Price ════════════════════════════════════════════════════════
+// El origen del PRODUCTO vive en `oitem` ("California"); la columna cruda `origin` es el país del
+// EMBARQUE ("USA", "Argentina"). dmFocusRows comparaba contra la segunda, así que en garlic y
+// shallots no coincidía ninguna de las 581/571 filas y el gráfico salía vacío. Con las tarjetas
+// nuevas seleccionando siempre un origen, esto se rompía en cada uso.
+group('dmFocusRows · resuelve el origen como el resto de la app');
+
+productFocus=function(){ return 'garlic'; };
+dmRowOrigin=function(r){ return (r.prod==='garlic'||r.prod==='shallots') ? 'California' : (r.oitem||''); };
+dmNormalizeOrigin=function(o){ return { origin:o, mixed:(o==='MIXED') }; };
+_dmRawAll=[
+  {prod:'garlic', origin:'USA',       oitem:'California', lbs:600},
+  {prod:'garlic', origin:'Argentina', oitem:'California', lbs:300},
+  {prod:'garlic', origin:'MIXED',     oitem:'California', lbs:100},
+  {prod:'ginger', origin:'Peru',      oitem:'Peru',       lbs:900}
+];
+_dmOrigin='California';
+check('garlic·California ya no queda vacío', dmFocusRows().length, 2);
+ok('la fila de origen mezclado sigue afuera', dmFocusRows().every(function(r){ return r.origin!=='MIXED'; }));
+_dmOrigin='All';
+check('con All entran las dos de garlic (la mezclada no)', dmFocusRows().length, 2);
+_dmOrigin='Fiji';
+check('un origen que no es el suyo no devuelve nada', dmFocusRows().length, 0);
+
+// ── el gráfico tenía que decir algo al pasar el mouse ──
+group('dmComboSVG · una columna de hover por semana');
+cxWeekNo=function(){ return 28; };
+var _svg=dmComboSVG([
+  {week:'2026-07-06', cases:120, px:2.06, gs:7416, lbs:3600},
+  {week:'2026-07-13', cases:90,  px:2.20, gs:5940, lbs:2700},
+  {week:'2026-07-20', cases:40,  px:0,    gs:0,    lbs:0, inc:true}
+], null);
+check('hay un tooltip por semana', (_svg.match(/<title>/g)||[]).length, 3);
+ok('el tooltip trae las cajas',  /120 cases/.test(_svg));
+ok('y el precio de esa semana',  /\$2\.06\/lb/.test(_svg));
+ok('marca la semana en curso',   /week in progress/.test(_svg));
+ok('una semana sin precio no inventa uno', /no price/.test(_svg));
+
 summary();
