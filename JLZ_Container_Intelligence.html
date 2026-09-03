@@ -24061,7 +24061,6 @@ function dmComboSVG(show, opts){
   s+='<text x="11" y="'+(T+ph/2)+'" text-anchor="middle" font-family="var(--fb)" font-size="9" fill="#6b7280" transform="rotate(-90 11 '+(T+ph/2)+')">cases / wk</text>';
   if(pv.length) s+='<text x="'+(W-9)+'" y="'+(T+ph/2)+'" text-anchor="middle" font-family="var(--fb)" font-size="9" fill="var(--amber-600)" transform="rotate(90 '+(W-9)+' '+(T+ph/2)+')">$/lb</text>';
   const step=Math.max(1,Math.ceil(m/13));
-  let _lastYr=null;
   show.forEach((d,i)=>{ const x=cx(i)-bw/2;
     if(d.isFuture){
       const cc=d.committed||0, dd=d.direct||0;
@@ -24074,14 +24073,17 @@ function dmComboSVG(show, opts){
     if(i%step===0){
       const lab='W'+((typeof cxWeekNo==='function')?cxWeekNo(d.week):'');
       s+='<text x="'+cx(i).toFixed(1)+'" y="'+(H-B+14)+'" text-anchor="middle" font-family="var(--fm)" font-size="8.5" fill="#9ca3af">'+lab+'</text>';
-      // El año va debajo y SOLO cuando cambia: con 26 semanas el rango cruza fin de año y "W02" al lado
-      // de "W50" no dice de qué año es cada uno. Repetirlo en cada etiqueta sería ruido.
-      const yr=String(d.week).slice(0,4);
-      if(yr && yr!==_lastYr){
-        s+='<text x="'+cx(i).toFixed(1)+'" y="'+(H-B+24)+'" text-anchor="middle" font-family="var(--fm)" font-size="8.5" font-weight="700" fill="#6b7280">'+yr+'</text>';
-        _lastYr=yr;
-      }
     }
+  });
+  // El año va debajo de las semanas, CENTRADO bajo el tramo que le corresponde. Con 26 semanas el rango
+  // cruza fin de año y "W02" al lado de "W50" no dice de cuál es cada uno; centrarlo bajo su bloque lee
+  // mejor que colgarlo de la semana suelta donde cambió.
+  const _yrs={};
+  show.forEach((d,i)=>{ const y=String(d.week).slice(0,4); if(!/^\d{4}$/.test(y)) return;
+    if(!_yrs[y]) _yrs[y]={a:i,b:i}; else _yrs[y].b=i; });
+  Object.keys(_yrs).sort().forEach(y=>{
+    const c=(cx(_yrs[y].a)+cx(_yrs[y].b))/2;
+    s+='<text x="'+c.toFixed(1)+'" y="'+(H-B+24)+'" text-anchor="middle" font-family="var(--fm)" font-size="8.5" font-weight="700" fill="#6b7280">'+y+'</text>';
   });
   const pts=show.map((d,i)=>({i,d})).filter(o=>!o.d.inc && o.d.px>0);
   if(pts.length){
@@ -24157,13 +24159,19 @@ function dmFocusRows(){
 // Tooltip propio del gráfico. El <title> nativo de SVG no se renderizaba, y además llegaría con el
 // retardo del sistema y sin estilo. Este aparece al instante y resalta la columna sobre la que estás.
 function dmWireChartTip(host){
-  if(!host || host._tipWired) return;
-  host._tipWired = true;
+  if(!host) return;
   host.style.position = 'relative';
-  const tip = document.createElement('div');
-  tip.className = 'dm-tip'; tip.style.display = 'none';
-  host.appendChild(tip);
-  const hide = function(){ tip.style.display='none';
+  // El div se recrea en cada render (innerHTML lo borra); los listeners se atan UNA sola vez y buscan
+  // el div por clase, así nunca quedan apuntando a un nodo que ya salió del documento.
+  if(!host.querySelector('.dm-tip')){
+    const t = document.createElement('div');
+    t.className = 'dm-tip'; t.style.display = 'none';
+    host.appendChild(t);
+  }
+  if(host._tipWired) return;
+  host._tipWired = true;
+  const theTip = function(){ return host.querySelector('.dm-tip'); };
+  const hide = function(){ const tp=theTip(); if(tp) tp.style.display='none';
     host.querySelectorAll('.dm-hit.on').forEach(function(x){ x.classList.remove('on'); }); };
   host.addEventListener('mouseleave', hide);
   host.addEventListener('mousemove', function(ev){
@@ -24171,6 +24179,7 @@ function dmWireChartTip(host){
     if(!hit){ hide(); return; }
     host.querySelectorAll('.dm-hit.on').forEach(function(x){ if(x!==hit) x.classList.remove('on'); });
     hit.classList.add('on');
+    const tip = theTip(); if(!tip) return;
     const px = hit.getAttribute('data-px'), gs = +hit.getAttribute('data-gs') || 0;
     tip.innerHTML = '<b>' + hit.getAttribute('data-wk') + '</b> <span class="d">' + hit.getAttribute('data-date') + '</span>'
       + (hit.getAttribute('data-inc') ? '<span class="p">week in progress</span>' : '')
@@ -24226,9 +24235,12 @@ function dmRenderTrendPrice(){
   }
   const ch=document.getElementById('dm-chart');
   if(!dmOpts) dmOpts={winFrom:Math.max(0, lastComp.length-win), winTo:lastComp.length};
-  if(ch) dmWireChartTip(ch);
   if(ch) ch.innerHTML = combined.length ? dmComboSVG(combined, dmOpts)
     : '<div style="padding:24px;text-align:center;color:var(--gray-400);font-size:12px">No '+meta.label.toLowerCase()+' sales'+(_dmOrigin!=='All'?' from '+_dmOrigin:'')+' in the loaded data.</div>';
+  // DESPUÉS de pintar: dmWireChartTip agrega su <div> dentro de #dm-chart, y el innerHTML de arriba lo
+  // borraría. Los listeners van sobre el contenedor y sobreviven —por eso el sombreado seguía andando—
+  // pero el div quedaba huérfano y el tooltip no mostraba nada.
+  if(ch) dmWireChartTip(ch);
   const nh=document.getElementById('dm-note');
   const e=dmElasticity(cmp.dCases, cmp.dPx);
   if(nh) nh.innerHTML = show.length ? '<div class="dm-note '+e.cls+'"><span class="ic">'+e.ic+'</span><div><span class="lead">'+e.lead+'</span>'+e.body+'</div></div>' : '';

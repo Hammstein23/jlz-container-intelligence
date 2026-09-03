@@ -563,6 +563,23 @@ check('el año aparece una vez por cada año presente', (_cross.match(/>20\d\d</
 ok('y son los dos años del rango', /">2025</.test(_cross) && /">2026</.test(_cross));
 ok('dentro de un solo año no se repite', (_svg.match(/>20\d\d</g)||[]).length === 1);
 
+// ── el año CENTRADO bajo su tramo, no colgado de la semana donde cambió ──
+var _xOf=function(svg,yr){ var m=svg.match(new RegExp('<text x="([\\d.]+)"[^>]*>'+yr+'<')); return m?parseFloat(m[1]):null; };
+ok('2025 queda a la izquierda de 2026', _xOf(_cross,'2025') < _xOf(_cross,'2026'));
+// con un solo año, su etiqueta tiene que caer en el centro del área de datos (L=44, ancho=622)
+var _uno=[]; for(var _k=0;_k<12;_k++) _uno.push({week:'2026-0'+((_k%9)+1)+'-01', cases:10, px:2, gs:20, lbs:10});
+var _oneYr=dmComboSVG(_uno, null);
+var _cxYr=_xOf(_oneYr,'2026'), _mid=44+(720-44-54)/2;
+ok('con un solo año la etiqueta va centrada', Math.abs(_cxYr-_mid) < 20);
+
+// ── guard: el tooltip se arma DESPUÉS de pintar el SVG ──
+// Al revés, innerHTML borra el <div> del tooltip: el sombreado sigue andando (los listeners viven en
+// el contenedor) pero no aparece ningún dato. Es justo el síntoma que reportó Juan.
+var _rtp=String(dmRenderTrendPrice);
+ok('dmWireChartTip se llama después de asignar innerHTML',
+   _rtp.indexOf('dmWireChartTip') > _rtp.indexOf('ch.innerHTML'));
+ok('y el handler busca el div por clase, no por closure', /querySelector\('\.dm-tip'\)/.test(String(dmWireChartTip)));
+
 // ════ Trend & Price · una sola ventana ══════════════════════════════════════
 // El selector propio de la zona (4/13/26/52) mezclaba la VENTANA (que promedia y alimenta el plan)
 // con el SPAN del gráfico (cuánta historia se dibuja). Hacer zoom para mirar estacionalidad cambiaba
