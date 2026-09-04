@@ -637,4 +637,41 @@ ok('explica que el run-rate es promedio de CALENDARIO', /calendar/.test(_oc) && 
 ok('y que la ventana la manda el producto', /_coWin/.test(_oc));
 ok('dice para qué sirve un override manual', /just signed/.test(_oc) && /weekly rate/.test(_oc));
 
+// ════ Una orden despachada no es demanda por delante ═══════════════════════
+// El flag `shipped` sacaba la orden del STOCK pero no de la DEMANDA: el plan partía de un inventario
+// que ya la excluía y encima se la restaba otra vez como demanda de la semana. Sol-ti, 1.000 cs
+// entregadas el 1-sep: la demanda de la semana daba 1.658 en vez de 892 y pedía 4 contenedores.
+group('cmPlanEntries · el único filtro de las despachadas');
+(function(){
+  var real = getCommitted;
+  getCommitted = function(){ return [
+    { orderNo:'A', type:'inv', wk:'2026-08-31', cases:100, customer:'X' },
+    { orderNo:'B', type:'inv', wk:'2026-08-31', cases:900, customer:'Y', shipped:true }
+  ]; };
+  var plan = cmPlanEntries();
+  check('saca las despachadas', plan.length, 1);
+  check('y deja las pendientes', plan[0].orderNo, 'A');
+  check('el store completo sigue intacto para las vistas de volumen', getCommitted().length, 2);
+  getCommitted = function(){ return null; };
+  check('un store vacío no lo hace explotar', cmPlanEntries().length, 0);
+  getCommitted = real;
+})();
+
+group('hybridSalesForWeek · las despachadas no vuelven a restar');
+hybridSalesForWeek = HYBRID_REAL;
+_cmShipped = function(c){ return !!(c && c.shipped); };
+_cmProd = function(c){ return c.prod; };
+dmWindow = function(){ return 6; };
+isDirectShipRow = function(){ return false; };
+var _md = { customers:[{c:'Sol-ti', rrCases:233, rr6Cases:233, rr3Cases:233, sporadic:true}] };
+
+COMMITTED = [{type:'inv', wk:'2026-08-31', customer:'Sol-ti', cases:1000, prod:'ginger'}];
+check('sin marcar, la orden entra a la demanda de su semana',
+      Math.round(hybridSalesForWeek('2026-08-31', 892, _md, 'ginger')), 892 + (1000-233));
+
+COMMITTED[0].shipped = true;
+check('marcada como despachada, ya no suma', Math.round(hybridSalesForWeek('2026-08-31', 892, _md, 'ginger')), 892);
+ok('y la entrada sigue en el store, para que el build-up la muestre como volumen',
+   getCommitted().length === 1 && getCommitted()[0].cases === 1000);
+
 summary();

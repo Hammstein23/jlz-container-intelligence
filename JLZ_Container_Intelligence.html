@@ -11826,9 +11826,22 @@ function removeCommitted(idx) {
 function _cmShipped(c){ return !!(c && c.shipped); }
 // Llave estable de una entrada importada, para que la marca sobreviva al re-import de cada lunes.
 function _cmKey(c){ return String((c && c.orderNo) || '') + '|' + String((c && c.sku) || '') + '|' + String((c && c.wk) || ''); }
+// ── UN SOLO lugar decide qué órdenes cuentan para el PLAN ────────────────────────────────────────
+// El 2026-09-03 se agregó el estado `shipped` (despachada, sin facturar) y hubo que acordarse de
+// aplicarlo en SIETE lugares distintos que leen el store: committedInvForWeek, prodCommittedTotal,
+// hybridSalesForWeek, el nowcast (dos veces), invmCommittedByWeek, dmBuildModel y dmForwardWeeks.
+// Siempre se escapaba alguno, y cada escape era stock o demanda contada dos veces — Sol-ti entregó
+// 1.000 cs el 1-sep y el plan seguía pidiendo 4 contenedores en vez de 3.
+// Todo lo que alimenta STOCK o DEMANDA lee de acá. Las vistas de VOLUMEN (el panel de Committed
+// orders, el build-up) siguen leyendo el store completo a propósito: ahí esas cajas SÍ se muestran.
+function cmPlanEntries(){
+  var all = (typeof getCommitted === 'function') ? getCommitted() : null;
+  if(!Array.isArray(all)) return [];                 // store vacío o todavía sin cargar
+  return all.filter(function(c){ return c && !(typeof _cmShipped === 'function' && _cmShipped(c)); });
+}
 function committedInvForWeek(wk, product) {
   var p = product || 'ginger';
-  return getCommitted().reduce(function(s, c){ return s + ((c.wk === wk && c.type === 'inv' && !_cmShipped(c) && _cmProd(c) === p) ? (c.cases || 0) : 0); }, 0);
+  return cmPlanEntries().reduce(function(s, c){ return s + ((c.wk === wk && c.type === 'inv' && _cmProd(c) === p) ? (c.cases || 0) : 0); }, 0);
 }
 // Hybrid weekly sales demand (raw cases, pre-shrink). Starts from the run-rate baseline (salesDemand)
 // and adjusts per account:
@@ -11862,7 +11875,7 @@ function hybridSalesForWeek(wk, salesDemand, model, product, extraOrders) {
     if (w === wk) comThis[cust] = (comThis[cust] || 0) + (+cases || 0);
     if (!comLast[cust] || w > comLast[cust]) comLast[cust] = w;
   };
-  getCommitted().forEach(function(c){
+  cmPlanEntries().forEach(function(c){
     if (!c || c.type !== 'inv' || !c.wk || _cmProd(c) !== _hp) return;
     _acc(c.customer, c.wk, c.cases);
   });
@@ -14901,7 +14914,7 @@ function nowcastProductModel(m, p, origin){
   (Array.isArray(m.customers)?m.customers:[]).forEach(function(c){ if(c && c.c && c.sporadic) odCust[c.c]=1; });
   if(Object.keys(odCust).length && typeof getCommitted==='function'){
     var odByWk={};
-    getCommitted().forEach(function(c){
+    cmPlanEntries().forEach(function(c){
       if(!c || c.type!=='inv' || !c.wk || _cmProd(c)!==p) return;
       if(!odCust[c.customer]) return;
       if(origin && origin!=='all' && typeof _cmOriginFor==='function'){ var o=_cmOriginFor(c); if(o && o!==origin) return; }
@@ -14972,7 +14985,7 @@ function nowcastProductModel(m, p, origin){
   if(Array.isArray(m.customers) && m.customers.length && m.wkCust){
     var comCust={};
     if(typeof getCommitted==='function'){
-      getCommitted().forEach(function(c){
+      cmPlanEntries().forEach(function(c){
         if(!c || c.type!=='inv' || !c.wk || _cmProd(c)!==p) return;
         if(odCust[c.customer]) return;                                  // order-driven: held out, as above
         if(!out.nowcastWeeks[c.wk]) return;                             // only the weeks actually completed
@@ -15051,7 +15064,7 @@ function prodCommittedTotal(p,origin){
   // it was the root of the turmeric/garlic/shallots error). No seed fallback either: absent committed
   // means 0, never a stale hard-coded snapshot that reappears after the store is cleared.
   var nowWk=(typeof dmWeekKey==='function')?dmWeekKey(new Date()):'';
-  var all=(typeof getCommitted==='function'?getCommitted():[]).filter(function(c){ return c && c.type==='inv' && !_cmShipped(c) && _cmProd(c)===p && (!nowWk || (c.wk && String(c.wk)>=nowWk)); });
+  var all=cmPlanEntries().filter(function(c){ return c && c.type==='inv' && _cmProd(c)===p && (!nowWk || (c.wk && String(c.wk)>=nowWk)); });
   // ── Solo el committed del MISMO pack que se compra ──────────────────────────────────────────────
   // Los packs chicos (5/10/20 lb) son producto YA TRABAJADO y viven en sus propios lotes — los W-lots de
   // River Road, que el inventario excluye a propósito. Restar su committed del inventario de 30/50 lb
@@ -15242,7 +15255,7 @@ function whatifArrivals(p,origin){
 function invmCommittedByWeek(p, origin, fromWk){
   var out={};
   var minWk=(fromWk!=null) ? String(fromWk) : ((typeof dmWeekKey==='function')?dmWeekKey(new Date()):'');
-  var all=(typeof getCommitted==='function'?getCommitted():[]).filter(function(c){ return c && c.type==='inv' && _cmProd(c)===p && c.wk && (!minWk || String(c.wk)>=minWk); });
+  var all=cmPlanEntries().filter(function(c){ return c && c.type==='inv' && _cmProd(c)===p && c.wk && (!minWk || String(c.wk)>=minWk); });
   if(origin && origin!=='all'){
     var tagged=all.filter(function(c){ return _cmOriginFor(c); });
     if(!tagged.length) return {};                       // no origin field AND no SKU → can't attribute → lump fallback
@@ -23439,7 +23452,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb, prodKey){
   const _committedCust = {}, _committedLast = {};
   try {
     if (_mProd && typeof getCommitted === 'function') {
-      getCommitted().forEach(function(x){
+      cmPlanEntries().forEach(function(x){
         if (!x || !x.customer || !x.wk || _cmProd(x) !== _mProd) return;
         _committedCust[x.customer] = true;
         const d = x.wk > _todayISO ? _todayISO : x.wk;
@@ -24019,7 +24032,7 @@ function dmMondayISO(ds) {
 function dmForwardWeeks(afterWk, product) {
   var _p = product || ((typeof productFocus === 'function') ? productFocus() : 'ginger');
   var byWk = {};
-  (typeof getCommitted === 'function' ? getCommitted() : []).forEach(function(c) {
+  cmPlanEntries().forEach(function(c) {
     if(!c || c.type !== 'inv' || !c.wk || _cmProd(c) !== _p) return;
     (byWk[c.wk] = byWk[c.wk] || { committed:0, direct:0 }).committed += (c.cases || 0);
   });
@@ -25648,7 +25661,7 @@ function renderDemandAccuracy(){
   if (typeof getCommitted === 'function' && typeof dmWeekKey === 'function') {
     const _monNow = dmWeekKey(new Date());
     const _byWk = {};
-    getCommitted().forEach(function(x){ if (x && x.wk && x.wk >= _monNow && _cmProd(x) === fp) _byWk[x.wk] = (_byWk[x.wk] || 0) + (+x.cases || 0); });
+    cmPlanEntries().forEach(function(x){ if (x && x.wk && x.wk >= _monNow && _cmProd(x) === fp) _byWk[x.wk] = (_byWk[x.wk] || 0) + (+x.cases || 0); });
     const _wks = Object.keys(_byWk).sort();
     committedWks = _wks.length;
     committedCs = _wks.reduce(function(s,w){ return s + _byWk[w]; }, 0);

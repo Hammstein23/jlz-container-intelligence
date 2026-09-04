@@ -34,6 +34,8 @@ var coGet = function(){ return null; };
 var COMMITTED = [];
 var getCommitted = function(){ return COMMITTED; };
 var _cmProd = function(c){ return c.prod; };
+// Tercer estado de una orden: despachada pero sin facturar. Por defecto ninguna lo está.
+var _cmShipped = function(c){ return !!(c && c.shipped); };
 var _cmOriginFor = function(c){ return c.origin || ''; };
 var invmCommittedByWeek = function(prod, origin, fromWk){
   var o = {};
