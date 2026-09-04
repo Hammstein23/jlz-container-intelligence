@@ -2594,6 +2594,11 @@ function authInjectLogo() {
       <span class="h">run-rate &amp; cover per product+origin &middot; each on its own window &middot; click a line to focus everything</span>
     </div>
     <div class="dm-pulse" id="dm-pulse" style="margin-bottom:6px"></div>
+    <!-- ZONE 2: This week — dónde estamos parados dentro de la semana en curso -->
+    <div class="dm-zl"><span class="n">2</span><span class="t">This week</span>
+      <span class="h">how much of the week is still ahead &middot; six selling days, Sunday excluded</span>
+    </div>
+    <div id="dm-week" style="margin-bottom:6px"></div>
     <!-- La zona de filtros se eliminó: cada tarjeta de la zona 1 YA es un producto+origen, así que las
          pastillas de origen repetían el mismo control. El selector de proveedor estaba deshabilitado
          desde siempre ("via Lot # → container link · next step") — un control muerto que prometía una
@@ -11851,7 +11856,7 @@ function committedInvForWeek(wk, product) {
 //    their committed for this specific week — its average is not projected in the weeks it didn't order.
 //  · Accounts committed but unknown to the model: add their full committed (they're not in the baseline).
 // The caller applies the shrink inflation (weeklyDemand = salesDemand × 1/(1-shrink)) to the result.
-function hybridSalesForWeek(wk, salesDemand, model, product, extraOrders) {
+function hybridSalesForWeek(wk, salesDemand, model, product, extraOrders, origin) {
   var custs = (model && model.customers) || null;
   if (!custs) return null;   // no model → caller falls back to legacy max()
   // committed for THIS week per customer, and each customer's LAST committed week (its "known horizon")
@@ -11875,8 +11880,17 @@ function hybridSalesForWeek(wk, salesDemand, model, product, extraOrders) {
     if (w === wk) comThis[cust] = (comThis[cust] || 0) + (+cases || 0);
     if (!comLast[cust] || w > comLast[cust]) comLast[cust] = w;
   };
+  // ── El committed también tiene que respetar el ORIGEN ──────────────────────────────────────────
+  // Sin esto, un producto con dos orígenes suma en uno el committed del otro: el modelo llega filtrado
+  // a Hawaii (1 cliente, 8 cs/semana) pero el committed entraba entero, y la semana del 7-sep daba
+  // 275 cs — los 267 de Whole Foods, que son de PERÚ. Las filas del build-up sí filtraban, así que el
+  // volumen aparecía solo en el total de la columna, sin ninguna fila que lo explicara.
+  // `origin` es opcional: quien no lo pasa (el Buy Planner, que compra ginger de todos los orígenes)
+  // se comporta exactamente igual que antes.
+  var _hpOrg = (origin && origin !== 'All' && origin !== 'all') ? origin : '';
   cmPlanEntries().forEach(function(c){
     if (!c || c.type !== 'inv' || !c.wk || _cmProd(c) !== _hp) return;
+    if (_hpOrg && typeof _cmOriginFor === 'function'){ var _o = _cmOriginFor(c); if (_o && _o !== _hpOrg) return; }
     _acc(c.customer, c.wk, c.cases);
   });
   // Extra (hypothetical) orders — Simulator scenarios — netted IDENTICALLY to committed: for an
@@ -14460,7 +14474,10 @@ function bpGetPipelineByWeek() {
 // / (1 - shrink@age) = the true break-even per pound.
 var BP_INV_LS='jlz_bp_inv';
 function bpInvState(){ try{var o=JSON.parse(localStorage.getItem(BP_INV_LS)||'{}')||{}; if(!o.rows)o.rows={}; return o;}catch(e){return{rows:{}};} }
-function bpInvSave(st){ try{localStorage.setItem(BP_INV_LS,JSON.stringify(st));}catch(e){} }
+// Se sella la fecha del guardado: el Buy Planner compara stock contra demanda, y sin saber de cuándo
+// es cada foto no hay forma de ver que están desfasadas. El 2026-09-03 el stock era del lunes y la
+// demanda de la semana en curso, y desde la pantalla eso era invisible.
+function bpInvSave(st){ try{ if(st) st.savedAt = bpTodayISO(); localStorage.setItem(BP_INV_LS,JSON.stringify(st)); }catch(e){} }
 function esc_(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
 function bpF0(n){ return Math.round(n||0).toLocaleString('en-US'); }
 function bpTodayISO(){ var d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -14782,7 +14799,7 @@ function prodInvSeed(){ return {
   ]}
 }; }
 function prodInvState(){ try{ var o=JSON.parse(localStorage.getItem(PROD_INV_LS)||'null'); if(o&&typeof o==='object') return o; }catch(e){} var s=prodInvSeed(); try{ localStorage.setItem(PROD_INV_LS, JSON.stringify(s)); }catch(e){} return s; }
-function prodInvSave(st){ try{ localStorage.setItem(PROD_INV_LS, JSON.stringify(st)); }catch(e){} }
+function prodInvSave(st){ try{ if(st) st._savedAt = (typeof bpTodayISO==='function')?bpTodayISO():null; localStorage.setItem(PROD_INV_LS, JSON.stringify(st)); }catch(e){} }
 function prodInvFor(p){ var st=prodInvState(); if(!st[p]) st[p]={serviceLevel:95,demandOverride:null,lots:[]}; return st[p]; }
 // ── DIRECT-SHIP / MADE-TO-ORDER accounts ──────────────────────────────────────
 // An account whose PO is placed with the supplier only once the customer confirms,
@@ -15956,6 +15973,44 @@ function bpLeadTimeSigmaWeeks(){
   return { sigmaWeeks: 1.0, n: 0 };
 }
 
+// ── De cuándo es la foto que estás mirando ───────────────────────────────────────────────────────
+// El plan compara stock contra demanda, y las dos cosas se cargan en momentos distintos: las ventas
+// suben los lunes y el inventario los lunes y jueves. A mitad de semana eso significa mirar un stock
+// de hace tres días contra una demanda de la semana en curso, sin nada en pantalla que lo diga.
+// Este sello no corrige nada — solo hace visible qué tan vieja es cada mitad de la comparación.
+function bpFreshnessStamp(){
+  var bits = [], stale = 0;
+  try{
+    var last = '';
+    (typeof _dmRawAll !== 'undefined' ? (_dmRawAll || []) : []).forEach(function(r){
+      if(r && r.d && String(r.d) > last) last = String(r.d); });
+    if(last){
+      var a = new Date(last + 'T00:00:00'), n = new Date();
+      stale = Math.max(0, Math.round((new Date(n.getFullYear(), n.getMonth(), n.getDate()) - a) / 864e5));
+      bits.push('sales through <b>' + last + '</b>' + (stale > 0 ? ' (' + stale + 'd ago)' : ' (today)'));
+    } else { bits.push('no sales loaded'); }
+  }catch(e){}
+  try{
+    var st = (typeof bpInvState === 'function') ? bpInvState() : null;
+    var sv = st && st.savedAt;
+    if(sv){
+      var b = new Date(sv + 'T00:00:00'), n2 = new Date();
+      var d2 = Math.max(0, Math.round((new Date(n2.getFullYear(), n2.getMonth(), n2.getDate()) - b) / 864e5));
+      bits.push('stock counted <b>' + sv + '</b>' + (d2 > 0 ? ' (' + d2 + 'd ago)' : ' (today)'));
+      if(d2 > stale) stale = d2;
+    } else { bits.push('stock not date-stamped yet'); }
+  }catch(e){}
+  if(!bits.length) return '';
+  var warn = stale >= 3;
+  return '<div style="display:flex;align-items:center;gap:7px;margin:-2px 0 11px;padding:6px 9px;border-radius:6px;'
+       + 'font-size:10.5px;font-family:var(--fm);line-height:1.5;'
+       + (warn ? 'background:#FFFBEB;border:1px solid #FDE68A;color:#92400E'
+               : 'background:var(--gray-50);border:1px solid var(--gray-200);color:var(--gray-500)') + '">'
+       + '<span style="flex:none">' + (warn ? '&#9888;' : '&#128337;') + '</span>'
+       + '<span>Based on ' + bits.join(' &middot; ') + '.'
+       + (warn ? ' Refresh both before acting on this.' : '') + '</span></div>';
+}
+
 function renderBuyPlanner() {
   // Product selector: ginger keeps the full planner below; other products use the projection view.
   // The ginger body is still computed every call (it keeps _bpDigest fresh for the rest of the app),
@@ -16719,7 +16774,7 @@ function renderBuyPlanner() {
     if (actionCard) actionCard.style.borderLeftColor = 'var(--green-600)';
     if (actionSummary) actionSummary.textContent = 'no order needed';
     if(typeof bpSyncStatus==='function') bpSyncStatus();
-    recEl.innerHTML = '<div style="display:flex;align-items:center;gap:10px;color:var(--green-700);font-size:var(--text-13);font-family:var(--fb)">'
+    recEl.innerHTML = bpFreshnessStamp() + '<div style="display:flex;align-items:center;gap:10px;color:var(--green-700);font-size:var(--text-13);font-family:var(--fb)">'
       + '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>'
       + '<span><strong>Inventory well-covered</strong> for the next 12 weeks. Safety buffer: ' + Math.round(safetyThreshold).toLocaleString() + ' cases (~' + safety + ' wks) at ' + serviceLevel + '% service level. No order needed today.</span>'
       + '</div>';
@@ -17010,7 +17065,7 @@ function renderBuyPlanner() {
       + '<div style="font-size:9px;color:var(--gray-400);font-family:var(--fm);margin-top:8px;line-height:1.5">One weekly sailing \u00b7 Callao\u2192Hueneme \u00b7 Sat departure \u00b7 16-day ocean. You control how many Saturdays you load, not the spacing \u2014 the lever is skipping a sailing.</div>'
     + '</div>';
 
-    recEl.innerHTML = headerHtml
+    recEl.innerHTML = bpFreshnessStamp() + headerHtml
       + recHtml
       + guardHtml
       + '<div style="display:flex;gap:8px;margin-bottom:8px">'
@@ -24155,6 +24210,161 @@ function dmTrendPriceShell(){
     + '</div></div>';
 }
 // Rows for the focused single product (+ active origin filter).
+// ── Dónde estamos parados DENTRO de la semana ────────────────────────────────────────────────────
+// La semana comercial son SEIS días: el domingo no factura (0% en los cuatro productos, medido sobre
+// 26 semanas). El día EN CURSO cuenta como "por delante", no como cumplido — así el número erra
+// siempre del lado de comprar de más, nunca de menos.
+//
+// Repartir parejo en 6 se eligió DESPUÉS de medirlo contra el perfil real de cada producto, no por
+// simplicidad. Queda conservador casi todos los días; la única desviación optimista es de 4-6 puntos
+// (ginger un lunes, garlic un martes). Repartir en 5 (lun-vie) daba OPTIMISTA en ginger hasta 13
+// puntos un jueves — descartado, porque ginger es el que mueve la compra. Y al no depender de
+// historia por producto, shallots (6 órdenes en 4 semanas) funciona igual que ginger (395 órdenes),
+// sin reglas de muestra mínima ni perfiles que serían puro ruido.
+//
+// Esto NO alimenta el plan de compra, a propósito: el plan decide sobre semanas completas a 8 semanas
+// vista, y el residuo de media semana es un corrimiento de nivel de una sola vez. Se barrió la banda
+// entera el 2026-09-03 — de 150 a 1.000 cajas en la semana en curso, la respuesta es 3 contenedores.
+var DM_SELL_DAYS = 6;                                       // lun…sáb
+function dmWeekPace(d){
+  var day = (d || new Date()).getDay();                     // 0 dom … 6 sáb
+  var done = (day === 0) ? DM_SELL_DAYS : Math.max(0, day - 1);   // días hábiles YA cerrados
+  if(done > DM_SELL_DAYS) done = DM_SELL_DAYS;
+  return { done: done, ahead: DM_SELL_DAYS - done, aheadPct: (DM_SELL_DAYS - done) / DM_SELL_DAYS };
+}
+
+// Los números de la semana en curso para el producto+origen activo. Devuelve null si todavía no hay
+// modelo (mismo criterio que el resto de los paneles: no dibujar antes de tener con qué).
+function dmWeekStatus(){
+  var prod = (typeof productFocus === 'function') ? productFocus() : 'ginger';
+  if(typeof dmWeekKey !== 'function') return null;
+  var _org = (typeof _dmOrigin !== 'undefined' && _dmOrigin && _dmOrigin !== 'All' && _dmOrigin !== 'all') ? _dmOrigin : '';
+  // Mismo criterio que el build-up: el modelo de producción de ginger (todos los orígenes) solo se usa
+  // cuando NO hay un origen concreto elegido; si no, Perú se dibujaría bajo la solapa de Hawaii.
+  var _useG = (prod === 'ginger') && !_org;
+  var m = _useG ? ((typeof _dmModelG !== 'undefined' && _dmModelG) ? _dmModelG : (typeof _dmModel !== 'undefined' ? _dmModel : null))
+                : ((typeof _dmModel !== 'undefined') ? _dmModel : null);
+  if(!m || !Array.isArray(m.customers) || !m.customers.length) return null;
+  var caseLb = m.caseLb || DM_CASE_LB;
+  var wk = dmWeekKey(new Date());
+  var pace = dmWeekPace();
+
+  // Base de run-rate en cajas, sin direct-ship — la misma cuenta que hace el build-up.
+  var _win = (typeof dmWindow === 'function') ? dmWindow(prod) : 13;
+  var _k = (_win === 3) ? 'rr3Cases' : (_win === 6) ? 'rr6Cases' : (_win === 26) ? 'rr26Cases' : 'rrCases';
+  var _isDS = function(c){ try{ return (typeof isDirectShipRow === 'function') && isDirectShipRow({ c: c, prod: prod }); }catch(e){ return false; } };
+  var _ds = (m.customers || []).reduce(function(a, c){
+    return a + ((c && c.c && _isDS(c.c)) ? ((c[_k] != null ? c[_k] : c.rrCases) || 0) : 0); }, 0);
+  var _rrW = (_win === 3 ? (m.runRate3 || m.runRate13) : _win === 6 ? (m.runRate6 || m.runRate13)
+            : _win === 26 ? (m.runRate26 || m.runRate13) : m.runRate13) || 0;
+  var salesBase = Math.max(0, _rrW / caseLb - _ds);
+  var est = (typeof hybridSalesForWeek === 'function') ? hybridSalesForWeek(wk, salesBase, m, prod, null, _org) : null;
+  est = Math.round((est == null ? salesBase : est) || 0);
+
+  // Lo que ya está vendido para esta semana y todavía NO salió del almacén. cmPlanEntries() ya saca
+  // las despachadas, que es justo lo que no hay que mostrar como "por delante".
+  var named = [], namedCs = 0;
+  if(typeof cmPlanEntries === 'function'){
+    cmPlanEntries().forEach(function(c){
+      if(!c || c.type !== 'inv' || c.wk !== wk) return;
+      if(((typeof _cmProd === 'function') ? _cmProd(c) : 'ginger') !== prod) return;
+      if(_org && typeof _cmOriginFor === 'function'){ var o = _cmOriginFor(c); if(o && o !== _org) return; }
+      if(_isDS(c.customer)) return;                          // direct-ship no toca el almacén
+      namedCs += (+c.cases || 0);
+      named.push({ c: c.customer || '(sin nombre)', cs: (+c.cases || 0) });
+    });
+  }
+  named.sort(function(x, y){ return y.cs - x.cs; });
+
+  // Hasta dónde llega la carga de ventas. Sin esto, el panel invita a leer "va lento" cuando lo que
+  // pasa es que faltan días por cargar.
+  var lastLoaded = '';
+  (typeof _dmRawAll !== 'undefined' ? (_dmRawAll || []) : []).forEach(function(r){
+    if(r && r.d && String(r.d) > lastLoaded) lastLoaded = String(r.d); });
+  var staleDays = 0;
+  if(lastLoaded){
+    var a = new Date(lastLoaded + 'T00:00:00'), n = new Date();
+    staleDays = Math.max(0, Math.round((new Date(n.getFullYear(), n.getMonth(), n.getDate()) - a) / 864e5));
+  }
+  var ahead = Math.round(est * pace.aheadPct);
+  // `rrAll` y `ds` explican un est en cero. Shallots vende 3,9 cs/semana pero 3,45 son direct-ship:
+  // la demanda de STOCK es 0,45 y redondea a 0. Sin esta distinción el panel muestra una tabla de
+  // ceros y se lee como si estuviera roto, cuando el número es correcto.
+  return { prod: prod, origin: _org, wk: wk, pace: pace, est: est, ahead: ahead,
+           named: named, namedCs: Math.round(namedCs), rrAll: _rrW / caseLb, ds: _ds,
+           lastLoaded: lastLoaded, staleDays: staleDays, win: _win };
+}
+
+function renderWeekPanel(){
+  var host = document.getElementById('dm-week'); if(!host) return;
+  var s = dmWeekStatus();
+  if(!s){ host.innerHTML = ''; return; }
+  var E = function(t){ return String(t == null ? '' : t).replace(/[&<>"]/g, function(c){
+    return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); };
+  var N = function(n){ return Math.round(n || 0).toLocaleString(); };
+  var DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  var today = new Date();
+  var pl = (typeof productLabel === 'function') ? productLabel(s.prod) : s.prod;
+  var scope = E(pl) + (s.origin ? ' &middot; ' + E(s.origin) : ' &middot; all origins');
+  var pctDone = Math.round(s.pace.done / DM_SELL_DAYS * 100);
+  var unnamed = Math.max(0, s.ahead - s.namedCs);
+  // El committed puede superar lo que el ritmo dice que falta: son órdenes reales, mandan ellas.
+  var over = s.namedCs > s.ahead;
+
+  var h = '<div class="dwk">';
+  h += '<div class="dwk-hd"><div class="dwk-t">This week &middot; ' + scope + '</div>'
+     + '<div class="dwk-d">' + DAYS[today.getDay()] + ' &middot; ' + s.pace.done + ' of ' + DM_SELL_DAYS + ' selling days closed</div></div>';
+  h += '<div class="dwk-bar" title="' + pctDone + '% of the selling week is behind you"><i style="width:' + pctDone + '%"></i></div>';
+  if(s.est < 1){
+    // Cero de verdad, pero hay que decir POR QUÉ: "0 cs" a secas se lee como un panel roto.
+    var why;
+    if(s.ds > 0 && s.rrAll - s.ds < 1){
+      why = 'Nothing to cover from stock this week. ' + E(pl) + ' sells about ' + N(s.rrAll)
+          + ' cs/week, but it ships <b>direct to the customer</b> and never enters the warehouse.';
+    } else if(s.rrAll < 1){
+      why = 'No sales in the last ' + s.win + ' weeks &mdash; nothing to pace yet.';
+    } else {
+      why = 'Nothing left to cover from stock this week.';
+    }
+    h += '<div class="dwk-none">' + why + '</div>';
+    if(s.namedCs > 0){
+      h += '<table class="dwk-tbl"><tr class="sub"><td>&mdash; still, orders on the books</td>'
+         + '<td class="n">' + N(s.namedCs) + ' cs</td><td class="m">'
+         + s.named.slice(0,3).map(function(x){ return E(x.c) + ' ' + N(x.cs); }).join(' &middot; ') + '</td></tr></table>';
+    }
+    h += '<div class="dwk-ft">Sales loaded through ' + E(s.lastLoaded || 'n/a')
+       + (s.staleDays > 0 ? ' (' + s.staleDays + 'd behind)' : '') + '.</div></div>';
+    host.innerHTML = h; return;
+  }
+  h += '<table class="dwk-tbl">';
+  h += '<tr><td>A typical week</td><td class="n">' + N(s.est) + ' cs</td>'
+     + '<td class="m">run-rate &middot; ' + s.win + '-wk window</td></tr>';
+  h += '<tr class="hi"><td>Still ahead</td><td class="n">' + N(s.ahead) + ' cs</td>'
+     + '<td class="m">' + Math.round(s.pace.aheadPct * 100) + '% of the week &mdash; today counts as ahead</td></tr>';
+  if(s.named.length){
+    var who = s.named.slice(0, 3).map(function(x){ return E(x.c) + ' ' + N(x.cs); }).join(' &middot; ')
+            + (s.named.length > 3 ? ' &middot; +' + (s.named.length - 3) + ' more' : '');
+    h += '<tr class="sub"><td>&mdash; already ordered</td><td class="n">' + N(s.namedCs) + ' cs</td>'
+       + '<td class="m">' + who + '</td></tr>';
+  }
+  if(!over){
+    h += '<tr class="sub"><td>&mdash; not ordered yet</td><td class="n">' + N(unnamed) + ' cs</td>'
+       + '<td class="m">expected from the run-rate</td></tr>';
+  } else {
+    h += '<tr class="sub warn"><td>&mdash; over the pace</td><td class="n">+' + N(s.namedCs - s.ahead) + ' cs</td>'
+       + '<td class="m">real orders already exceed what the pace expected &mdash; the week is running hot</td></tr>';
+  }
+  h += '</table>';
+  var ft = 'Sunday is not counted &mdash; it never invoices.';
+  if(s.lastLoaded){
+    ft += ' &middot; Sales loaded through ' + E(s.lastLoaded)
+        + (s.staleDays > 0 ? ' <b>(' + s.staleDays + ' day' + (s.staleDays === 1 ? '' : 's') + ' behind)</b>' : ' (current)');
+  }
+  ft += ' &middot; This is a pacing view &mdash; the buying plan always uses full weeks.';
+  h += '<div class="dwk-ft">' + ft + '</div></div>';
+  host.innerHTML = h;
+}
+
 function dmFocusRows(){
   const fp=(typeof productFocus==='function')?productFocus():'ginger';
   return (_dmRawAll||[]).filter(r => {
@@ -24379,6 +24589,23 @@ function dmZoneStyles(){ return '<style>'
 + '.dm-zl .n{font-size:10px;font-weight:700;font-family:var(--fm);color:var(--jlz);background:var(--jlz-light);width:20px;height:20px;border-radius:5px;display:flex;align-items:center;justify-content:center;flex:none}'
 + '.dm-zl .t{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--gray-600)}'
 + '.dm-zl .h{font-size:11px;color:var(--gray-400);margin-left:auto;text-align:right}'
++ '.dwk{background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:13px 15px}'
++ '.dwk-hd{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:9px}'
++ '.dwk-t{font-size:12.5px;font-weight:700;color:var(--gray-800)}'
++ '.dwk-d{font-size:11px;color:var(--gray-500);margin-left:auto;font-family:var(--fm)}'
++ '.dwk-bar{height:5px;border-radius:3px;background:var(--gray-100);overflow:hidden;margin-bottom:11px}'
++ '.dwk-bar i{display:block;height:100%;background:var(--jlz);border-radius:3px}'
++ '.dwk-tbl{width:100%;border-collapse:collapse;font-size:12.5px}'
++ '.dwk-tbl td{padding:3px 0;vertical-align:baseline;color:var(--gray-700)}'
++ '.dwk-tbl td.n{text-align:right;font-family:var(--fm);font-weight:700;white-space:nowrap;padding-left:14px;font-variant-numeric:tabular-nums}'
++ '.dwk-tbl td.m{color:var(--gray-400);font-size:11px;padding-left:14px;width:52%}'
++ '.dwk-tbl tr.hi td{font-weight:700;color:var(--gray-900);border-top:1px solid var(--gray-200);padding-top:7px}'
++ '.dwk-tbl tr.hi td.m{font-weight:400;color:var(--gray-500)}'
++ '.dwk-tbl tr.sub td{color:var(--gray-500);padding-left:9px}'
++ '.dwk-tbl tr.sub td.n{color:var(--gray-700);font-weight:600}'
++ '.dwk-tbl tr.warn td.n{color:var(--amber-700,#b45309)}'
++ '.dwk-none{font-size:12.5px;color:var(--gray-600);line-height:1.55;padding:2px 0 4px}'
++ '.dwk-ft{margin-top:10px;padding-top:8px;border-top:1px solid var(--gray-100);font-size:10.5px;color:var(--gray-400);line-height:1.5}'
 + '.dm-allbtn{font:inherit;font-size:11px;font-weight:600;font-family:var(--fm);color:var(--gray-600);background:var(--white);border:1px solid var(--gray-200);border-radius:14px;padding:3px 12px;cursor:pointer}'
 + '.dm-allbtn:hover{border-color:var(--gray-300);color:var(--gray-800)}'
 + '.dm-allbtn.on{background:var(--jlz);border-color:var(--jlz);color:#fff}'
@@ -24467,6 +24694,7 @@ function renderDemand(){
   if (!m || !m.customers || !m.customers.length){
     host.innerHTML = dmZoneStyles() + dmEmptyStateHTML();
     dmRenderPulse();
+    try{ if (typeof renderWeekPanel === 'function') renderWeekPanel(); }catch(e){}
     if (typeof renderCommittedPanel === 'function') renderCommittedPanel(m);
     if (typeof renderBuildupPanel === 'function') renderBuildupPanel();
     if (typeof renderDemandAccuracy === 'function') renderDemandAccuracy();
@@ -24474,11 +24702,12 @@ function renderDemand(){
     return;
   }
   host.innerHTML = cxStyles() + dmZoneStyles()
-    + dmZoneLabel(2,'Run-rate','what they buy per week — traceable to weeks &amp; customers')
+    + dmZoneLabel(3,'Run-rate','what they buy per week — traceable to weeks &amp; customers')
     + '<div id="dm-runrate"></div>'
-    + dmZoneLabel(3,'Trend &amp; Price','does price explain the move?')
+    + dmZoneLabel(4,'Trend &amp; Price','does price explain the move?')
     + dmTrendPriceShell();
   dmRenderPulse();
+  try{ if (typeof renderWeekPanel === 'function') renderWeekPanel(); }catch(e){}
   dmRenderTrendPrice();
   try { if (typeof renderDmRunRate === 'function') renderDmRunRate(); } catch(e){ console.warn('dm-runrate:', e); }
   if (typeof renderCommittedPanel === 'function') renderCommittedPanel(m);
@@ -24574,7 +24803,7 @@ function renderCommittedPanel(model) {
   var custs = dmcCustomers(m);
   var futures = (typeof bpFutureWeeks === 'function') ? bpFutureWeeks(11).slice(1) : [];  // next 10 weeks (skip the current, still-open week)
   var arriving = isG ? dmcArrivingOrders() : [];
-  var zone = '<div class="dm-zl"><span class="n">5</span><span class="t">Committed orders</span><span class="h">sold, not yet shipped · feeds the ' + (isG ? 'buying plan' : libEsc(pl) + ' build-up') + '</span></div>';
+  var zone = '<div class="dm-zl"><span class="n">6</span><span class="t">Committed orders</span><span class="h">sold, not yet shipped · feeds the ' + (isG ? 'buying plan' : libEsc(pl) + ' build-up') + '</span></div>';
   if(!custs.length) {
     host.innerHTML = zone + '<div class="dmc-card"><div class="dmc-empty">Load a <b>Sales</b> report at the top of this tab to pick customers, then add committed orders here.</div></div>';
     return;
@@ -24708,6 +24937,10 @@ function dmToggleOther(cls, btn){
   if(btn) btn.innerHTML = (open ? '▾ ocultar' : '▸ ver las ' + rows.length);
 }
 function renderBuildupPanel(){
+  // La zona 2 vive en su propio host pero se repinta con los mismos disparadores que el build-up
+  // (cambio de producto/origen, committed editado, ventana movida). Engancharla acá evita repetir
+  // la llamada en los ocho lugares que ya llaman a este render.
+  try{ if(typeof renderWeekPanel === 'function') renderWeekPanel(); }catch(e){}
   var host = document.getElementById('dm-buildup'); if(!host) return;
   var prod = (typeof productFocus === 'function') ? productFocus() : 'ginger';
   var isG = (prod === 'ginger');
@@ -24877,7 +25110,7 @@ function renderBuildupPanel(){
   var histBooked = histWeeks.map(function(wk){
     var t = 0; _custsIn(wk).forEach(function(cust){ if(!_isDS(cust)) t += bookedCases(cust, wk); }); return Math.round(t);
   });
-  var planTot = weeks.map(function(w){ try { return Math.round(hybridSalesForWeek(w.weekStartISO, salesBase, m, prod) || 0); } catch(e){ return 0; } });
+  var planTot = weeks.map(function(w){ try { return Math.round(hybridSalesForWeek(w.weekStartISO, salesBase, m, prod, null, _bpOrigin) || 0); } catch(e){ return 0; } });
   var colTot = weeks.map(function(){ return 0; });
   var body = '';
   shown.forEach(function(c){
@@ -24905,7 +25138,7 @@ function renderBuildupPanel(){
   var total = weeks.map(function(w, i){ return colTot[i] + resid[i]; });
   var pl = (typeof productLabel === 'function') ? productLabel(prod) : prod;
   var usesLine = _useG ? 'The column total is what the Buy Planner uses.' : ('The column total is your weekly ' + esc(pl) + ' demand — buy to it.');
-  var h = dmZoneLabel(4,'Forward build-up','next 7 weeks — run-rate + committed, per customer') + '<div class="card dbu">';
+  var h = dmZoneLabel(5,'Forward build-up','next 7 weeks — run-rate + committed, per customer') + '<div class="card dbu">';
   h += '<div class="dbu-hd"><div class="dbu-t">Demand build-up by customer</div><div class="dbu-s">How the projected weekly demand is built — invoiced run-rate + allocated (committed) orders. ' + usesLine + '</div></div>';
   h += '<div class="dbu-lg"><span><i class="sw a"></i>Allocated — real order placed</span><span><i class="sw r"></i>Run-rate — projected from history</span><span><b class="bd od">OD</b>order-driven <b class="bd st">ST</b>steady</span><span><b style="color:#b45309">not invoiced</b>&nbsp;sold, invoice not issued yet</span><span><b style="color:var(--gray-400)">N already sold</b>&nbsp;part of that week is already booked</span></div>';
   h += '<div class="dbu-wrap"><table class="dbu-tbl"><thead>';
@@ -25684,7 +25917,7 @@ function renderDemandAccuracy(){
   const realMgBadge = (realMg==null) ? '<span class="dm-bd soon">needs upload</span>'
     : '<span class="dm-bd '+(realMg>=10?'good':realMg>=4?'warn':'bad')+'">'+realMg.toFixed(1)+'%</span>';
 
-  host.innerHTML = dmZoneLabel(6,'Buy confidence','demand reliability \u2192 how much to buy \u2192 real margin \u00b7 '+cxEsc(meta.label)) +
+  host.innerHTML = dmZoneLabel(7,'Buy confidence','demand reliability \u2192 how much to buy \u2192 real margin \u00b7 '+cxEsc(meta.label)) +
     '<div class="dm-card">'
     + '<div class="dm-ch"><span class="dm-accent" style="background:'+meta.accent+'"></span><span class="ttl">'+cxEsc(meta.label)+' \u2014 buy confidence</span></div>'
     + '<div class="dm-cb">'

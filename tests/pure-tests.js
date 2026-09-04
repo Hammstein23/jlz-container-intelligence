@@ -641,6 +641,42 @@ ok('dice para qué sirve un override manual', /just signed/.test(_oc) && /weekly
 // El flag `shipped` sacaba la orden del STOCK pero no de la DEMANDA: el plan partía de un inventario
 // que ya la excluía y encima se la restaba otra vez como demanda de la semana. Sol-ti, 1.000 cs
 // entregadas el 1-sep: la demanda de la semana daba 1.658 en vez de 892 y pedía 4 contenedores.
+group('dmWeekPace · la semana comercial son seis días');
+// 2026: 31-ago lun · 3-sep jue · 5-sep sáb · 6-sep dom
+check('lunes: nada cerrado, toda la semana por delante', dmWeekPace(new Date(2026,7,31)).done, 0);
+check('lunes deja 6 días por delante',                   dmWeekPace(new Date(2026,7,31)).ahead, 6);
+check('jueves: tres días cerrados',                      dmWeekPace(new Date(2026,8,3)).done, 3);
+check('jueves deja media semana',        Math.round(dmWeekPace(new Date(2026,8,3)).aheadPct*100), 50);
+check('sábado: solo queda el propio sábado',             dmWeekPace(new Date(2026,8,5)).ahead, 1);
+check('domingo: la semana está cerrada',                 dmWeekPace(new Date(2026,8,6)).ahead, 0);
+check('el día en curso NUNCA cuenta como cumplido — erra a comprar de más',
+      dmWeekPace(new Date(2026,8,3)).done < 4, true);
+
+group('dmWeekPace · por qué SEIS días y no cinco');
+// Reparto acumulado real, medido sobre 26 semanas (mar–ago 2026), % facturado al cierre de cada día.
+// Shallots queda afuera a propósito: 6 órdenes en 4 semanas no es un perfil, es ruido.
+var PERFIL = {
+  ginger:   [12, 37, 52, 67, 99, 100],
+  turmeric: [26, 43, 67, 86, 99, 100],
+  garlic:   [26, 28, 53, 73, 97, 100]
+};
+// En el día D nuestra regla dice que falta (6-(D-1))/6. Lo real que falta es 100 menos lo acumulado
+// hasta el día ANTERIOR. Positivo = decimos que falta más de lo que falta = conservador = seguro.
+function peorDesvio(dias){
+  var peor = 99;
+  Object.keys(PERFIL).forEach(function(p){
+    for(var D=1; D<=6; D++){
+      var real  = 100 - (D === 1 ? 0 : PERFIL[p][D-2]);
+      var ours  = Math.max(0, (dias - (D-1))) / dias * 100;
+      peor = Math.min(peor, ours - real);
+    }
+  });
+  return peor;
+}
+check('con 6 días nunca se pone optimista por más de 7 puntos', peorDesvio(6) >= -7, true);
+check('con 5 días (lun-vie) sí — por eso se descartó',          peorDesvio(5) >= -7, false);
+check('y la constante del código es 6',                          DM_SELL_DAYS, 6);
+
 group('cmPlanEntries · el único filtro de las despachadas');
 (function(){
   var real = getCommitted;
@@ -673,5 +709,60 @@ COMMITTED[0].shipped = true;
 check('marcada como despachada, ya no suma', Math.round(hybridSalesForWeek('2026-08-31', 892, _md, 'ginger')), 892);
 ok('y la entrada sigue en el store, para que el build-up la muestre como volumen',
    getCommitted().length === 1 && getCommitted()[0].cases === 1000);
+
+group('renderWeekPanel · el HTML cierra bien en las dos ramas');
+// El panel tiene dos salidas (la tabla normal y el estado "no hay demanda de stock") y comparten el
+// <div class="dwk"> de apertura. Un </div> de menos en cualquiera de las dos rompe el layout de todo
+// lo que viene abajo, y eso no se ve en el contador de divs del archivo: hay que mirar lo que SALE.
+var _painted = '';
+document = { getElementById: function(id){
+  return (id === 'dm-week') ? { set innerHTML(v){ _painted = v; }, get innerHTML(){ return _painted; } } : null;
+} };
+productLabel = function(p){ return p.charAt(0).toUpperCase() + p.slice(1); };
+function balanceOK(html){
+  var o = (html.match(/<div\b/g) || []).length, c = (html.match(/<\/div>/g) || []).length;
+  return o === c && o > 0;
+}
+var _base = { prod:'ginger', origin:'Peru', wk:'2026-08-31', pace:dmWeekPace(new Date(2026,8,3)),
+              named:[{c:"Albert's",cs:42}], namedCs:42, rrAll:900, ds:0,
+              lastLoaded:'2026-09-01', staleDays:2, win:6 };
+
+dmWeekStatus = function(){ var o = {}; for(var k in _base) o[k] = _base[k];
+                           o.est = 892; o.ahead = 446; return o; };
+renderWeekPanel();
+check('rama normal: los div cierran', balanceOK(_painted), true);
+ok('y muestra el número de la semana', _painted.indexOf('892') >= 0);
+ok('y nombra a quien ya ordenó', _painted.indexOf("Albert's") >= 0);
+
+dmWeekStatus = function(){ var o = {}; for(var k in _base) o[k] = _base[k];
+                           o.est = 0; o.ahead = 0; o.rrAll = 3.9; o.ds = 3.45; return o; };
+renderWeekPanel();
+check('rama sin demanda de stock: los div también cierran', balanceOK(_painted), true);
+ok('y explica que es direct-ship, en vez de mostrar ceros', _painted.indexOf('direct') >= 0);
+ok('sin imprimir una tabla de ceros', _painted.indexOf('A typical week') < 0);
+
+dmWeekStatus = function(){ var o = {}; for(var k in _base) o[k] = _base[k];
+                           o.est = 0; o.ahead = 0; o.rrAll = 0; o.ds = 0; o.namedCs = 0; o.named = []; return o; };
+renderWeekPanel();
+ok('y si simplemente no hubo ventas, lo dice así', _painted.indexOf('No sales in the last') >= 0);
+check('ese caso también cierra bien', balanceOK(_painted), true);
+
+group('hybridSalesForWeek · el committed también respeta el origen');
+// Caso real 2026-09-03: ginger·Hawaii tiene 1 cliente y 8 cs/semana, pero la semana del 7-sep daba
+// 275 cs — los 267 de Whole Foods, que son de PERÚ. Las filas del build-up sí filtraban por origen,
+// así que ese volumen salía solo en el total de la columna, sin fila que lo explicara.
+_cmOriginFor = function(c){ return c.origin || ''; };
+var _mHi = { customers:[{c:'Local Hawaii', rrCases:8, rr6Cases:8, rr3Cases:8}] };
+COMMITTED = [
+  {type:'inv', wk:'2026-09-07', customer:'Whole Foods', cases:267, prod:'ginger', origin:'Peru'},
+  {type:'inv', wk:'2026-09-07', customer:'Local Hawaii', cases:5,  prod:'ginger', origin:'Hawaii'}
+];
+check('con origen Hawaii, el committed de Perú no entra',
+      Math.round(hybridSalesForWeek('2026-09-07', 8, _mHi, 'ginger', null, 'Hawaii')), 8);
+check('sin origen, se comporta igual que siempre — el Buy Planner no cambia',
+      Math.round(hybridSalesForWeek('2026-09-07', 8, _mHi, 'ginger')) > 200, true);
+check('"All" no filtra nada',
+      Math.round(hybridSalesForWeek('2026-09-07', 8, _mHi, 'ginger', null, 'All')),
+      Math.round(hybridSalesForWeek('2026-09-07', 8, _mHi, 'ginger')));
 
 summary();

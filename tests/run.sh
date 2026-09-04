@@ -36,8 +36,13 @@ echo
 echo "══ Modelo de demanda ═══════════════════════════════════════════"
 python3 "$DIR/extract.py" "$HTML" "$TMP/app.js" \
   dmWeekKey nowcastProductModel dmToggleOther renderBuildupPanel dmEffectiveRunRateLbs \
-  dmISOLocal bpFutureWeeks bpWeeksOfCover cmPlanEntries hybridSalesForWeek dsNamesFor dsLabelFor jlzSyncScope getActiveOrigin \
+  dmISOLocal bpFutureWeeks bpWeeksOfCover cmPlanEntries dmWeekPace renderWeekPanel hybridSalesForWeek dsNamesFor dsLabelFor jlzSyncScope getActiveOrigin \
   dmLineOrigins dmLineStats dmProductSeries dmProductMeta dmSeriesCompare dmBuildModel invmDirectShipCases dmFocusRows dmComboSVG dmFmt0 dmMoney2 dmRenderTrendPrice dmWireChartTip cxSpark cxRenderList cxWireSparkTip renderCustomers cxOverrideCard
+# Constantes top-level que las funciones extraídas necesitan. extract.py solo saca funciones,
+# así que sin esto el test las leería de un stub y estaría probando el stub, no producción.
+grep -E "^var DM_SELL_DAYS *=" "$DIR/../JLZ_Container_Intelligence.html" >> "$TMP/app.js" \
+  || { echo "  FAIL no se encontró DM_SELL_DAYS en el HTML"; FAILED=1; }
+
 run_suite "demanda" "$TMP/app.js" "$DIR/pure-tests.js"
 
 echo
