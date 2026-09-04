@@ -593,4 +593,30 @@ check('y una columna de hover por cada una de las 26 semanas', (_sv.match(/class
 var _sv2=dmComboSVG(_w, null);
 ok('sin ventana indicada no sombrea nada', !/fill-opacity="0\.05"/.test(_sv2));
 
+// ════ Customers ════════════════════════════════════════════════════════════
+// La columna "Run-rate" mostraba rrCases (13 semanas) siempre, ignorando la ventana del producto:
+// en garlic (ventana 3) Whole Foods salía con 17 cs cuando su ventana real son 74. Y el sparkline
+// traza LIBRAS mientras la columna dice cajas, así que el tooltip tiene que convertir.
+group('Customers · sparkline en cajas y con tooltip');
+
+cxEsc=function(x){ return String(x); };
+cxWeekNo=function(){ return 30; };
+var _sp=cxSpark([3600, 7200, 0], ['2026-07-06','2026-07-13','2026-07-20'], 30, 'Albert\'s');
+check('una zona de hover por punto', (_sp.match(/class="cx-hit"/g)||[]).length, 3);
+ok('convierte libras a cajas: 3.600 lb / 30 = 120', /data-cs="120"/.test(_sp));
+ok('y 7.200 lb = 240 cajas', /data-cs="240"/.test(_sp));
+ok('lleva el cliente, para saber de quién es la línea', /data-cust="Albert's"/.test(_sp));
+ok('una semana sin ventas queda en 0, no se omite', /data-cs="0"/.test(_sp));
+
+// sin las semanas no puede etiquetar: no inventa hover
+var _spNo=cxSpark([3600,7200,0], null, 30, 'X');
+ok('sin las semanas no dibuja zonas de hover', !/cx-hit/.test(_spNo));
+
+// guards de la lista y del tooltip
+var _lst=String(cxRenderList);
+ok('la columna Run-rate usa la ventana activa, no rrCases fijo', /_cxRr\(c\)/.test(_lst) && /_cxKey/.test(_lst));
+ok('y el encabezado dice qué ventana está mostrando', /_cxWin\+'w<\/span>/.test(_lst));
+ok('las cuentas direct-ship quedan marcadas en la lista', /DIRECT-SHIP/.test(_lst));
+ok('el tooltip busca su div por clase, no por closure', /querySelector\('\.cx-tip'\)/.test(String(cxWireSparkTip)));
+
 summary();

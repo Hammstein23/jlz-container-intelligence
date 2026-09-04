@@ -23422,7 +23422,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb, prodKey){
   // Reaction-window scenarios: same reliable-week series, shorter lookbacks. 13w = structural
   // base (a quarter); 6w = momentum; 3w = spot/early-warning. Detector compares them.
   const _rrWin = (n) => { const w = (reliableWeeks.length ? reliableWeeks : allWeeks).slice(-n); return w.length ? sumWeeks(w)/w.length : 0; };
-  const runRate6 = _rrWin(6), runRate3 = _rrWin(3);
+  const runRate6 = _rrWin(6), runRate3 = _rrWin(3), runRate26 = _rrWin(26);   // la UI ofrece 26w
 
   const md = 86400000;
   const lastOrder = (c) => { const ds = custDates[c]; return (ds&&ds.length) ? ds.reduce((a,b)=>a>b?a:b) : ''; };
@@ -23608,7 +23608,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb, prodKey){
   let _bgs = 0, _bgp = 0; if (custDetail) Object.values(custDetail).forEach(cd => { _bgs += _sumWinF(cd,_winR,'gs'); _bgp += _sumWinF(cd,_winR,'gp'); });
   const blendMg = _bgs ? _bgp / _bgs * 100 : null;
 
-  return { runRate13:Math.round(runRate13 + _rrOvrDeltaLbs), runRate13Model:Math.round(runRate13), runRate6:Math.round(runRate6 + _rrOvrDelta6Lbs), runRate3:Math.round(runRate3 + _rrOvrDelta3Lbs), activeCount:active.length, dormantCount:dormant.length,
+  return { runRate13:Math.round(runRate13 + _rrOvrDeltaLbs), runRate13Model:Math.round(runRate13), runRate6:Math.round(runRate6 + _rrOvrDelta6Lbs), runRate3:Math.round(runRate3 + _rrOvrDelta3Lbs), runRate26:Math.round(runRate26), sparkWeeks:_r10, activeCount:active.length, dormantCount:dormant.length,
            active, dormant, demandRows, custDetail, customers, concTop2, blendMg,
            weekly: allWeeks.map(w => ({ week:w, lbs:Math.round(weekTotal[w]||0) })),
            weeklyReliable: (reliableWeeks.length ? reliableWeeks : allWeeks).map(w => ({ week:w, lbs:Math.round(weekTotal[w]||0) })),
@@ -24493,6 +24493,7 @@ function renderCustomers(){
     + '<div class="card cx-detail" id="cx-detail"></div>';
   cxRenderList();
   cxRenderDetail();
+  cxWireSparkTip(host);
   const sortSeg = host.querySelector('#cx-sort');
   if (sortSeg) sortSeg.addEventListener('click', e=>{ const b=e.target.closest('button'); if(!b) return; _cxState.sort=b.dataset.s; [...sortSeg.children].forEach(x=>x.classList.toggle('on',x===b)); cxRenderList(); });
   const fil = host.querySelector('#cx-filter');
@@ -25102,19 +25103,69 @@ function cxFilteredSorted(){
   return r;
 }
 
-function cxSpark(arr){
+// El sparkline traza LIBRAS (wkCust está en lbs) mientras la columna de al lado dice cajas. La forma
+// es la misma, así que visualmente no engaña — pero el tooltip tiene que convertir, o diría 12.960
+// donde la fila dice 432. Por eso recibe caseLb y las semanas.
+function cxSpark(arr, weeks, caseLb, cust){
   const w=92,h=22,p=2, a=(arr&&arr.length)?arr:[0], mx=Math.max(1,...a.map(Math.abs)), mn=Math.min(0,...a);
   const X=i=>p+i*(w-2*p)/Math.max(1,a.length-1), Y=v=>h-p-((v-mn)/((mx-mn)||1))*(h-2*p);
   let d=''; a.forEach((v,i)=>d+=(i?'L':'M')+X(i).toFixed(1)+' '+Y(v).toFixed(1)+' ');
   const lc=a.length-1, lastZero=a[lc]===0;
-  return '<svg width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'" style="display:inline-block;vertical-align:middle"><path d="'+d+'" fill="none" stroke="var(--jlz-mid)" stroke-width="1.5"/><circle cx="'+X(lc).toFixed(1)+'" cy="'+Y(a[lc]).toFixed(1)+'" r="2.2" fill="'+(lastZero?'var(--gray-300)':'var(--jlz)')+'"/></svg>';
+  const cl=caseLb||DM_CASE_LB;
+  let hits='';
+  if(weeks && weeks.length===a.length){
+    const bw=(w-2*p)/Math.max(1,a.length);
+    a.forEach((v,i)=>{
+      const wl=(typeof cxWeekNo==='function' && cxWeekNo(weeks[i])) ? ('W'+cxWeekNo(weeks[i])) : weeks[i];
+      hits+='<rect class="cx-hit" x="'+(X(i)-bw/2).toFixed(1)+'" y="0" width="'+bw.toFixed(1)+'" height="'+h+'"'
+        +' fill="transparent" style="cursor:crosshair" data-wk="'+cxEsc(wl)+'" data-date="'+cxEsc(weeks[i])+'"'
+        +' data-cs="'+Math.round(v/cl)+'" data-cust="'+cxEsc(cust||'')+'"></rect>';
+    });
+  }
+  return '<svg width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'" style="display:inline-block;vertical-align:middle"><path d="'+d+'" fill="none" stroke="var(--jlz-mid)" stroke-width="1.5"/><circle cx="'+X(lc).toFixed(1)+'" cy="'+Y(a[lc]).toFixed(1)+'" r="2.2" fill="'+(lastZero?'var(--gray-300)':'var(--jlz)')+'"/>'+hits+'</svg>';
+}
+// Un solo tooltip para todos los sparklines de la tabla. Mismo criterio que el del gráfico grande:
+// el div se busca por clase en cada movimiento, nunca se guarda en un closure que pueda quedar muerto.
+function cxWireSparkTip(host){
+  if(!host) return;
+  host.style.position='relative';
+  if(!host.querySelector('.cx-tip')){
+    const t=document.createElement('div'); t.className='cx-tip'; t.style.display='none'; host.appendChild(t);
+  }
+  if(host._sparkWired) return;
+  host._sparkWired=true;
+  const theTip=function(){ return host.querySelector('.cx-tip'); };
+  const hide=function(){ const tp=theTip(); if(tp) tp.style.display='none'; };
+  host.addEventListener('mouseleave', hide);
+  host.addEventListener('mousemove', function(ev){
+    const hit=ev.target && ev.target.closest ? ev.target.closest('.cx-hit') : null;
+    if(!hit){ hide(); return; }
+    const tip=theTip(); if(!tip) return;
+    tip.innerHTML='<b>'+hit.getAttribute('data-wk')+'</b> <span class="d">'+hit.getAttribute('data-date')+'</span>'
+      +'<div class="r"><span>'+cxEsc(hit.getAttribute('data-cust')||'Cases')+'</span><b>'
+      +(+hit.getAttribute('data-cs')).toLocaleString('en-US')+' cs</b></div>';
+    const hb=host.getBoundingClientRect();
+    tip.style.display='block';
+    let x=ev.clientX-hb.left+14, y=ev.clientY-hb.top+14;
+    if(x+tip.offsetWidth>hb.width-4) x=ev.clientX-hb.left-tip.offsetWidth-14;
+    tip.style.left=Math.max(4,x)+'px';
+    tip.style.top=Math.max(4,y)+'px';
+  });
 }
 
 function cxRenderList(){
   const m=_dmModel, lh=document.getElementById('cx-lh'), lb=document.getElementById('cx-lb');
   if(!lh||!lb) return;
   const rich = m.customers.some(c=>c.hasDetail);
-  lh.innerHTML = '<th class="l" style="width:26px">#</th><th class="l">Customer</th><th class="l" style="width:96px">Trend</th><th>Run-rate</th><th>Cadence</th><th>Last order</th>'
+  // La ventana activa del producto, la misma que usan las tarjetas, el run-rate y el plan. La columna
+  // mostraba `rrCases` (13 semanas) siempre: en garlic (ventana 3) Whole Foods salía con 17 cs cuando
+  // su ventana real son 74 — cuatro veces menos, en la tabla que se usa para hablar con el cliente.
+  const _cxProd=(typeof getActiveProduct==='function')?getActiveProduct():'ginger';
+  const _cxWin=(typeof dmWindow==='function')?dmWindow(_cxProd):13;
+  const _cxKey=(_cxWin===3)?'rr3Cases':(_cxWin===6)?'rr6Cases':(_cxWin===26)?'rr26Cases':'rrCases';
+  const _cxRr=function(c){ return (c[_cxKey]!=null?c[_cxKey]:c.rrCases)||0; };
+  const _cxDS=function(n){ try{ return (typeof dsIsOn==='function') && dsIsOn(n,_cxProd); }catch(e){ return false; } };
+  lh.innerHTML = '<th class="l" style="width:26px">#</th><th class="l">Customer</th><th class="l" style="width:96px">Trend</th><th>Run-rate <span style="color:var(--gray-400);font-weight:400">'+_cxWin+'w</span>'+cxInfo('Cases per week over the last '+_cxWin+' weeks \u2014 the same window the run-rate, the build-up and the buy plan use for this product. Change it in Demand \u2192 Run-rate.')+'</th><th>Cadence</th><th>Last order</th>'
     + (rich?'<th>Margin <span style="color:var(--gray-400);font-weight:400">13w</span>'+cxInfo('Gross margin over the last 13 weeks (FOB minus full cost). Open a customer \u2192 Profitability to change the window.')+'</th><th>Gross profit <span style="color:var(--gray-400);font-weight:400">13w</span>'+cxInfo('Gross profit over the last 13 weeks, with the change vs the 13 weeks before (\u2191 growing, \u2193 shrinking).')+'</th>':'') + '<th>% vol'+cxInfo('Share of your total volume over all loaded history (lifetime) \u2014 how big this account is structurally.')+'</th>';
   const r=cxFilteredSorted();
   if(!_cxState.sel || !r.some(c=>c.c===_cxState.sel)) _cxState.sel=(r[0]&&r[0].c)||(m.customers[0]&&m.customers[0].c);
@@ -25127,9 +25178,10 @@ function cxRenderList(){
       : '<div style="font-size:9px;color:var(--red-600);font-family:var(--fm)">\u2193'+Math.abs(c.gpD).toFixed(0)+'%</div>');
     return '<tr class="'+(c.c===_cxState.sel?'sel':'')+'" data-c="'+cxEsc(c.c)+'">'
       + '<td class="l"><span class="cx-rank">'+(i+1)+'</span></td>'
-      + '<td class="l"><span class="cx-nm">'+cxEsc(c.c)+'</span>'+stb+(c.sporadic?'<span class="cx-st od" title="Order-driven: buys sporadically. The plan uses its committed orders in the weeks it ordered, and resumes its run-rate beyond the last committed week — its average is not smeared across every week.">ORDER-DRIVEN</span>':'')+dcb+'</td>'
-      + '<td class="l">'+cxSpark(c.spark)+' <span class="cx-pill '+c.trend+'">'+tr+'</span></td>'
-      + '<td class="cx-num">'+(c.rrCases>=1?cxFmtN(c.rrCases)+' cs':'\u2014')+'</td>'
+      + '<td class="l"><span class="cx-nm">'+cxEsc(c.c)+'</span>'+stb+(c.sporadic?'<span class="cx-st od" title="Order-driven: buys sporadically. The plan uses its committed orders in the weeks it ordered, and resumes its run-rate beyond the last committed week — its average is not smeared across every week.">ORDER-DRIVEN</span>':'')
+      +(_cxDS(c.c)?'<span class="cx-st ds" title="Direct-ship: ships supplier \u2192 customer and never enters the warehouse. Real revenue, but NOT stock demand \u2014 it is excluded from the run-rate that drives the buy plan.">DIRECT-SHIP</span>':'')+dcb+'</td>'
+      + '<td class="l">'+cxSpark(c.spark, m.sparkWeeks, m.caseLb||DM_CASE_LB, c.c)+' <span class="cx-pill '+c.trend+'">'+tr+'</span></td>'
+      + '<td class="cx-num">'+(_cxRr(c)>=1?cxFmtN(_cxRr(c))+' cs':'\u2014')+'</td>'
       + '<td class="cx-num" style="font-size:11px;color:var(--gray-500)">'+(c.cad!=null?c.cad+'d':'\u2014')+'</td>'
       + '<td class="cx-num" style="font-size:11px;'+((c.days!=null&&c.days>30)?'color:var(--red-600);font-weight:700':'')+'">'+(c.days!=null?c.days+'d ago':'\u2014')+'</td>'
       + (rich?('<td>'+(c.mgR!=null?'<span class="cx-mg '+cxMgC(c.mgR)+'">'+c.mgR.toFixed(1)+'%</span>':'\u2014')+'</td><td class="cx-num">'+(c.gpR!=null?cxMoney0(c.gpR):'\u2014')+dArrow+'</td>'):'')
