@@ -763,6 +763,50 @@ group('mtoDetectCandidates · propone, no marca');
         (ORD.filter(function(o){ return Array.isArray(o.directShip) && o.directShip.length; })).length, 1);
 })();
 
+group('El descuento se resta UNA vez: en la fila y en el total, no en ambos por separado');
+// Si el total se calcula con las tasas crudas del modelo y las filas van netas, los dos números miden
+// cosas distintas: Sol-ti mostraba 162 cs/wk en su fila mientras el total decía 88, y la diferencia no
+// se podía explicar mirando la tabla. Peor: para una cuenta order-driven, hybridSalesForWeek resta su
+// run-rate otra vez, así que el total se hundía a cero.
+(function(){
+  hybridSalesForWeek = HYBRID_REAL;
+  _cmShipped = function(c){ return !!(c && c.shipped); };
+  _cmProd    = function(c){ return c.prod; };
+  _cmOriginFor = function(){ return ''; };
+  dmWindow   = function(){ return 3; };
+  isDirectShipRow = function(){ return false; };
+  COMMITTED  = [];
+  // Con una orden reservada en su horizonte, hybridSalesForWeek entra en la rama order-driven y
+  // reemplaza el promedio del cliente por su committed — restando su run-rate. Ahí es donde el modelo
+  // crudo resta por segunda vez lo que la base ya tenía descontado.
+  COMMITTED = [{ type:'inv', wk:'2026-09-07', customer:'Sol-ti', cases:10, prod:'ginger' }];
+
+  var CRUDO = { customers:[
+    { c:'Sol-ti',    rrCases:162, rr3Cases:162, sporadic:true },
+    { c:"Albert's",  rrCases:88,  rr3Cases:88 }
+  ] };
+  var MTO = { 'Sol-ti': 162 };                       // todo lo suyo es contra orden
+
+  // el modelo neteado, igual que lo arma el build-up
+  var NETO = { customers: CRUDO.customers.map(function(c){
+    if(!(MTO[c.c] > 0)) return c;
+    var n = {}; for(var k in c) n[k] = c[k];
+    ['rrCases','rr3Cases','rr6Cases','rr26Cases'].forEach(function(k){
+      if(n[k] != null) n[k] = Math.max(0, n[k] - MTO[c.c]); });
+    return n;
+  }) };
+
+  check('la fila de Sol-ti queda en cero: no necesita stock', NETO.customers[0].rr3Cases, 0);
+  check('y la del cliente de stock no se toca',               NETO.customers[1].rr3Cases, 88);
+
+  // base ya neta (88) contra el modelo neto → el total es el negocio de stock, no cero
+  var conNeto  = Math.round(hybridSalesForWeek('2026-08-31', 88, NETO,  'ginger'));
+  var conCrudo = Math.round(hybridSalesForWeek('2026-08-31', 88, CRUDO, 'ginger'));
+  check('con el modelo neto, el total es el negocio de stock', conNeto, 88);
+  ok('con el modelo crudo se restaría de nuevo y se hundiría', conCrudo < conNeto);
+  ok('esa doble resta llevaba el total a cero',                conCrudo === 0);
+})();
+
 group('mtoCasesPerWeek · lo comprado contra orden, orden por orden');
 // El flag por cliente saca a la cuenta entera. Esto solo saca las cajas que compraste para alguien,
 // así que el mismo cliente puede tener stock y contra-orden a la vez — el caso real del ajo.
@@ -792,20 +836,30 @@ group('mtoCasesPerWeek · lo comprado contra orden, orden por orden');
   _dmRawAll = [ { prod:'garlic', c:'Whole Foods Market', d:W(2), lbs:400*30 },
                 { prod:'turmeric', c:'Sol-ti', d:W(2), lbs:800*30 } ];
 
-  check('suma solo lo marcado, sobre la ventana pedida',
-        Math.round(mtoCasesPerWeek('garlic', 26) * 26), 274);
-  check('lo viejo queda fuera de la ventana', Math.round(mtoCasesPerWeek('garlic', 4) * 4), 274);
+  // La PO 'A' está In Transit (solo arrivalEstimated): todavía no llegó, así que no puede explicar
+  // ventas pasadas. Solo cuenta la 'B', que ya está en el almacén.
+  check('suma solo lo marcado Y LLEGADO, sobre la ventana pedida',
+        Math.round(mtoCasesPerWeek('garlic', 26) * 26), 134);
+  ok('una orden en tránsito no descuenta nada todavía',
+     Math.round(mtoCasesPerWeek('garlic', 26) * 26) < 274);
+  check('lo viejo queda fuera de la ventana', Math.round(mtoCasesPerWeek('garlic', 4) * 4), 134);
   check('no mezcla productos',                Math.round(mtoCasesPerWeek('turmeric', 26) * 26), 700);
   check('un producto sin marcas da cero',     mtoCasesPerWeek('shallots', 26), 0);
+  // El desglose por cliente es lo que permite que las filas del build-up cuadren con el total.
+  var porCli = mtoByCustomer('garlic', 26);
+  check('el desglose nombra al cliente', Object.keys(porCli).join(), 'Whole Foods Market');
+  check('y su tasa suma exactamente el total',
+        Math.round(porCli['Whole Foods Market'] * 26), Math.round(mtoCasesPerWeek('garlic', 26) * 26));
+  check('sin marcas, desglose vacío', Object.keys(mtoByCustomer('shallots', 26)).length, 0);
   ok('es una TASA: misma cantidad, ventana más larga, tasa más chica',
      mtoCasesPerWeek('garlic', 26) < mtoCasesPerWeek('garlic', 13));
 
   // ── El techo, que es lo que estuvo mal la primera vez ──────────────────────────────────────────
   // Restar el volumen de las POs cuando LLEGAN, contra un run-rate que mide lo que se VENDIÓ, puede
   // descontar más de lo que el cliente compró: el ajo daba 2 cs/wk en vez de 17.
-  _dmRawAll = [ { prod:'garlic', c:'Whole Foods Market', d:W(2), lbs:222*30 } ];
+  _dmRawAll = [ { prod:'garlic', c:'Whole Foods Market', d:W(2), lbs:100*30 } ];
   check('nunca descuenta más de lo que ese cliente compró',
-        Math.round(mtoCasesPerWeek('garlic', 26) * 26), 222);
+        Math.round(mtoCasesPerWeek('garlic', 26) * 26), 100);
   _dmRawAll = [];
   check('si no compró nada, no hay nada que descontar', mtoCasesPerWeek('garlic', 26), 0);
   _dmRawAll = [ { prod:'garlic', c:'Otro Cliente', d:W(2), lbs:500*30 } ];

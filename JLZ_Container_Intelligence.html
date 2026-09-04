@@ -15102,7 +15102,7 @@ function mtoDetectCandidates(prod, weeks){
 // Enchufado al cálculo de la demanda el 2026-09-04. El aviso del panel de la orden lo consulta para
 // dejar de avisar de algo que ya no pasa.
 try{ if(typeof window !== 'undefined') window._mtoWired = true; }catch(e){}
-function mtoCasesPerWeek(prod, weeks){
+function mtoByCustomer(prod, weeks){
   var w = Math.max(1, weeks || 13);
   var caseLb = (typeof productCaseLb === 'function') ? productCaseLb(prod) : 30;
   var ords = (typeof getOrders === 'function') ? getOrders() : [];
@@ -15117,7 +15117,12 @@ function mtoCasesPerWeek(prod, weeks){
     if(!Array.isArray(o.directShip) || !o.directShip.length) return;
     var p = (typeof _ordProd === 'function') ? _ordProd(o) : (o.product || 'ginger');
     if(p !== prod) return;
-    var d = o.arrivalActual || o.arrivalEstimated; if(!d) return;
+    // ── Solo cuenta lo que YA LLEGÓ ───────────────────────────────────────────────────────────────
+    // Una orden en tránsito no puede explicar ventas pasadas: la mercadería todavía no existe en el
+    // almacén. Sin este filtro, el contenedor de chalotes que llega el 4-sep descontaba las 45 cajas
+    // que Whole Foods había comprado en agosto — que salieron del contenedor ANTERIOR, sin marcar y
+    // que sí fue stock. Shallots daba 2 cs/wk en vez de 17.
+    var d = o.arrivalActual; if(!d) return;
     var wk; try{ wk = dmWeekKey(_d(d)); }catch(e){ return; }
     if(since && wk < since) return;
     o.directShip.forEach(function(ds){
@@ -15126,7 +15131,7 @@ function mtoCasesPerWeek(prod, weeks){
       marked[ds.customer] = (marked[ds.customer] || 0) + (+ds.cases || 0);
     });
   });
-  if(!Object.keys(marked).length) return 0;
+  if(!Object.keys(marked).length) return {};
 
   // ── El techo: no se puede descontar más de lo que ese cliente REALMENTE compró ────────────────
   // Sin esto se resta el volumen de las POs cuando LLEGAN, contra un run-rate que mide lo que se
@@ -15142,9 +15147,22 @@ function mtoCasesPerWeek(prod, weeks){
     sold[r.c] = (sold[r.c] || 0) + (+r.lbs || 0) / caseLb;
   });
 
-  var total = 0;
-  Object.keys(marked).forEach(function(c){ total += Math.min(marked[c], sold[c] || 0); });
-  return total / w;
+  var out = {};
+  Object.keys(marked).forEach(function(c){
+    var v = Math.min(marked[c], sold[c] || 0) / w;
+    if(v > 0) out[c] = v;
+  });
+  return out;
+}
+
+// La suma de lo anterior. El desglose por cliente es lo que permite que las FILAS del build-up cuadren
+// con el total: si el descuento solo se resta del agregado, Sol-ti sigue mostrando sus 162 cs/wk en su
+// fila mientras el total dice 88, y no hay forma de entender de dónde sale la diferencia. Es el mismo
+// agujero que ya apareció dos veces hoy — volumen que se va del total y se queda en las filas.
+function mtoCasesPerWeek(prod, weeks){
+  var m = mtoByCustomer(prod, weeks), t = 0;
+  Object.keys(m).forEach(function(c){ t += m[c]; });
+  return t;
 }
 
 
@@ -15502,7 +15520,13 @@ function invmProductStats(p,origin){
   var weeklyCasesBuy=weeklyLbsBuy>0?weeklyLbsBuy/caseLb:0;
   // Record this week's on-hand so the past-weeks block becomes exact going forward (same as ginger).
   try{ if(onHandCases>0 && typeof stockSnapRecord==='function') stockSnapRecord(p, onHandCases); }catch(e){}
-  var directShipCases=(typeof invmDirectShipCases==='function')?invmDirectShipCases(p,origin):0;   // Sol-ti turmeric etc. — pass-through, shown separately
+  // ── El volumen "made to order" que se muestra al costado ──────────────────────────────────────
+  // Dos fuentes, y no se pisan: el flag por cliente (legacy, en retirada) y las ÓRDENES marcadas.
+  // `mtoCasesPerWeek` devuelve 0 para un cliente que ya está flageado, así que nunca se suma dos veces.
+  // Cuando el flag desaparezca del todo, este número sigue saliendo — de las órdenes, que es la fuente
+  // que Juan eligió: cada compra dice si tenía destino, en vez de etiquetar al cliente para siempre.
+  var directShipCases=((typeof invmDirectShipCases==='function')?invmDirectShipCases(p,origin):0)
+                     +((typeof mtoCasesPerWeek==='function')?mtoCasesPerWeek(p,(typeof dsWindow==='function')?dsWindow():26):0);
   var coverWks=(weeklyLbsBuy>0)?availLbs/weeklyLbsBuy:(availLbs>0?Infinity:0);
   var orderCases=Math.ceil(Math.max(0,(targetWks*weeklyLbsBuy)-availLbs)/caseLb);
   var status='ok';
@@ -25430,8 +25454,30 @@ function renderBuildupPanel(){
       if (x && x.c) _qaF[x.c] = Math.max(0, Math.min(100, qaPct(x.c))) / 100;
     }); } catch(e){}
   }
+  // ── Lo comprado contra orden se descuenta EN LA FILA del cliente ──────────────────────────────
+  // Antes el descuento se restaba solo del total, así que Sol-ti seguía mostrando sus 162 cs/wk en su
+  // fila mientras el total decía 88, y la diferencia no se podía explicar mirando la tabla. Restándolo
+  // acá, las filas vuelven a sumar el total — que es la única razón de ser de este panel.
+  var _mtoBy = (typeof mtoByCustomer === 'function') ? mtoByCustomer(prod, _win) : {};
+  // El total de la columna lo calcula hybridSalesForWeek con las tasas POR CLIENTE del modelo. Si las
+  // filas van netas y el total se calcula con las crudas, los dos números miden cosas distintas y la
+  // tabla deja de cuadrar — o peor, se resta dos veces. Se le pasa un modelo con las mismas tasas
+  // netas que muestran las filas: una sola definición de "cuánto stock necesita este cliente".
+  var _mNet = m;
+  if(Object.keys(_mtoBy).length){
+    _mNet = {}; for(var _k in m) _mNet[_k] = m[_k];
+    _mNet.customers = (m.customers || []).map(function(c){
+      if(!c || !c.c || !(_mtoBy[c.c] > 0)) return c;
+      var n = {}; for(var k2 in c) n[k2] = c[k2];
+      ['rrCases','rr3Cases','rr6Cases','rr26Cases'].forEach(function(k3){
+        if(n[k3] != null) n[k3] = Math.max(0, n[k3] - _mtoBy[c.c]);
+      });
+      return n;
+    });
+  }
   var _rrOf = function(cust){
     var v = (cust[_rrKey] != null ? cust[_rrKey] : cust.rrCases) || 0;
+    v = Math.max(0, v - (_mtoBy[cust.c] || 0));
     return v * (_qaF[cust.c] != null ? _qaF[cust.c] : 1);
   };
   function cell(cust, wk){
@@ -25529,17 +25575,23 @@ function renderBuildupPanel(){
   var histBooked = histWeeks.map(function(wk){
     var t = 0; _custsIn(wk).forEach(function(cust){ if(!_isDS(cust)) t += bookedCases(cust, wk); }); return Math.round(t);
   });
-  var planTot = weeks.map(function(w){ try { return Math.round(hybridSalesForWeek(w.weekStartISO, salesBase, m, prod, null, _bpOrigin) || 0); } catch(e){ return 0; } });
+  var planTot = weeks.map(function(w){ try { return Math.round(hybridSalesForWeek(w.weekStartISO, salesBase, _mNet, prod, null, _bpOrigin) || 0); } catch(e){ return 0; } });
   var colTot = weeks.map(function(){ return 0; });
   var body = '';
   shown.forEach(function(c){
-    var dsBtn = '<button onclick="dsToggle(\'' + String(c.c).replace(/'/g,"\\'") + '\',\'' + prod + '\')" '
-      + 'title="Mark as MADE TO ORDER: bought against this customer&apos;s confirmed order, not from standing stock. '
-      + 'Its volume leaves the run-rate that drives the ' + esc(prod) + ' buy, but stays visible as made-to-order business. '
-      + 'Use it when you buy for them each time they order." '
-      + 'style="margin-left:6px;border:1px solid var(--gray-200);background:var(--white);color:var(--gray-400);border-radius:5px;'
-      + 'font-family:var(--fm);font-size:9px;font-weight:700;padding:1px 5px;cursor:pointer">not stock demand</button>';
-    body += '<tr><td class="c"><span class="nm">' + esc(c.c) + '</span><span class="bd ' + (c.sporadic ? 'od' : 'st') + '">' + (c.sporadic ? 'OD' : 'ST') + '</span>' + dsBtn + '<div class="mt">rr ' + Math.round(_rrOf(c)) + ' cs'
+    // El botón "not stock demand" se retiró el 2026-09-04. Etiquetaba al CLIENTE entero como compra
+    // contra orden, y eso es demasiado grueso: el mismo cliente compra a veces de stock y a veces
+    // contra pedido. Ya hizo daño dos veces — shallots·Whole Foods quedó marcado cuando solo una de sus
+    // dos órdenes era para ellos, y garlic·Whole Foods se activó siguiendo un aviso desactualizado.
+    // Ahora el hecho vive en la ORDEN ("Bought for", panel de Orders) y el descuento sale de ahí.
+    var dsBtn = '';
+    var _mtoC = _mtoBy[c.c] || 0;
+    var mtoBadge = _mtoC >= 1
+      ? ('<span title="Bought to order for this customer &mdash; earmarked on the purchase order, so it never needs stock" '
+         + 'style="margin-left:6px;font-family:var(--fm);font-size:9px;font-weight:700;padding:1px 5px;border-radius:5px;'
+         + 'background:#ede9fe;border:1px solid #c4b5fd;color:#5b21b6;white-space:nowrap">+' + Math.round(_mtoC) + ' made to order</span>')
+      : '';
+    body += '<tr><td class="c"><span class="nm">' + esc(c.c) + '</span><span class="bd ' + (c.sporadic ? 'od' : 'st') + '">' + (c.sporadic ? 'OD' : 'ST') + '</span>' + dsBtn + mtoBadge + '<div class="mt">rr ' + Math.round(_rrOf(c)) + ' cs'
       + ((_qaF[c.c] != null && _qaF[c.c] < 1)
           ? ('<span style="color:#b45309"> \u00b7 quiet, ' + (_qaF[c.c] === 0 ? 'out of the plan' : Math.round(_qaF[c.c]*100) + '% in the plan') + '</span>')
           : '') + '</div></td>';
@@ -25683,9 +25735,7 @@ function renderBuildupPanel(){
       return '<span style="display:inline-flex;align-items:center;gap:6px;margin:0 8px 6px 0;padding:3px 8px;border-radius:6px;'
         + 'background:#ede9fe;border:1px solid #c4b5fd;font-size:11px;color:#5b21b6">'
         + '<b>' + esc(c.c) + '</b> <span style="font-family:var(--fm);color:#7c3aed">' + Math.round(c.rrCases||0) + ' cs/wk</span>'
-        + '<button onclick="dsToggle(\'' + String(c.c).replace(/'/g,"\\'") + '\',\'' + prod + '\')" '
-        + 'title="Count it as stock demand again" '
-        + 'style="border:none;background:none;color:#7c3aed;cursor:pointer;font-size:13px;line-height:1;padding:0 2px">&times;</button></span>';
+        + '</span>';
     }).join('');
   } else {
     h += '<span style="font-size:11px;color:var(--gray-400)">None. Use the <i>not stock demand</i> button on a customer row to mark one.</span>';
