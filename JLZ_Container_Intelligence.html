@@ -13394,13 +13394,34 @@ function renderOrderPanel() {
 
 // Marcar / desmarcar una compra con destino. Escriben la MISMA estructura (`order.directShip[]`) que
 // ya leen el Buy Planner, el Simulator y el Inventario, así que no hay un segundo camino de datos.
+// Los clientes que realmente le compran ESTE producto, sacados de las ventas cargadas. Tiene que ser
+// una lista y no texto libre: el nombre se compara letra por letra contra el modelo de demanda
+// (`dsIsOn`, el carril "made to order", el aviso de coherencia). Un "Whole Foods" escrito a mano no
+// matchea "Whole Foods Market" y la marca queda huérfana, sin que nada lo diga.
+function ordBoughtForCustomers(prod){
+  var p = prod || 'ginger', seen = {}, out = [];
+  try{
+    (typeof _dmRawAll !== 'undefined' ? (_dmRawAll || []) : []).forEach(function(r){
+      if(!r || (r.prod || 'ginger') !== p) return;
+      var c = r.c; if(!c || seen[c]) return;
+      if(typeof dmIsInternalAcct === 'function' && dmIsInternalAcct(c)) return;   // cuentas internas / de descarte
+      seen[c] = 1; out.push(c);
+    });
+  }catch(e){}
+  return out.sort(function(x, y){ return String(x).localeCompare(String(y)); });
+}
+
 function ordAddBoughtFor(){
   var o = (window._ordersData || [])[window._ordersPanelIdx];
   if(!o) return;
   var c = (document.getElementById('ord-bf-cust') || {}).value;
   var n = parseInt((document.getElementById('ord-bf-cases') || {}).value, 10);
   if(!c || !c.trim() || !(n > 0)) return;
-  addDirectShip(o.jlzPo, c.trim(), n);
+  c = c.trim();
+  // El nombre tiene que existir tal cual en las ventas del producto: se compara letra por letra
+  // contra el modelo de demanda. Si no matchea, la marca queda huérfana y en silencio.
+  if(ordBoughtForCustomers(o.product || 'ginger').indexOf(c) < 0) return;
+  addDirectShip(o.jlzPo, c, n);
   ordAfterBoughtForChange();
 }
 function ordRemoveBoughtFor(i){
@@ -13620,9 +13641,19 @@ function buildOrderViewMode(o) {
           + '<div class="group-body"><div style="padding:2px 12px 12px">'
           + rows
           + '<div style="display:flex;gap:6px;margin-top:10px">'
-          +   '<input id="ord-bf-cust" placeholder="Customer" style="flex:1;height:30px;padding:0 8px;border:1px solid var(--gray-200);border-radius:6px;font-size:12px">'
+          +   (function(){
+                var list = ordBoughtForCustomers(prod);
+                if(!list.length) return '<div style="flex:1;font-size:11px;color:var(--amber-700,#b45309);line-height:1.4">'
+                  + 'No ' + esc(prod) + ' customers in the loaded sales yet &mdash; load a Sales report in Demand first.</div>';
+                return '<select id="ord-bf-cust" style="flex:1;height:30px;padding:0 6px;border:1px solid var(--gray-200);border-radius:6px;font-size:12px;background:var(--white)">'
+                  + '<option value="">Choose customer…</option>'
+                  + list.map(function(c){ return '<option value="' + esc(c) + '">' + esc(c) + '</option>'; }).join('')
+                  + '</select>';
+              })()
           +   '<input id="ord-bf-cases" type="number" min="1" placeholder="cs" style="width:74px;height:30px;padding:0 8px;border:1px solid var(--gray-200);border-radius:6px;font-size:12px;font-family:var(--fm)">'
-          +   '<button onclick="ordAddBoughtFor()" style="height:30px;padding:0 12px;border:1px solid var(--jlz);background:var(--jlz);color:#fff;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Add</button>'
+          +   (ordBoughtForCustomers(prod).length
+                ? '<button onclick="ordAddBoughtFor()" style="height:30px;padding:0 12px;border:1px solid var(--jlz);background:var(--jlz);color:#fff;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Add</button>'
+                : '')
           + '</div>'
           + '<div style="font-size:10.5px;color:var(--gray-400);margin-top:7px;line-height:1.5">'
           +   'Earmarked cases arrive into the warehouse but are already spoken for, so they do not count as free stock in the Buy Planner, the Simulator or Inventory.</div>'
@@ -24992,11 +25023,14 @@ function dmcCustomers(model) {
   });
   return out.sort();
 }
-function dmcArrivingOrders() {
-  // Direct-ship netting is a ginger-only workflow for v1 — scope the picker to ginger
-  // so non-ginger pipeline orders never appear here. (Revisit in Fase 3 per product.)
+function dmcArrivingOrders(prod) {
+  // Era solo-ginger ("Revisit in Fase 3 per product"). Ya no: una compra con destino existe en los
+  // cinco productos — el ajo de Whole Foods es el caso que lo destapó. El lugar canónico para
+  // marcarla es el panel de la orden ("Bought for"); este picker es el atajo desde Demand y sigue
+  // el producto que estés mirando.
+  var p = prod || ((typeof productFocus === 'function') ? productFocus() : 'ginger');
   return (typeof getOrders === 'function' ? getOrders() : []).filter(function(o) {
-    return o && o.jlzPo && _ordProd(o) === 'ginger' && (o.status === 'Contracted' || o.status === 'In Transit');
+    return o && o.jlzPo && _ordProd(o) === p && (o.status === 'Contracted' || o.status === 'In Transit');
   });
 }
 function dmcOrderEtaWk(o) {
@@ -25016,12 +25050,12 @@ function renderCommittedPanel(model) {
   var host = document.getElementById('dm-committed'); if(!host) return;
   var prod = (typeof productFocus === 'function') ? productFocus() : 'ginger';
   var isG = (prod === 'ginger');
-  if(_dmcType === 'direct' && !isG) _dmcType = 'inv';   // direct-ship (from a port container) is ginger-only
+
   var pl = (typeof productLabel === 'function') ? productLabel(prod) : prod;
   var m = model || (typeof _dmModel !== 'undefined' ? _dmModel : null);
   var custs = dmcCustomers(m);
   var futures = (typeof bpFutureWeeks === 'function') ? bpFutureWeeks(11).slice(1) : [];  // next 10 weeks (skip the current, still-open week)
-  var arriving = isG ? dmcArrivingOrders() : [];
+  var arriving = dmcArrivingOrders(prod);
   var zone = '<div class="dm-zl"><span class="n">6</span><span class="t">Committed orders</span><span class="h">sold, not yet shipped · feeds the ' + (isG ? 'buying plan' : libEsc(pl) + ' build-up') + '</span></div>';
   if(!custs.length) {
     host.innerHTML = zone + '<div class="dmc-card"><div class="dmc-empty">Load a <b>Sales</b> report at the top of this tab to pick customers, then add committed orders here.</div></div>';
@@ -25051,7 +25085,7 @@ function renderCommittedPanel(model) {
     + '<div class="dmc-row2"><div><label class="dmc-l">Dispatch date</label><input class="dmc-in" id="dmc-date" type="date" value="' + (futures[0] ? futures[0].weekStartISO : '') + '"/></div>'
       + '<div><label class="dmc-l">Cases</label><input class="dmc-in" id="dmc-cases" type="number" min="1" step="1" value="300"/></div></div>'
     + shipBlock
-    + '<button type="button" class="dmc-add" id="dmc-add"' + ((isG && _dmcType === 'direct' && !arriving.length) ? ' disabled' : '') + '>Add committed order</button>'
+    + '<button type="button" class="dmc-add" id="dmc-add"' + ((_dmcType === 'direct' && !arriving.length) ? ' disabled' : '') + '>Add committed order</button>'
     + '</div><div class="dmc-col"><div class="dmc-h">On file</div><div id="dmc-chips" class="dmc-chips"></div></div></div>';
   host.innerHTML = zone + '<div class="dmc-card">' + html + '</div>';
   if(isG) dmcApplyType();

@@ -716,6 +716,50 @@ check('marcada como despachada, ya no suma', Math.round(hybridSalesForWeek('2026
 ok('y la entrada sigue en el store, para que el build-up la muestre como volumen',
    getCommitted().length === 1 && getCommitted()[0].cases === 1000);
 
+group('dmcArrivingOrders · el picker sigue al producto, ya no es solo ginger');
+// Decía "Direct-ship netting is a ginger-only workflow for v1". El ajo de Whole Foods destapó que no:
+// una compra con destino existe en los cinco productos.
+(function(){
+  var ORD = [
+    { jlzPo:'A', product:'ginger',   status:'In Transit' },
+    { jlzPo:'B', product:'garlic',   status:'Contracted' },
+    { jlzPo:'C', product:'garlic',   status:'Arrived'    },
+    { jlzPo:'D', product:'shallots', status:'In Transit' }
+  ];
+  getOrders = function(){ return ORD; };
+  _ordProd  = function(o){ return o.product || 'ginger'; };
+  productFocus = function(){ return 'ginger'; };
+  check('garlic ve sus órdenes en camino',   dmcArrivingOrders('garlic').length, 1);
+  check('y es la que está contratada',       dmcArrivingOrders('garlic')[0].jlzPo, 'B');
+  ok('las ya llegadas no aparecen',          dmcArrivingOrders('garlic').every(function(o){ return o.status !== 'Arrived'; }));
+  check('shallots también, que antes no podía', dmcArrivingOrders('shallots').length, 1);
+  check('sin argumento cae en el producto activo', dmcArrivingOrders().length, 1);
+  ok('y no mezcla productos', dmcArrivingOrders('garlic').every(function(o){ return o.product === 'garlic'; }));
+})();
+
+group('ordBoughtForCustomers · el nombre tiene que matchear las ventas');
+// El campo era texto libre. Un "Whole Foods" escrito a mano no matchea "Whole Foods Market", y la
+// marca quedaba huérfana sin que nada lo dijera: dsIsOn no la reconoce, el carril "made to order" no
+// la suma y el aviso de coherencia dispara al pedo. Por eso es una lista, no un input.
+(function(){
+  _dmRawAll = [
+    { prod:'garlic',   c:'Whole Foods Market' }, { prod:'garlic', c:'Erewhon' },
+    { prod:'garlic',   c:'Whole Foods Market' }, { prod:'garlic', c:'Compost' },
+    { prod:'turmeric', c:'Sol-ti' }
+  ];
+  dmIsInternalAcct = function(c){ return c === 'Compost'; };
+  var g = ordBoughtForCustomers('garlic');
+  check('solo los clientes de ese producto', g.length, 2);
+  check('y vienen ordenados alfabéticamente', g[0], 'Erewhon');
+  ok('con el nombre exacto del reporte de ventas', g.indexOf('Whole Foods Market') >= 0);
+  ok('sin duplicados', g.filter(function(x){ return x === 'Whole Foods Market'; }).length === 1);
+  ok('las cuentas internas quedan afuera', g.indexOf('Compost') < 0);
+  check('otro producto, otra lista', ordBoughtForCustomers('turmeric').join(), 'Sol-ti');
+  check('un producto sin ventas devuelve lista vacía', ordBoughtForCustomers('shallots').length, 0);
+  ok('un nombre a medias NO está en la lista — por eso no se puede tipear',
+     g.indexOf('Whole Foods') < 0);
+})();
+
 group('Bought for · una compra con destino no es stock libre');
 // Una orden puede pedirse PARA un cliente concreto. Esas cajas entran al almacén pero ya tienen
 // dueño, así que no son stock libre. Se marca en el panel de Orders y escribe order.directShip[],
