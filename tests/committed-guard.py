@@ -34,10 +34,12 @@ src = io.open(SRC, encoding='utf8').read()
 lines = src.split('\n')
 
 # a qué función pertenece cada línea (las de este archivo arrancan en columna 0)
+# Solo funciones de PRIMER NIVEL (columna 0). Aceptar las anidadas atribuía la llamada al helper que
+# estuviera declarado más arriba dentro del mismo cuerpo — el 2026-09-04 culpó a `shortD()` por una
+# llamada que estaba en `renderBuildupPanel`, y el mensaje mandaba a arreglar la función equivocada.
 owner, cur = {}, '(top-level)'
 for i, ln in enumerate(lines, 1):
-    m = re.match(r'^(?:function|  function|window\.)?\s*function\s+([A-Za-z_$][\w$]*)', ln) \
-        or re.match(r'^function\s+([A-Za-z_$][\w$]*)', ln)
+    m = re.match(r'^function\s+([A-Za-z_$][\w$]*)', ln)
     if m: cur = m.group(1)
     owner[i] = cur
 

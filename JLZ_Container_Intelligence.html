@@ -25707,6 +25707,23 @@ function renderBuildupPanel(){
   // only up to the data cutoff, so an order already sold for the days after it vanished from the column and
   // the week read as a collapse. On 2026-09-03 W36 showed 91 cs against a 892 cs run-rate with 150 cs already
   // sold for Sep 2–4. Display only — the current week is never part of the run-rate average.
+  // ── Lo que ya salió del almacén, por semana y cliente ─────────────────────────────────────────
+  // La columna "not invoiced" de la semana en curso lee el store COMPLETO, así que muestra también las
+  // órdenes ya despachadas — y eso está bien, es volumen que se movió. Lo que faltaba era decirlo: la
+  // pantalla marcaba 1.150 mientras el plan usaba 150, sin nada que explicara la diferencia. Las 1.000
+  // de Sol-ti salieron el 1-sep; siguen siendo volumen, pero ya no son demanda por cubrir.
+  var shipByWk = {};
+  (typeof getCommitted === 'function' ? getCommitted() : []).forEach(function(c){
+    if(!c || c.type !== 'inv' || !c.wk || !c.customer) return;
+    if(!(typeof _cmShipped === 'function' && _cmShipped(c))) return;
+    if(_cmProd(c) !== prod) return;
+    if(_bpOrigin && typeof _cmOriginFor === 'function'){ var _so = _cmOriginFor(c); if(_so && _so !== _bpOrigin) return; }
+    (shipByWk[c.wk] = shipByWk[c.wk] || {});
+    shipByWk[c.wk][c.customer] = (shipByWk[c.wk][c.customer] || 0)
+      + ((typeof cmCasesInBuyPack === 'function') ? cmCasesInBuyPack(c, prod) : (+c.cases || 0));
+  });
+  var shippedCases = function(cust, wk){ return Math.round((shipByWk[wk] && shipByWk[wk][cust]) || 0); };
+
   var bookedCases = function(cust, wk){
     if(!(nowMark[wk] || wk === partialWk)) return 0;
     // Order-driven accounts stay out of NOWCASTED weeks: there the column has to match what the run-rate
@@ -25776,6 +25793,13 @@ function renderBuildupPanel(){
     var _mtoC = _mtoBy[c.c] || 0;
     // El "+" decía lo contrario de lo que pasa: esas cajas se RESTAN del plan, no se suman. Juan
     // preguntó qué significaba, que es la señal de que la etiqueta no se explicaba sola.
+    var _shipNow = shippedCases(c.c, partialWk);
+    var shipBadge = _shipNow >= 1
+      ? ('<span title="Left the warehouse already &mdash; still shown as volume this week, but no longer demand the plan has to cover" '
+         + 'style="margin-left:6px;font-family:var(--fm);font-size:9px;font-weight:700;padding:1px 5px;border-radius:5px;'
+         + 'background:var(--gray-100);border:1px solid var(--gray-200);color:var(--gray-500);white-space:nowrap">'
+         + _shipNow.toLocaleString() + ' shipped &middot; out of the plan</span>')
+      : '';
     var _mtoOrds = _mtoOrdBy[c.c] || [];
     var _mtoLbl = '';
     if(_mtoOrds.length === 1){
@@ -25791,7 +25815,7 @@ function renderBuildupPanel(){
          + 'style="margin-left:6px;font-family:var(--fm);font-size:9px;font-weight:700;padding:1px 5px;border-radius:5px;'
          + 'background:#ede9fe;border:1px solid #c4b5fd;color:#5b21b6;white-space:nowrap">' + _mtoLbl + '</span>')
       : '';
-    body += '<tr><td class="c"><span class="nm">' + esc(c.c) + '</span><span class="bd ' + (c.sporadic ? 'od' : 'st') + '">' + (c.sporadic ? 'OD' : 'ST') + '</span>' + dsBtn + mtoBadge + '<div class="mt">rr ' + Math.round(_rrOf(c)) + ' cs'
+    body += '<tr><td class="c"><span class="nm">' + esc(c.c) + '</span><span class="bd ' + (c.sporadic ? 'od' : 'st') + '">' + (c.sporadic ? 'OD' : 'ST') + '</span>' + dsBtn + mtoBadge + shipBadge + '<div class="mt">rr ' + Math.round(_rrOf(c)) + ' cs'
       + ((_qaF[c.c] != null && _qaF[c.c] < 1)
           ? ('<span style="color:#b45309"> \u00b7 quiet, ' + (_qaF[c.c] === 0 ? 'out of the plan' : Math.round(_qaF[c.c]*100) + '% in the plan') + '</span>')
           : '') + '</div></td>';
