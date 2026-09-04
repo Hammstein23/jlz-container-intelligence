@@ -58,6 +58,48 @@ if bad:
     print('  Si es vista de VOLUMEN o escritura → agregalo a ALLOWED en %s con su razón\n' % __file__.split('/')[-1])
     sys.exit(1)
 
+# ── Segundo guardián: la semana del conteo se prorratea en TODAS las proyecciones ────────────────
+# Tres pantallas caminan semana a semana consumiendo demanda desde la foto de inventario: el Buy
+# Planner de ginger, la proyección de los otros productos y el Simulator. Las tres tienen que usar
+# bpSnapWeekDemand, o muestran números distintos para la misma semana — que fue exactamente el
+# reporte del 2026-09-03: "el buy planner y el simulator están desalineados".
+PROJECTORS = {
+    'renderBuyPlanner':    'proyección de ginger-Perú',
+    'invmProjectionHTML':  'proyección de turmeric/garlic/shallots + ginger-Hawaii',
+    'simRenderProjection': 'proyección del Simulator',
+}
+
+def body_of(name):
+    m = re.search(r'^function\s+' + re.escape(name) + r'\s*\(', src, re.M)
+    if not m: return None
+    i = src.index('{', m.end() - 1); depth = 0; p2 = i
+    while p2 < len(src):
+        if src[p2] == '{': depth += 1
+        elif src[p2] == '}':
+            depth -= 1
+            if depth == 0: return src[i:p2 + 1]
+        p2 += 1
+    return None
+
+missing = []
+for fn, what in PROJECTORS.items():
+    b = body_of(fn)
+    if b is None:
+        missing.append((fn, what, 'no se encontró la función'))
+    elif 'bpSnapWeekDemand' not in b:
+        missing.append((fn, what, 'no llama a bpSnapWeekDemand'))
+
+if missing:
+    print('✗ una proyección no prorratea la semana del conteo:\n')
+    for fn, what, why in missing:
+        print('  %s()  — %s' % (fn, what))
+        print('     %s\n' % why)
+    print('  Las tres pantallas tienen que consumir la semana del conteo por la MISMA regla,')
+    print('  o muestran cifras distintas para la misma semana.\n')
+    sys.exit(1)
+
+print('  ok   prorrateo: las %d proyecciones pasan por bpSnapWeekDemand' % len(PROJECTORS))
+
 n_plan = len(re.findall(r'cmPlanEntries\(\)', src)) - 1   # menos la definición
 print('  ok   committed: %d lectores de plan por cmPlanEntries(), %d de volumen declarados'
       % (n_plan, len(ALLOWED)))

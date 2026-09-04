@@ -20975,6 +20975,9 @@ function simRenderProjection(realOrders, hypoOrders) {
   // toda de antemano — y hace falta: el cover de una semana se mide contra las demandas de las
   // que vienen DESPUÉS, y en una pasada hacia adelante todavía no existen. Un solo helper para
   // las dos pasadas, para que no puedan divergir.
+  // Mismo anclaje que el Buy Planner: la fecha del conteo de inventario, no "hoy".
+  const _simSnapDate = snapDateStr ? new Date(snapDateStr + 'T00:00:00') : null;
+  const _simSnapWkKey = (_simSnapDate && typeof dmWeekKey === 'function') ? dmWeekKey(_simSnapDate) : null;
   const _simMdl = (typeof _dmModelG !== 'undefined' ? _dmModelG : ((typeof window!=='undefined' && window._dmModelG) || null));
   const _simHypoExtra = (typeof simActiveHypoSales === 'function') ? simActiveHypoSales() : [];
   const _simInfl = (salesDemand > 0) ? (weeklyDemand / salesDemand) : 1;
@@ -20984,8 +20987,13 @@ function simRenderProjection(realOrders, hypoOrders) {
     const hs = (k && _simMdl && _simMdl.customers && typeof hybridSalesForWeek === 'function')
       ? hybridSalesForWeek(k, salesDemand, _simMdl, 'ginger', _simHypoExtra) : null;
     const hw = (typeof simHypoSalesForWeek === 'function' && k) ? simHypoSalesForWeek(k) : 0;
-    return { key: k, hypo: hw,
-             demand: (hs != null) ? (hs * _simInfl) : (Math.max(cw, weeklyDemand) + hw * _simInfl) };
+    let _d = (hs != null) ? (hs * _simInfl) : (Math.max(cw, weeklyDemand) + hw * _simInfl);
+    // La semana del conteo se consume solo por lo que le queda — la MISMA regla que el Buy Planner y
+    // que la proyección de los otros productos. Sin esto el Simulator arrancaba de un stock de mitad
+    // de semana descontándole la semana entera, y las dos pantallas mostraban números distintos para
+    // la misma semana sin que nada lo explicara.
+    if (_simSnapWkKey && k === _simSnapWkKey) _d = bpSnapWeekDemand(_d, cw, _simInfl, _simSnapDate);
+    return { key: k, hypo: hw, demand: _d };
   };
   const _simDemands = futureWeeks.map(_simWkDemand).map(x => x.demand);
   let _simIdx = 0;
