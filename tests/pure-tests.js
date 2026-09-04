@@ -765,9 +765,9 @@ group('mtoDetectCandidates · propone, no marca');
 
 group('mtoCasesPerWeek · lo comprado contra orden, orden por orden');
 // El flag por cliente saca a la cuenta entera. Esto solo saca las cajas que compraste para alguien,
-// así que el mismo cliente puede tener stock y contra-orden a la vez — que es el caso real del ajo.
+// así que el mismo cliente puede tener stock y contra-orden a la vez — el caso real del ajo.
 (function(){
-  var HOY = new Date(2026, 8, 4);                  // vie 4-sep-2026
+  var HOY = new Date(2026, 8, 4);
   var W = function(n){ return new Date(HOY.getTime() - n*7*86400000).toISOString().slice(0,10); };
   var ORD = [
     { jlzPo:'A', product:'garlic', status:'In Transit', arrivalEstimated:W(1),
@@ -780,25 +780,38 @@ group('mtoCasesPerWeek · lo comprado contra orden, orden por orden');
     { jlzPo:'E', product:'garlic', status:'Arrived', arrivalActual:W(40),
       directShip:[{customer:'Whole Foods Market', cases:500}] },                        // fuera de ventana
     { jlzPo:'F', product:'turmeric', status:'Arrived', arrivalActual:W(2),
-      directShip:[{customer:'Sol-ti', cases:700}] }                                     // otro producto
+      directShip:[{customer:'Sol-ti', cases:700}] }
   ];
   getOrders = function(){ return ORD; };
   _ordProd  = function(o){ return o.product || 'ginger'; };
   dsIsOn    = function(){ return false; };
+  productCaseLb = function(){ return 30; };
   dmWeekKey = function(d){ var x=new Date(d); var g=(x.getDay()+6)%7; x.setDate(x.getDate()-g);
     return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); };
+  // ventas de sobra, para que el techo no ate
+  _dmRawAll = [ { prod:'garlic', c:'Whole Foods Market', d:W(2), lbs:400*30 },
+                { prod:'turmeric', c:'Sol-ti', d:W(2), lbs:800*30 } ];
 
   check('suma solo lo marcado, sobre la ventana pedida',
-        Math.round(mtoCasesPerWeek('garlic', 26) * 26), 274);          // 140 + 134
-  ok('las no marcadas no suman',        mtoCasesPerWeek('garlic', 26) * 26 < 300);
-  ok('las canceladas tampoco',          Math.round(mtoCasesPerWeek('garlic', 26)*26) !== 1273);
-  check('lo viejo queda fuera de la ventana',
-        Math.round(mtoCasesPerWeek('garlic', 4) * 4), 274);
-  check('no mezcla productos',          Math.round(mtoCasesPerWeek('turmeric', 26) * 26), 700);
-  check('un producto sin marcas da cero', mtoCasesPerWeek('shallots', 26), 0);
-  check('es una TASA: misma cantidad, ventana más larga, tasa más chica',
-        Math.round(mtoCasesPerWeek('garlic', 26) * 100) < Math.round(mtoCasesPerWeek('garlic', 13) * 100), true);
+        Math.round(mtoCasesPerWeek('garlic', 26) * 26), 274);
+  check('lo viejo queda fuera de la ventana', Math.round(mtoCasesPerWeek('garlic', 4) * 4), 274);
+  check('no mezcla productos',                Math.round(mtoCasesPerWeek('turmeric', 26) * 26), 700);
+  check('un producto sin marcas da cero',     mtoCasesPerWeek('shallots', 26), 0);
+  ok('es una TASA: misma cantidad, ventana más larga, tasa más chica',
+     mtoCasesPerWeek('garlic', 26) < mtoCasesPerWeek('garlic', 13));
 
+  // ── El techo, que es lo que estuvo mal la primera vez ──────────────────────────────────────────
+  // Restar el volumen de las POs cuando LLEGAN, contra un run-rate que mide lo que se VENDIÓ, puede
+  // descontar más de lo que el cliente compró: el ajo daba 2 cs/wk en vez de 17.
+  _dmRawAll = [ { prod:'garlic', c:'Whole Foods Market', d:W(2), lbs:222*30 } ];
+  check('nunca descuenta más de lo que ese cliente compró',
+        Math.round(mtoCasesPerWeek('garlic', 26) * 26), 222);
+  _dmRawAll = [];
+  check('si no compró nada, no hay nada que descontar', mtoCasesPerWeek('garlic', 26), 0);
+  _dmRawAll = [ { prod:'garlic', c:'Otro Cliente', d:W(2), lbs:500*30 } ];
+  check('y el techo es POR cliente, no del producto entero', mtoCasesPerWeek('garlic', 26), 0);
+
+  _dmRawAll = [ { prod:'garlic', c:'Whole Foods Market', d:W(2), lbs:400*30 } ];
   dsIsOn = function(c, p){ return c === 'Whole Foods Market' && p === 'garlic'; };
   check('si el cliente YA está excluido por el flag, no se resta dos veces',
         mtoCasesPerWeek('garlic', 26), 0);

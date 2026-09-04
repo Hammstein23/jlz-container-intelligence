@@ -13624,14 +13624,18 @@ function buildOrderViewMode(o) {
           ? ds.map(function(d, i){
               // El aviso que evita el tiro en el pie: marcar la ORDEN sin marcar al CLIENTE saca la
               // oferta del plan pero deja su demanda en el run-rate, y ahí el plan compra de más.
-              var flagged = (typeof dsIsOn === 'function') ? dsIsOn(d.customer, prod) : false;
+              // El aviso viejo mandaba a marcar al CLIENTE entero. Ese era el diseño anterior y se
+              // descartó: un mismo cliente compra a veces de stock y a veces contra orden, así que
+              // excluirlo entero saca demanda real del plan. Ahora el descuento sale de las órdenes
+              // marcadas (mtoCasesPerWeek). Mientras ese descuento no esté enchufado al cálculo de la
+              // demanda, hay que decir qué falta — sin mandar a hacer lo que ya no corresponde.
+              var netted = (typeof window !== 'undefined' && window._mtoWired === true);
               return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--gray-100)">'
                 + '<div style="flex:1"><b style="font-size:12.5px">' + esc(d.customer) + '</b>'
                 + '<span style="font-family:var(--fm);font-size:11px;color:var(--gray-500);margin-left:8px">' + (d.cases||0) + ' cs</span>'
-                + (flagged ? '' : '<div style="font-size:10.5px;color:#92400E;margin-top:2px;line-height:1.45">&#9888; '
-                    + esc(d.customer) + ' is not marked as made-to-order for ' + esc(prod) + ', so their demand still asks the plan '
-                    + 'for stock &mdash; the plan will over-buy. Fix it in <b>Demand &rarr; 5 Forward build-up</b>: find '
-                    + esc(d.customer) + ' in the customer list and click <b>not stock demand</b> next to the name.</div>')
+                + (netted ? '' : '<div style="font-size:10.5px;color:var(--gray-500);margin-top:2px;line-height:1.45">'
+                    + 'Counted as earmarked supply. The matching discount on ' + esc(d.customer) + '&apos;s demand '
+                    + 'is not switched on yet, so for now the plan still stocks for these cases.</div>')
                 + '</div>'
                 + '<button onclick="ordRemoveBoughtFor(' + i + ')" title="Remove" style="border:1px solid var(--gray-200);background:var(--white);'
                 + 'cursor:pointer;border-radius:5px;width:22px;height:22px;color:var(--gray-400);font-size:14px;line-height:1;flex:none">&times;</button>'
@@ -15095,28 +15099,54 @@ function mtoDetectCandidates(prod, weeks){
 // la resta es de peras contra manzanas (ese error me dio "stock-buy = −4" el 2026-09-04).
 //
 // v1: matchea por producto, no por origen — el campo `origin` de las órdenes no está poblado.
+// Enchufado al cálculo de la demanda el 2026-09-04. El aviso del panel de la orden lo consulta para
+// dejar de avisar de algo que ya no pasa.
+try{ if(typeof window !== 'undefined') window._mtoWired = true; }catch(e){}
 function mtoCasesPerWeek(prod, weeks){
   var w = Math.max(1, weeks || 13);
+  var caseLb = (typeof productCaseLb === 'function') ? productCaseLb(prod) : 30;
   var ords = (typeof getOrders === 'function') ? getOrders() : [];
   var since = null;
   try{ since = dmWeekKey(new Date(Date.now() - w * 7 * 86400000)); }catch(e){}
-  var total = 0;
+  var _d = function(x){ var m = String(x).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? new Date(+m[1], +m[2]-1, +m[3]) : null; };
+
+  // Cajas marcadas por cliente, de POs llegadas dentro de la ventana
+  var marked = {};
   ords.forEach(function(o){
     if(!o || o.status === 'Cancelled') return;
     if(!Array.isArray(o.directShip) || !o.directShip.length) return;
     var p = (typeof _ordProd === 'function') ? _ordProd(o) : (o.product || 'ginger');
     if(p !== prod) return;
     var d = o.arrivalActual || o.arrivalEstimated; if(!d) return;
-    var wk; try{ wk = dmWeekKey(new Date(String(d).slice(0,10) + 'T12:00:00')); }catch(e){ return; }
+    var wk; try{ wk = dmWeekKey(_d(d)); }catch(e){ return; }
     if(since && wk < since) return;
     o.directShip.forEach(function(ds){
       if(!ds || !ds.customer) return;
       if(typeof dsIsOn === 'function' && dsIsOn(ds.customer, prod)) return;   // ya excluido entero por el flag
-      total += (+ds.cases || 0);
+      marked[ds.customer] = (marked[ds.customer] || 0) + (+ds.cases || 0);
     });
   });
+  if(!Object.keys(marked).length) return 0;
+
+  // ── El techo: no se puede descontar más de lo que ese cliente REALMENTE compró ────────────────
+  // Sin esto se resta el volumen de las POs cuando LLEGAN, contra un run-rate que mide lo que se
+  // VENDIÓ — y en una ventana corta no coinciden. El 2026-09-04 el ajo daba 2 cs/wk en vez de 17:
+  // se restaban 274 cajas de dos POs (27-ago y 4-sep) contra ventas de 222 hechas el 17 y el 24-ago.
+  // Con el techo, el descuento nunca puede apagar demanda que de verdad existió.
+  var sold = {};
+  (typeof _dmRawAll !== 'undefined' ? (_dmRawAll || []) : []).forEach(function(r){
+    if(!r || (r.prod || 'ginger') !== prod || !r.d) return;
+    if(marked[r.c] == null) return;
+    var k; try{ k = dmWeekKey(_d(r.d)); }catch(e){ return; }
+    if(since && k < since) return;
+    sold[r.c] = (sold[r.c] || 0) + (+r.lbs || 0) / caseLb;
+  });
+
+  var total = 0;
+  Object.keys(marked).forEach(function(c){ total += Math.min(marked[c], sold[c] || 0); });
   return total / w;
 }
+
 
 function isDirectShipRow(r){
   if(!r) return false;
@@ -15430,7 +15460,14 @@ function invmProductStats(p,origin){
     rrWin=_sl.length ? _sl.reduce(function(s,w){ return s+(w.lbs||0); },0)/_sl.length
                      : ((win===3?(m.runRate3||m.runRate13):win===6?(m.runRate6||m.runRate13):win===26?(m.runRate26||m.runRate13):m.runRate13)||0); }
   var ovr=(store.demandOverride!=null&&store.demandOverride!=='')?parseFloat(store.demandOverride):null;
-  var weeklyLbs=(ovr!=null&&ovr>0)?ovr*caseLb:rrWin;                      // windowed run-rate; override is entered in cases
+  // ── Lo comprado CONTRA ORDEN sale del run-rate ────────────────────────────────────────────────
+  // El run-rate existe para una sola cosa: saber cuánto comprar para el inventario. Lo que se compra
+  // cuando el cliente lo pide nunca necesita stock esperándolo, así que no va en ese número. Sale de
+  // las POs marcadas (no del cliente entero): el ajo de Whole Foods que salió de cámara sigue
+  // contando, las 274 cajas de las dos POs que se compraron para ellos no.
+  // Un override manual NO se toca: si Juan escribió un número, ese número es la demanda.
+  var _mto=(typeof mtoCasesPerWeek==='function')?mtoCasesPerWeek(p, win):0;
+  var weeklyLbs=(ovr!=null&&ovr>0)?ovr*caseLb:Math.max(0, rrWin - _mto*caseLb);
   var weeklyCases=weeklyLbs>0?weeklyLbs/caseLb:0;
   var series=(m&&Array.isArray(m.weeklyReliable)&&m.weeklyReliable.length)?m.weeklyReliable:((m&&Array.isArray(m.weekly))?m.weekly:[]);
   var vals=series.map(function(w){ return (w&&w.lbs)||0; }).filter(function(x){ return x>0; }).slice(-13);
@@ -15474,7 +15511,7 @@ function invmProductStats(p,origin){
     origin:origin,origins:origins,supList:supList,
     shrinkPct:shrinkPct,effOnHandCases:effOnHandCases,effOnHandLbs:effOnHandLbs,committedCases:committedCases,availCases:availCases,availLbs:availLbs,directShipCases:directShipCases,
     hasModel:!!m,rr13:rr13,win:win,presMix:(m&&m.presMix)||[],weeklyLbs:weeklyLbs,weeklyCases:weeklyCases,
-    weeklyLbsBuy:weeklyLbsBuy,weeklyCasesBuy:weeklyCasesBuy,demandOverride:ovr,cv:cv,nWeeks:vals.length,
+    weeklyLbsBuy:weeklyLbsBuy,weeklyCasesBuy:weeklyCasesBuy,mtoCases:_mto,demandOverride:ovr,cv:cv,nWeeks:vals.length,
     lead:lead,leadWks:leadWks,z:z,serviceLevel:svc,safetyWks:safetyWks,targetWks:targetWks,coverWks:coverWks,orderCases:orderCases,status:status};
 }
 function invmProdSetService(p,v){ var st=prodInvState(); if(!st[p]) st[p]={lots:[]}; st[p].serviceLevel=Math.max(50,Math.min(99.5,parseFloat(v)||95)); prodInvSave(st); invmReRender(); }
@@ -16511,7 +16548,12 @@ function renderBuyPlanner() {
   // on this device yet, fall back to the rolling average of pasted sales.
   const dmRunRateLbs = (typeof dmEffectiveRunRateLbs === 'function') ? dmEffectiveRunRateLbs() : null;
   const usingDemandModule = dmRunRateLbs != null;
-  const salesDemand = usingDemandModule ? (dmRunRateLbs / 30) : baseAvg;   // cases/wk sold (post-shrink)
+  // Lo comprado contra orden sale también de acá, por la misma razón que en los otros productos.
+  const _bpMto = (function(){ try{
+    return (typeof mtoCasesPerWeek === 'function')
+      ? mtoCasesPerWeek('ginger', (typeof dmWindow === 'function') ? dmWindow('ginger') : 13) : 0;
+  }catch(e){ return 0; } })();
+  const salesDemand = Math.max(0, (usingDemandModule ? (dmRunRateLbs / 30) : baseAvg) - _bpMto);   // cases/wk sold (post-shrink)
   const demandLbsWk = usingDemandModule ? dmRunRateLbs : (baseAvg * 30);
 
   // ── SAFETY STOCK from service level + demand/lead-time variability (E3 step 2) ──
@@ -25354,6 +25396,8 @@ function renderBuildupPanel(){
     salesBase = _rrW / caseLb;
   }
   salesBase = Math.max(0, salesBase - _dsCases);     // the plan buys stock, not pass-through volume
+  // Y lo comprado contra orden tampoco: esas cajas ya tienen dueño antes de llegar.
+  try{ if(typeof mtoCasesPerWeek === 'function') salesBase = Math.max(0, salesBase - mtoCasesPerWeek(prod, _win)); }catch(e){}
   // Buy-inflation. Ginger uses the Buy Planner's OWN time-based shrink so the "Buy" row
   // matches the plan exactly. Other products use their (placeholder) shrink %, clearly flagged.
   var _bpd = (typeof window !== 'undefined') ? window._bpDigest : null;
