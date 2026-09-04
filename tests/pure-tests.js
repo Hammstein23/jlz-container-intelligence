@@ -716,6 +716,48 @@ check('marcada como despachada, ya no suma', Math.round(hybridSalesForWeek('2026
 ok('y la entrada sigue en el store, para que el build-up la muestre como volumen',
    getCommitted().length === 1 && getCommitted()[0].cases === 1000);
 
+group('mtoCasesPerWeek · lo comprado contra orden, orden por orden');
+// El flag por cliente saca a la cuenta entera. Esto solo saca las cajas que compraste para alguien,
+// así que el mismo cliente puede tener stock y contra-orden a la vez — que es el caso real del ajo.
+(function(){
+  var HOY = new Date(2026, 8, 4);                  // vie 4-sep-2026
+  var W = function(n){ return new Date(HOY.getTime() - n*7*86400000).toISOString().slice(0,10); };
+  var ORD = [
+    { jlzPo:'A', product:'garlic', status:'In Transit', arrivalEstimated:W(1),
+      directShip:[{customer:'Whole Foods Market', cases:140}] },
+    { jlzPo:'B', product:'garlic', status:'Arrived', arrivalActual:W(2),
+      directShip:[{customer:'Whole Foods Market', cases:134}] },
+    { jlzPo:'C', product:'garlic', status:'Arrived', arrivalActual:W(3) },              // sin marcar → stock
+    { jlzPo:'D', product:'garlic', status:'Cancelled', arrivalActual:W(1),
+      directShip:[{customer:'Whole Foods Market', cases:999}] },                        // cancelada
+    { jlzPo:'E', product:'garlic', status:'Arrived', arrivalActual:W(40),
+      directShip:[{customer:'Whole Foods Market', cases:500}] },                        // fuera de ventana
+    { jlzPo:'F', product:'turmeric', status:'Arrived', arrivalActual:W(2),
+      directShip:[{customer:'Sol-ti', cases:700}] }                                     // otro producto
+  ];
+  getOrders = function(){ return ORD; };
+  _ordProd  = function(o){ return o.product || 'ginger'; };
+  dsIsOn    = function(){ return false; };
+  dmWeekKey = function(d){ var x=new Date(d); var g=(x.getDay()+6)%7; x.setDate(x.getDate()-g);
+    return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); };
+
+  check('suma solo lo marcado, sobre la ventana pedida',
+        Math.round(mtoCasesPerWeek('garlic', 26) * 26), 274);          // 140 + 134
+  ok('las no marcadas no suman',        mtoCasesPerWeek('garlic', 26) * 26 < 300);
+  ok('las canceladas tampoco',          Math.round(mtoCasesPerWeek('garlic', 26)*26) !== 1273);
+  check('lo viejo queda fuera de la ventana',
+        Math.round(mtoCasesPerWeek('garlic', 4) * 4), 274);
+  check('no mezcla productos',          Math.round(mtoCasesPerWeek('turmeric', 26) * 26), 700);
+  check('un producto sin marcas da cero', mtoCasesPerWeek('shallots', 26), 0);
+  check('es una TASA: misma cantidad, ventana más larga, tasa más chica',
+        Math.round(mtoCasesPerWeek('garlic', 26) * 100) < Math.round(mtoCasesPerWeek('garlic', 13) * 100), true);
+
+  dsIsOn = function(c, p){ return c === 'Whole Foods Market' && p === 'garlic'; };
+  check('si el cliente YA está excluido por el flag, no se resta dos veces',
+        mtoCasesPerWeek('garlic', 26), 0);
+  dsIsOn = function(){ return false; };
+})();
+
 group('dmcArrivingOrders · el picker sigue al producto, ya no es solo ginger');
 // Decía "Direct-ship netting is a ginger-only workflow for v1". El ajo de Whole Foods destapó que no:
 // una compra con destino existe en los cinco productos.

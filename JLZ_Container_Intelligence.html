@@ -15000,6 +15000,41 @@ function dsToggle(cust, prod){
   try{ if(typeof renderBuyPlanner==='function') renderBuyPlanner(); }catch(e){}
   try{ if(typeof invmReRender==='function') invmReRender(); }catch(e){}
 }
+// ── Cuánta demanda se cubre CONTRA ORDEN, según las POs marcadas en Orders ──────────────────────
+// El flag por cliente (`dsIsOn`) saca a la cuenta ENTERA de la demanda de stock. Esto es el bisturí:
+// solo las cajas que efectivamente compraste para alguien, orden por orden. El mismo cliente puede
+// tener las dos cosas conviviendo — el ajo de Whole Foods son POs de ~64 que van a stock, más las de
+// 134 y 140 que son suyas; los chalotes son dos contenedores de 100, uno a stock y otro para ellos.
+//
+// Solo cuenta destinos que NO estén ya excluidos por el flag, o se restaría dos veces.
+//
+// Se mide sobre la MISMA ventana que el run-rate al que se le va a restar: si se mezclan ventanas,
+// la resta es de peras contra manzanas (ese error me dio "stock-buy = −4" el 2026-09-04).
+//
+// v1: matchea por producto, no por origen — el campo `origin` de las órdenes no está poblado.
+function mtoCasesPerWeek(prod, weeks){
+  var w = Math.max(1, weeks || 13);
+  var ords = (typeof getOrders === 'function') ? getOrders() : [];
+  var since = null;
+  try{ since = dmWeekKey(new Date(Date.now() - w * 7 * 86400000)); }catch(e){}
+  var total = 0;
+  ords.forEach(function(o){
+    if(!o || o.status === 'Cancelled') return;
+    if(!Array.isArray(o.directShip) || !o.directShip.length) return;
+    var p = (typeof _ordProd === 'function') ? _ordProd(o) : (o.product || 'ginger');
+    if(p !== prod) return;
+    var d = o.arrivalActual || o.arrivalEstimated; if(!d) return;
+    var wk; try{ wk = dmWeekKey(new Date(String(d).slice(0,10) + 'T12:00:00')); }catch(e){ return; }
+    if(since && wk < since) return;
+    o.directShip.forEach(function(ds){
+      if(!ds || !ds.customer) return;
+      if(typeof dsIsOn === 'function' && dsIsOn(ds.customer, prod)) return;   // ya excluido entero por el flag
+      total += (+ds.cases || 0);
+    });
+  });
+  return total / w;
+}
+
 function isDirectShipRow(r){
   if(!r) return false;
   return dsIsOn(r.c, r.prod||'ginger');
