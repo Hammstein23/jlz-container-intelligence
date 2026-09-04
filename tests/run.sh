@@ -36,7 +36,7 @@ echo
 echo "══ Modelo de demanda ═══════════════════════════════════════════"
 python3 "$DIR/extract.py" "$HTML" "$TMP/app.js" \
   dmWeekKey nowcastProductModel dmToggleOther renderBuildupPanel dmEffectiveRunRateLbs \
-  dmISOLocal bpFutureWeeks bpWeeksOfCover cmPlanEntries dmWeekPace bpSnapWeekDemand renderWeekPanel hybridSalesForWeek dsNamesFor dsLabelFor jlzSyncScope getActiveOrigin \
+  dmISOLocal bpFutureWeeks bpWeeksOfCover invmOverview cmPlanEntries dmWeekPace bpSnapWeekDemand renderWeekPanel hybridSalesForWeek dsNamesFor dsLabelFor jlzSyncScope getActiveOrigin \
   dmLineOrigins dmLineStats dmProductSeries dmProductMeta dmSeriesCompare dmBuildModel invmDirectShipCases dmFocusRows dmComboSVG dmFmt0 dmMoney2 dmRenderTrendPrice dmWireChartTip cxSpark cxRenderList cxWireSparkTip renderCustomers cxOverrideCard
 # Constantes top-level que las funciones extraídas necesitan. extract.py solo saca funciones,
 # así que sin esto el test las leería de un stub y estaría probando el stub, no producción.

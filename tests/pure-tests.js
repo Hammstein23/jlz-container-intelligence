@@ -710,6 +710,24 @@ check('marcada como despachada, ya no suma', Math.round(hybridSalesForWeek('2026
 ok('y la entrada sigue en el store, para que el build-up la muestre como volumen',
    getCommitted().length === 1 && getCommitted()[0].cases === 1000);
 
+group('invmOverview · Inventory muestra lo FÍSICO, no lo libre');
+// En ginger-Perú los lotes guardan las cajas LIBRES (así lo pide /lunes), así que Inventory decía
+// 2.184 mientras el Buy Planner decía 2.334 para el mismo momento. Las reservadas siguen en la cámara
+// y turmeric/garlic/shallots ya muestran el físico como titular; ginger era el único distinto.
+invmF = function(n){ return Math.round(n||0).toLocaleString('en-US'); };
+invmMoney = function(n){ return '$' + Math.round(n||0).toLocaleString('en-US'); };
+dmWeekKey = function(){ return '2026-08-31'; };
+committedInvForWeek = function(){ return 150; };
+var _im = { lots:[{},{},{}], distressedLots:[] };
+var _it = { lbs:65520, cases:2184, val:120000, breakeven:1.8, coverage:18.2,
+            atUsd:3000, atCs:100, marginUsd:20000, under:0, thin:0, avgAge:12, oldest:20 };
+var _ih = invmOverview(_im, _it);
+ok('el titular es el físico (2.184 libres + 150 reservadas)', _ih.indexOf('2,334') >= 0);
+ok('y desglosa de qué está hecho',            _ih.indexOf('2,184 free + 150 committed') >= 0);
+ok('las libras también suben con el committed', _ih.indexOf(invmF(65520 + 150*30)) >= 0);
+committedInvForWeek = function(){ return 0; };
+ok('sin committed no inventa desglose', invmOverview(_im,_it).indexOf('2,184 cases') >= 0);
+
 group('bpSnapWeekDemand · la semana del conteo se consume solo por lo que le queda');
 // 2026: 31-ago lun · 3-sep jue · 6-sep dom.  Caso real: demanda 900, committed abierto 150, merma 1.09.
 var LUN = new Date(2026,7,31), JUE = new Date(2026,8,3), SAB = new Date(2026,8,5);
