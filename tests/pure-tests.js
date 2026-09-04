@@ -683,6 +683,34 @@ check('con 6 días nunca se pone optimista por más de 7 puntos', peorDesvio(6) 
 check('con 5 días (lun-vie) sí — por eso se descartó',          peorDesvio(5) >= -7, false);
 check('y la constante del código es 6',                          DM_SELL_DAYS, 6);
 
+group('La semana en curso se abre en TRES estados que suman el total');
+// Antes eran dos columnas: invoiced / not invoiced. Pero "not invoiced" mezclaba lo que sigue en la
+// cámara con lo que ya salió — y esa es justo la diferencia que decide si hay que comprar. El cuadro
+// decía 1.150 mientras el plan usaba 150, sin nada que explicara la resta.
+(function(){
+  // misma aritmética que histCell
+  function celda(tot, booked, shipped){
+    var b = booked || 0, sh = Math.min(b, shipped || 0), toShip = Math.max(0, b - sh);
+    return { invoiced: Math.max(0, tot - b), shipped: sh, toShip: toShip, total: tot };
+  }
+  var c = celda(1241, 1150, 1000);            // el caso real de ginger, semana 36
+  check('facturado',                 c.invoiced, 91);
+  check('despachado sin facturar',   c.shipped, 1000);
+  check('todavía por sacar',         c.toShip, 150);
+  check('y las tres suman el total', c.invoiced + c.shipped + c.toShip, c.total);
+  ok('lo por sacar es lo que el plan tiene que cubrir', c.toShip === 150);
+
+  var d = celda(200, 50, 0);                  // nada despachado: se comporta como antes
+  check('sin despachos, "to ship" es todo lo comprometido', d.toShip, 50);
+  check('y la columna shipped queda en cero',               d.shipped, 0);
+  check('sigue sumando',                                    d.invoiced + d.shipped + d.toShip, d.total);
+
+  var e = celda(100, 30, 999);                // marca inconsistente: no puede exceder lo comprometido
+  check('lo despachado nunca supera lo comprometido', e.shipped, 30);
+  check('y no deja negativos',                        e.toShip, 0);
+  check('el total sigue cerrando',                    e.invoiced + e.shipped + e.toShip, e.total);
+})();
+
 group('dmcNormalizeUnshipped · el reporte dice si la orden ya salió');
 // El Unshipped Report trae una columna Status (PICKING / SHIPPED) que se estaba ignorando: una orden
 // ya despachada entraba como si siguiera en la cámara y había que marcarla a mano. En el archivo del
