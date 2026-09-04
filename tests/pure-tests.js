@@ -731,8 +731,10 @@ group('invmProjectionHTML · los otros cuatro también prorratean su primera sem
                         return m ? parseInt(m[1].replace(/,/g,''), 10) : null; };
 
   SNAP = null;         check('sin fecha de conteo NO prorratea (lado seguro)', wk1(), 117);
+  ok('...pero lo DICE, en vez de quedarse callado', /full week/.test(invmProjectionHTML(_s)));
   SNAP = '2026-08-31'; check('conteo del lunes: la semana entera está por delante', wk1(), 117);
   SNAP = '2026-09-03'; check('conteo del jueves: solo la mitad', wk1(), 59);
+  ok('y con fecha muestra de cuándo es el conteo', /Counted 2026-09-03/.test(invmProjectionHTML(_s)));
   ok('y es la misma regla que usa ginger, no una copia paralela',
      Math.round(bpSnapWeekDemand(117, 0, 1, new Date(2026,8,3))) === 59);
 })();

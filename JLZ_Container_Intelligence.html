@@ -15384,6 +15384,21 @@ function invmProjectionHTML(s){
     start=end;
   }
   var lbl=function(iso){ return (typeof dmcDateLabel==='function' && dmcDateLabel(iso)) || String(iso).slice(5); };
+  // ── Decir cuándo el prorrateo NO se está aplicando ─────────────────────────────────────────────
+  // Sin `_savedAt` la primera semana consume la demanda entera aunque el conteo sea de mitad de
+  // semana. Es el lado seguro, pero callado se lee como si el modelo no supiera contar: todas las
+  // semanas muestran el mismo número y no hay nada en pantalla que lo explique.
+  var _snapNote='';
+  if(!_projSnap && typeof dmWeekPace==='function' && dmWeekPace(new Date()).ahead < DM_SELL_DAYS){
+    _snapNote='<div style="margin:-2px 0 9px;padding:6px 9px;border-radius:6px;background:#FFFBEB;'
+      + 'border:1px solid #FDE68A;color:#92400E;font-size:10.5px;font-family:var(--fm);line-height:1.5">'
+      + '&#9888; This week is consuming a <b>full week</b> of demand. The inventory count has no date on it, '
+      + 'so the plan can\u2019t tell how much of the week it already covers. Save the inventory again to date-stamp it.</div>';
+  } else if(_projSnap && typeof dmWeekPace==='function' && dmWeekPace(_projSnap).ahead < DM_SELL_DAYS){
+    _snapNote='<div style="margin:-2px 0 9px;font-size:10.5px;color:var(--gray-400);font-family:var(--fm)">'
+      + 'Counted ' + String(_projSnap.getFullYear())+'-'+String(_projSnap.getMonth()+1).padStart(2,'0')+'-'+String(_projSnap.getDate()).padStart(2,'0')
+      + ' \u00b7 the current week only consumes what is still ahead of that count.</div>';
+  }
   // verdict — aligned with the KPI status so the two never contradict.
   var verdict, vcls;
   if(firstShort===null){
@@ -15495,7 +15510,7 @@ function invmProjectionHTML(s){
       +'<td style="padding:8px 12px">'+stB+'</td>'
       +'</tr>';
   });
-  return '<div style="background:var(--white);border:1px solid var(--gray-200);border-radius:10px;overflow:hidden;margin-bottom:14px">'
+  return _snapNote + '<div style="background:var(--white);border:1px solid var(--gray-200);border-radius:10px;overflow:hidden;margin-bottom:14px">'
     +'<div style="padding:11px 14px;border-bottom:1px solid var(--gray-100)"><span style="font-size:12px;font-weight:700;color:var(--jlz);text-transform:uppercase;letter-spacing:.05em">'+N+'-week projection</span> <span style="font-size:10.5px;color:var(--gray-400)">· cases · arrivals from the Orders pipeline'+(hasCommWk?' <span style="color:#7c3aed">· 📋 confirmed orders</span>':'')+(hasScen?' <span style="color:#7c3aed">+ 🧪 scenarios</span>':'')+'</span></div>'
     +'<div style="display:flex;gap:16px;align-items:center;padding:11px 14px;border-bottom:1px solid var(--gray-100);flex-wrap:wrap;background:var(--gray-50)">'
       +'<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-family:var(--fb);font-weight:600">On-hand</div><div style="font-size:17px;font-weight:700;color:var(--gray-700);font-family:var(--fm)">'+f(s.onHandCases)+'<span style="font-size:10px;color:var(--gray-400);font-weight:400"> cs</span></div>'
