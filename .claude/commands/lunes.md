@@ -51,6 +51,13 @@ frontera entre "facturado" y "abierto".
 Juan sube el **Unshipped Sales Order Report** en Demand → **Committed orders** → import.
 El importador re-filtra contra el `dataMax` nuevo y saca solo lo que ya se facturó.
 
+El reporte trae una columna **`Status`** (`PICKING` / `SHIPPED`) y el importador la lee: lo que dice
+`SHIPPED` entra ya marcado como despachado, así que **no descuenta stock ni cuenta como demanda**.
+Antes se ignoraba y había que marcarlo a mano — así se coló la orden de Sol-ti de 1.000 cajas el
+2026-09-03. En el archivo de ese día, 21 de 76 filas decían `SHIPPED`.
+
+Una marca puesta a mano **sobrevive** al re-import aunque el reporte diga `PICKING`.
+
 Cubre los 4 productos, pero **ginger solo importa `OG-GIN-30Lbs-PR`** (Perú, caja de 30 lb):
 es una regla legacy deliberada de la que depende el plan de compra de ginger. **El committed de
 ginger-Hawaii NO entra por acá** — si hace falta, se carga a mano.

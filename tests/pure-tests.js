@@ -683,6 +683,42 @@ check('con 6 días nunca se pone optimista por más de 7 puntos', peorDesvio(6) 
 check('con 5 días (lun-vie) sí — por eso se descartó',          peorDesvio(5) >= -7, false);
 check('y la constante del código es 6',                          DM_SELL_DAYS, 6);
 
+group('dmcNormalizeUnshipped · el reporte dice si la orden ya salió');
+// El Unshipped Report trae una columna Status (PICKING / SHIPPED) que se estaba ignorando: una orden
+// ya despachada entraba como si siguiera en la cámara y había que marcarla a mano. En el archivo del
+// 3-sep-2026, 21 de 76 filas decían SHIPPED — entre ellas las 1.000 cajas de Sol-ti.
+(function(){
+  var FILAS = [
+    // cabecera de orden, después sus líneas (así exporta WholesaleWare)
+    { 'Order #':'2430854', 'Fulfillment Date':'9/1/2026', 'Customer':'Sol-ti', 'Status':'SHIPPED' },
+    { 'SKU':'OG-GIN-30Lbs-PR', 'Total Billable Qty':1000 },
+    { 'Order #':'2430900', 'Fulfillment Date':'9/4/2026', 'Customer':"Albert's Organics", 'Status':'PICKING' },
+    { 'SKU':'OG-GIN-30Lbs-PR', 'Total Billable Qty':42 },
+    { 'SKU':'OG-TUR-5Lbs-PR-FJ', 'Total Billable Qty':12 }
+  ];
+  var n = dmcNormalizeUnshipped(FILAS);
+  check('sale una fila por línea de producto', n.length, 3);
+  check('el estado baja desde la cabecera',    n[0].Status, 'SHIPPED');
+  check('y el cliente también',                n[0]['Customer Name'], 'Sol-ti');
+  check('la orden siguiente lleva SU estado',  n[1].Status, 'PICKING');
+  ok('las dos líneas de una misma orden comparten estado', n[1].Status === n[2].Status);
+  check('y su cliente',                        n[2]['Customer Name'], "Albert's Organics");
+
+  // si una exportación pusiera el estado en la línea, esa manda
+  var n2 = dmcNormalizeUnshipped([
+    { 'Order #':'1', 'Fulfillment Date':'9/1/2026', 'Customer':'X', 'Status':'PICKING' },
+    { 'SKU':'OG-GIN-30Lbs-PR', 'Total Billable Qty':5, 'Status':'SHIPPED' }
+  ]);
+  check('el estado de la línea gana sobre el de la cabecera', n2[0].Status, 'SHIPPED');
+
+  // sin columna Status (formatos viejos) no se marca nada
+  var n3 = dmcNormalizeUnshipped([
+    { 'Order #':'1', 'Fulfillment Date':'9/1/2026', 'Customer':'X' },
+    { 'SKU':'OG-GIN-30Lbs-PR', 'Total Billable Qty':5 }
+  ]);
+  check('sin columna Status no inventa un estado', n3[0].Status, '');
+})();
+
 group('cmCasesInBuyPack · una caja de 5 lb no es una caja de 30');
 // El committed viene en la caja que se VENDIÓ; el run-rate y el plan trabajan en la que se COMPRA.
 // Compararlos directo infla siempre, porque los packs chicos tienen más cajas por libra. Convertir por

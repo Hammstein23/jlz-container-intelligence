@@ -12034,7 +12034,7 @@ function parseOpenOrders(rows, fulfilledMax) {
     var stale = !!(staleISO && iso < staleISO);
     var pending = !stale && !!(fulfilledMax && iso <= fulfilledMax);
     if(stale) st.stale++; else if(pending) st.pending++;
-    out.push({ customer: cust, wk: wk, date: iso, cases: cases, type: 'inv', source: 'import', orderNo: String(r['Order No'] || ''), sku: sku, pending: pending, stale: stale, product: cls.product, origin: ooOriginFromSku(sku, cls.product) });
+    out.push({ customer: cust, wk: wk, date: iso, cases: cases, type: 'inv', source: 'import', shipped: /^SHIPPED$/i.test(String(r['Status'] || '').trim()), orderNo: String(r['Order No'] || ''), sku: sku, pending: pending, stale: stale, product: cls.product, origin: ooOriginFromSku(sku, cls.product) });
     st.kept++;
     st.byProduct[cls.product] = (st.byProduct[cls.product] || 0) + 1;
   });
@@ -12082,13 +12082,27 @@ function dmcIsUnshippedFormat(rows) {
   return ('Total Billable Qty' in r0) || ('Order #' in r0);               // native report columns, not our flat SKU sheet
 }
 function dmcNormalizeUnshipped(rows) {
-  var out = [], curDate = '', curOrd = '', curCust = '';
+  // ── El reporte SÍ dice si la orden ya salió ───────────────────────────────────────────────────
+  // Trae una columna `Status` con PICKING / SHIPPED, y se estaba ignorando. Por eso una orden ya
+  // despachada entraba como si siguiera en la cámara y había que marcarla a mano — el caso Sol-ti del
+  // 2026-09-03, 1.000 cajas que el plan descontaba dos veces. En el archivo del 3-sep, 21 de 76 filas
+  // decían SHIPPED. El dato estaba ahí desde el principio.
+  // Viaja en la fila CABECERA de cada orden (junto al cliente), así que se arrastra hacia abajo igual
+  // que la fecha; si alguna exportación lo pusiera en la línea, esa gana.
+  var out = [], curDate = '', curOrd = '', curCust = '', curStat = '';
   (rows || []).forEach(function(r) {
     var ord = String(r['Order #'] == null ? '' : r['Order #']).trim();
-    if (ord) { curDate = dmcExcelDate(r['Fulfillment Date']); curOrd = ord; curCust = String(r['Customer'] == null ? '' : r['Customer']).trim(); return; }
+    if (ord) {
+      curDate = dmcExcelDate(r['Fulfillment Date']); curOrd = ord;
+      curCust = String(r['Customer'] == null ? '' : r['Customer']).trim();
+      curStat = String(r['Status'] == null ? '' : r['Status']).trim();
+      return;
+    }
     var sku = String(r['SKU'] == null ? '' : r['SKU']).trim();
     if (!sku) return;                                                      // sub-total / blank line
-    out.push({ 'SKU': sku, 'Fulfillment Date': curDate, 'Order No': curOrd, 'Order qty': r['Total Billable Qty'], 'Customer Name': curCust });
+    var st = String(r['Status'] == null ? '' : r['Status']).trim() || curStat;
+    out.push({ 'SKU': sku, 'Fulfillment Date': curDate, 'Order No': curOrd, 'Order qty': r['Total Billable Qty'],
+               'Customer Name': curCust, 'Status': st });
   });
   return out;
 }
