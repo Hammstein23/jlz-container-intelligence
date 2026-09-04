@@ -13630,7 +13630,8 @@ function buildOrderViewMode(o) {
                 + '<span style="font-family:var(--fm);font-size:11px;color:var(--gray-500);margin-left:8px">' + (d.cases||0) + ' cs</span>'
                 + (flagged ? '' : '<div style="font-size:10.5px;color:#92400E;margin-top:2px;line-height:1.45">&#9888; '
                     + esc(d.customer) + ' is not marked as made-to-order for ' + esc(prod) + ', so their demand still asks the plan '
-                    + 'for stock. Mark it in Demand &rarr; Customers, or the plan will over-buy.</div>')
+                    + 'for stock &mdash; the plan will over-buy. Fix it in <b>Demand &rarr; 5 Forward build-up</b>: find '
+                    + esc(d.customer) + ' in the customer list and click <b>not stock demand</b> next to the name.</div>')
                 + '</div>'
                 + '<button onclick="ordRemoveBoughtFor(' + i + ')" title="Remove" style="border:1px solid var(--gray-200);background:var(--white);'
                 + 'cursor:pointer;border-radius:5px;width:22px;height:22px;color:var(--gray-400);font-size:14px;line-height:1;flex:none">&times;</button>'
@@ -25371,7 +25372,9 @@ function renderBuildupPanel(){
   var body = '';
   shown.forEach(function(c){
     var dsBtn = '<button onclick="dsToggle(\'' + String(c.c).replace(/'/g,"\\'") + '\',\'' + prod + '\')" '
-      + 'title="Mark as direct-ship: its volume stops counting as stock demand for ' + esc(prod) + '" '
+      + 'title="Mark as MADE TO ORDER: bought against this customer&apos;s confirmed order, not from standing stock. '
+      + 'Its volume leaves the run-rate that drives the ' + esc(prod) + ' buy, but stays visible as made-to-order business. '
+      + 'Use it when you buy for them each time they order." '
       + 'style="margin-left:6px;border:1px solid var(--gray-200);background:var(--white);color:var(--gray-400);border-radius:5px;'
       + 'font-family:var(--fm);font-size:9px;font-weight:700;padding:1px 5px;cursor:pointer">not stock demand</button>';
     body += '<tr><td class="c"><span class="nm">' + esc(c.c) + '</span><span class="bd ' + (c.sporadic ? 'od' : 'st') + '">' + (c.sporadic ? 'OD' : 'ST') + '</span>' + dsBtn + '<div class="mt">rr ' + Math.round(_rrOf(c)) + ' cs'
