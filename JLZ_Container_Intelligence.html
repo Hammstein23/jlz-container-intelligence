@@ -14678,21 +14678,16 @@ function invmTotals(m){
   return t;
 }
 function invmOverview(m,t){
-  // ── El titular es lo FÍSICO, igual que en los otros cuatro productos ──────────────────────────
-  // En ginger-Perú los lotes guardan las cajas LIBRES (así lo pide /lunes: la app le suma el committed
-  // en el Buy Planner). Pero eso hacía que Inventory dijera 2.184 mientras el Buy Planner decía 2.334
-  // para el mismo momento, y turmeric/garlic/shallots ya muestran el físico como número principal.
-  // Las cajas reservadas SIGUEN en la cámara, así que acá también tienen que verse.
-  // Solo se corrige el CONTEO: esas cajas no están dentro de ningún lote, así que no tienen costo
-  // asociado y no pueden entrar en el valor, el break-even ni la merma. Por eso el desglose lo dice.
+  // Los lotes guardan lo FÍSICO (store v2), así que el titular ya es lo que hay en cámara. Lo libre se
+  // obtiene restando el committed, igual que en turmeric/garlic/shallots. El desglose se muestra para
+  // que se vea de dónde sale cada mitad sin tener que abrir el Buy Planner.
   var _comm = 0;
   try{ if(typeof committedInvForWeek === 'function' && typeof dmWeekKey === 'function')
          _comm = committedInvForWeek(dmWeekKey(new Date()), 'ginger') || 0; }catch(e){}
-  var _caseLb = (typeof DM_CASE_LB !== 'undefined') ? DM_CASE_LB : 30;
-  var _physCs = (t.cases || 0) + _comm;
+  var _freeCs = Math.max(0, (t.cases || 0) - _comm);
   var kpis=[
-    {l:'Inventory on hand', v:invmF(t.lbs + _comm * _caseLb)+' lb',
-     s: _comm > 0 ? (invmF(_physCs)+' cases \u00b7 '+invmF(t.cases)+' free + '+invmF(_comm)+' committed')
+    {l:'Inventory on hand', v:invmF(t.lbs)+' lb',
+     s: _comm > 0 ? (invmF(t.cases)+' cases \u00b7 '+invmF(_freeCs)+' free + '+invmF(_comm)+' committed')
                   : (invmF(t.cases)+' cases')},
     {l:'Inventory value', v:invmMoney(t.val), s:'capital tied up', c:'acc'},
     {l:'Break-even $/lb', v:'$'+t.breakeven.toFixed(2), s:'net of shrink + cleaning', c:'acc'},
@@ -14796,8 +14791,8 @@ function renderInventory(){
   var _slComm = 0;
   try{ if(typeof committedInvForWeek === 'function') _slComm = committedInvForWeek(dmWeekKey(new Date()), 'ginger') || 0; }catch(e){}
   var sl=invmEl('invm-subline');
-  if(sl) sl.textContent='ginger \u00b7 '+m.lots.length+' lots \u00b7 '+invmF(t.cases + _slComm)+' cs'
-       + (_slComm > 0 ? ' ('+invmF(t.cases)+' free + '+invmF(_slComm)+' committed)' : '') + ' \u00b7 '+invmMoney(t.val);
+  if(sl) sl.textContent='ginger \u00b7 '+m.lots.length+' lots \u00b7 '+invmF(t.cases)+' cs'
+       + (_slComm > 0 ? ' ('+invmF(Math.max(0, t.cases - _slComm))+' free + '+invmF(_slComm)+' committed)' : '') + ' \u00b7 '+invmMoney(t.val);
   if(INVM_TAB==='ov') content.innerHTML=invmOverview(m,t);
   else if(INVM_TAB==='aging') content.innerHTML=invmAging(m,t);
   else if(INVM_TAB==='count') content.innerHTML=invmCount(m,t);
@@ -15363,6 +15358,11 @@ function invmProjectionHTML(s){
   // Without per-week committed (no import), fall back to the old behavior: start from available (lump-netted).
   var cbw=(typeof invmCommittedByWeek==='function')?invmCommittedByWeek(s.p, s.origin):{};
   var hasCommWk=false; for(var _ck in cbw){ if(cbw[_ck]>0){ hasCommWk=true; break; } }
+  // Fecha del conteo de inventario. `prodInvSave` la sella al guardar; es del store completo, no por
+  // producto, pero /lunes carga los cuatro en la misma sesión así que en la práctica coincide.
+  var _projSnap=null;
+  try{ var _pst=(typeof prodInvState==='function')?prodInvState():null;
+       if(_pst && _pst._savedAt) _projSnap=new Date(_pst._savedAt+'T00:00:00'); }catch(e){}
   var weeks=[], start=hasCommWk ? (s.effOnHandCases!=null?s.effOnHandCases:s.onHandCases) : (s.availCases!=null?s.availCases:s.onHandCases), firstShort=null;
   for(var i=0;i<N;i++){
     var dd=new Date(baseDate.getTime()+i*7*86400000);
@@ -15371,6 +15371,13 @@ function invmProjectionHTML(s){
     var commW=cbw[wkISO]||0;
     if(i===0 && hasCommWk){ Object.keys(cbw).forEach(function(k){ if(k<wkISO) commW+=cbw[k]; }); }   // overdue/backlog folds into now
     var demW=hasCommWk ? Math.max(commW, weeklyCases) : weeklyCases;                                   // booked week uses its order; else run-rate
+    // ── La semana del CONTEO se consume solo por lo que le queda ────────────────────────────────
+    // Mismo bug que tenía el Buy Planner de ginger: estos cuatro también se cargan a mitad de semana
+    // (el mismo /lunes), así que descontar la semana COMPLETA desde esa foto cuenta dos veces los días
+    // que ya pasaron. El committed no se prorratea — son órdenes reales con fecha.
+    // Sin fecha de guardado NO se prorratea: se asume foto de inicio de semana, que es el lado seguro
+    // (proyecta más consumo, nunca menos).
+    if(i===0 && _projSnap && typeof bpSnapWeekDemand==='function') demW=bpSnapWeekDemand(demW, commW, 1, _projSnap);
     var end=start+arr+sc-demW;
     if(firstShort===null && end<safetyCases) firstShort=i;
     weeks.push({i:i,wkISO:wkISO,start:start,arr:arr,scen:sc,end:end,commW:commW,demW:demW});
@@ -20874,9 +20881,9 @@ function simRenderProjection(realOrders, hypoOrders) {
   const stockCases = stockLbs / 30;
   // Phase 2: mirror the Buy Planner — project from GROSS on-hand (free lots + committed picked this
   // week) and consume the committed per week, so a reserved order is netted once. committed 0 → unchanged.
-  const _simNowWk = (typeof dmWeekKey === 'function') ? dmWeekKey(new Date()) : null;
-  const committedNowCasesSim = (_simNowWk && typeof committedInvForWeek === 'function') ? (committedInvForWeek(_simNowWk, 'ginger') || 0) : 0;
-  const stockCasesGross = stockCases;                      // v2: el store ya es bruto
+  // El store v2 ya guarda lo bruto, así que no hay nada que sumarle. El committed se sigue consumiendo
+  // semana por semana más abajo, que es donde corresponde.
+  const stockCasesGross = stockCases;
   const baseline = parseInt(document.getElementById('bp-baseline')?.value || '8');
   const shrinkPctInput = parseFloat(document.getElementById('bp-shrink-pct')?.value);
   const shrinkPct = (isFinite(shrinkPctInput) && shrinkPctInput >= 0) ? shrinkPctInput / 100 : 0.14;

@@ -3,6 +3,9 @@
 // Secciones de más abajo reemplazan `hybridSalesForWeek` por stubs; guardamos la REAL acá arriba
 // (el archivo se concatena después de app.js) para poder probarla de verdad más adelante.
 var HYBRID_REAL = hybridSalesForWeek;
+// Grupos más abajo reemplazan bpInvState por un stub; hay que guardarse la de producción o el test
+// de la migración terminaría probando el stub (ya pasó con hybridSalesForWeek).
+var BPINVSTATE_REAL = bpInvState;
 
 // JLZ_Container_Intelligence.html. Each group locks in a bug that was found and fixed
 // on 2026-09-01, so a regression fails here instead of quietly changing a buy plan.
@@ -710,23 +713,76 @@ check('marcada como despachada, ya no suma', Math.round(hybridSalesForWeek('2026
 ok('y la entrada sigue en el store, para que el build-up la muestre como volumen',
    getCommitted().length === 1 && getCommitted()[0].cases === 1000);
 
+group('invmProjectionHTML · los otros cuatro también prorratean su primera semana');
+// La proyección de turmeric/garlic/shallots (y ginger-Hawaii) camina 13 semanas desde el lunes de la
+// semana en curso, y descontaba la semana COMPLETA en i=0 — desde un inventario que se carga a mitad
+// de semana con el mismo /lunes. El mismo doble conteo que tenía el Buy Planner de ginger.
+(function(){
+  dmWeekKey = function(d){ var x=new Date(d); var g=(x.getDay()+6)%7; x.setDate(x.getDate()-g);
+    return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); };
+  invmProductArrivals = function(){ return {}; };
+  whatifArrivals      = function(){ return {}; };
+  invmCommittedByWeek = function(){ return {}; };
+  var SNAP = null;
+  prodInvState = function(){ return SNAP ? { _savedAt: SNAP } : {}; };
+  var _s = { p:'turmeric', origin:'Fiji', label:'Turmeric', weeklyLbs:3510, weeklyCases:117,
+             safetyWks:2, targetWks:6, onHandCases:400, availCases:400, effOnHandCases:400, hasModel:true };
+  var wk1 = function(){ var m = invmProjectionHTML(_s).match(/−\s*([\d,]+)/);
+                        return m ? parseInt(m[1].replace(/,/g,''), 10) : null; };
+
+  SNAP = null;         check('sin fecha de conteo NO prorratea (lado seguro)', wk1(), 117);
+  SNAP = '2026-08-31'; check('conteo del lunes: la semana entera está por delante', wk1(), 117);
+  SNAP = '2026-09-03'; check('conteo del jueves: solo la mitad', wk1(), 59);
+  ok('y es la misma regla que usa ginger, no una copia paralela',
+     Math.round(bpSnapWeekDemand(117, 0, 1, new Date(2026,8,3))) === 59);
+})();
+
+group('bpInvMigrateV1 · de guardar el libre a guardar lo físico');
+// v1 guardaba las cajas LIBRES y el Buy Planner le sumaba el committed; v2 guarda lo FÍSICO y resta,
+// igual que los otros cuatro productos. La migración corre una sola vez, al primer read sin v2.
+(function(){
+  var _LS = {};
+  var _realLS = (typeof localStorage !== 'undefined') ? localStorage : null;
+  localStorage = { getItem:function(k){ return (k in _LS) ? _LS[k] : null; },
+                   setItem:function(k,v){ _LS[k] = v; } };
+  bpTodayISO = function(){ return '2026-09-03'; };
+  dmWeekKey  = function(){ return '2026-08-31'; };
+  committedInvForWeek = function(){ return 150; };
+  _LS['jlz_bp_inv'] = JSON.stringify({ rows:{ '2496593':{cases:379}, '2523058':{cases:1320}, '2618235':{cases:485} }, sellLb:2.02 });
+
+  bpInvState = BPINVSTATE_REAL;                     // no el stub que dejó un grupo anterior
+  var st = bpInvState();
+  var tot = Object.keys(st.rows).reduce(function(a,k){ return a + st.rows[k].cases; }, 0);
+  check('el total pasa a ser el físico', Math.round(tot), 2334);
+  check('y queda anotado cuánto se agregó', st.migratedFromV1.addedCases, 150);
+  ok('marcado como estimación: el reparto por lote no es exacto', st.migratedFromV1.estimated === true);
+  check('los ajustes del store se preservan', st.sellLb, 2.02);
+  ok('cada lote conserva su proporción',
+     Math.abs(st.rows['2523058'].cases / tot - 1320/2184) < 0.001);
+
+  var tot2 = Object.keys(bpInvState().rows).reduce(function(a,k){ return a + bpInvState().rows[k].cases; }, 0);
+  check('leer de nuevo NO vuelve a migrar', Math.round(tot2), 2334);
+
+  _LS = {};
+  check('sin v1 no inventa lotes', Object.keys(bpInvState().rows).length, 0);
+  if(_realLS) localStorage = _realLS;
+})();
+
 group('invmOverview · Inventory muestra lo FÍSICO, no lo libre');
-// En ginger-Perú los lotes guardan las cajas LIBRES (así lo pide /lunes), así que Inventory decía
-// 2.184 mientras el Buy Planner decía 2.334 para el mismo momento. Las reservadas siguen en la cámara
-// y turmeric/garlic/shallots ya muestran el físico como titular; ginger era el único distinto.
+// Desde el store v2 los lotes de ginger guardan lo físico, igual que los otros cuatro productos.
+// El titular es lo que hay en cámara y el desglose muestra cuánto de eso ya está vendido.
 invmF = function(n){ return Math.round(n||0).toLocaleString('en-US'); };
 invmMoney = function(n){ return '$' + Math.round(n||0).toLocaleString('en-US'); };
 dmWeekKey = function(){ return '2026-08-31'; };
 committedInvForWeek = function(){ return 150; };
 var _im = { lots:[{},{},{}], distressedLots:[] };
-var _it = { lbs:65520, cases:2184, val:120000, breakeven:1.8, coverage:18.2,
+var _it = { lbs:70020, cases:2334, val:120000, breakeven:1.8, coverage:18.2,
             atUsd:3000, atCs:100, marginUsd:20000, under:0, thin:0, avgAge:12, oldest:20 };
 var _ih = invmOverview(_im, _it);
-ok('el titular es el físico (2.184 libres + 150 reservadas)', _ih.indexOf('2,334') >= 0);
-ok('y desglosa de qué está hecho',            _ih.indexOf('2,184 free + 150 committed') >= 0);
-ok('las libras también suben con el committed', _ih.indexOf(invmF(65520 + 150*30)) >= 0);
+ok('el titular es lo que hay en cámara', _ih.indexOf('2,334') >= 0);
+ok('y desglosa libre vs reservado',      _ih.indexOf('2,184 free + 150 committed') >= 0);
 committedInvForWeek = function(){ return 0; };
-ok('sin committed no inventa desglose', invmOverview(_im,_it).indexOf('2,184 cases') >= 0);
+ok('sin committed no inventa desglose',  invmOverview(_im,_it).indexOf('2,334 cases') >= 0);
 
 group('bpSnapWeekDemand · la semana del conteo se consume solo por lo que le queda');
 // 2026: 31-ago lun · 3-sep jue · 6-sep dom.  Caso real: demanda 900, committed abierto 150, merma 1.09.

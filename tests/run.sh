@@ -36,12 +36,14 @@ echo
 echo "══ Modelo de demanda ═══════════════════════════════════════════"
 python3 "$DIR/extract.py" "$HTML" "$TMP/app.js" \
   dmWeekKey nowcastProductModel dmToggleOther renderBuildupPanel dmEffectiveRunRateLbs \
-  dmISOLocal bpFutureWeeks bpWeeksOfCover invmOverview cmPlanEntries dmWeekPace bpSnapWeekDemand renderWeekPanel hybridSalesForWeek dsNamesFor dsLabelFor jlzSyncScope getActiveOrigin \
+  dmISOLocal bpFutureWeeks bpWeeksOfCover bpInvState bpInvMigrateV1 invmProjectionHTML invmOverview cmPlanEntries dmWeekPace bpSnapWeekDemand renderWeekPanel hybridSalesForWeek dsNamesFor dsLabelFor jlzSyncScope getActiveOrigin \
   dmLineOrigins dmLineStats dmProductSeries dmProductMeta dmSeriesCompare dmBuildModel invmDirectShipCases dmFocusRows dmComboSVG dmFmt0 dmMoney2 dmRenderTrendPrice dmWireChartTip cxSpark cxRenderList cxWireSparkTip renderCustomers cxOverrideCard
 # Constantes top-level que las funciones extraídas necesitan. extract.py solo saca funciones,
 # así que sin esto el test las leería de un stub y estaría probando el stub, no producción.
-grep -E "^var DM_SELL_DAYS *=" "$DIR/../JLZ_Container_Intelligence.html" >> "$TMP/app.js" \
-  || { echo "  FAIL no se encontró DM_SELL_DAYS en el HTML"; FAILED=1; }
+for _c in DM_SELL_DAYS BP_INV_LS BP_INV_LS_V1; do
+  grep -E "^var $_c *=" "$DIR/../JLZ_Container_Intelligence.html" >> "$TMP/app.js" \
+    || { echo "  FAIL no se encontró $_c en el HTML"; FAILED=1; }
+done
 
 run_suite "demanda" "$TMP/app.js" "$DIR/pure-tests.js"
 

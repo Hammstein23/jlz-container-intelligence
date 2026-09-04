@@ -22,6 +22,9 @@ entenderse sin explicación** — es el criterio de diseño #1, siempre.
   sigue el mismo criterio: nunca se mezcla en un agregado "orgánico"/"formal"
   existente. Antes de agregar algo nuevo, preguntar: ¿qué pregunta comercial
   responde este número, y a qué agregado NO debería sumarse?
+- **El inventario de los cinco productos se carga igual: las cajas BRUTAS** (físicas, incluidas
+  las reservadas) y la app resta el committed. Hasta 2026-09-03 ginger-Perú era al revés —
+  guardaba el libre y la app sumaba— por herencia, no por diseño. No lo vuelvas a separar.
 - `localStorage` es por dispositivo — History no sincroniza solo por abrir el
   archivo en otra máquina.
 

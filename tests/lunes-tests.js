@@ -121,32 +121,32 @@ ok('NO carga el PO que falta', !Object.keys(_bpInv.rows).some(function(k){ retur
 check('preserva sellLb', _bpInv.sellLb, 1.85);
 ok('preserva rates', _bpInv.rates && _bpInv.rates.peru === 0.44);
 
-// ════ Paso 3b — las DOS convenciones, que son opuestas ══════════════════════
-// Los dos stores tratan el committed al revés uno del otro. Confundirlos cuenta las cajas
-// reservadas dos veces: para abajo en el product-aware, para arriba en ginger-Perú.
-group('Paso 3b — cada store carga distinto');
+// ════ Paso 3b — los cinco productos se cargan igual ════════════════════════
+// Hasta el 2026-09-03 los dos stores trataban el committed al revés uno del otro: ginger-Perú
+// guardaba el LIBRE y la app le sumaba, los otros cuatro guardaban el BRUTO y restaba. Era herencia
+// (ginger fue el store original y la Fase 2 lo dejó sin tocar), no una razón del negocio, y obligaba
+// a acordarse de cargar un número distinto según el producto sin que equivocarse diera error.
+// Ahora los cinco guardan lo FÍSICO y los cinco restan.
+group('Paso 3b — los cinco cargan lo mismo: cajas brutas');
 
 var SHRINK = 0.05, COMMITTED = 50, LIBRES = 150, FISICAS = LIBRES + COMMITTED;
 
-// product-aware: available = onHand·shrink − committed  → se carga BRUTO
+// product-aware: available = onHand·shrink − committed
 function availProd(onHand){ return Math.max(0, onHand * (1 - SHRINK) - COMMITTED); }
-var pa_bien = availProd(FISICAS), pa_mal = availProd(LIBRES);
 check('product-aware con BRUTO: available = las libres (menos shrink)',
-      Math.round(pa_bien), Math.round(LIBRES - FISICAS * SHRINK));
-ok('product-aware con LIBRE: queda corto', pa_mal < pa_bien - 40);
-ok('lo que falta es el committed restado dos veces',
-   Math.round(pa_bien - pa_mal) === Math.round(COMMITTED * (1 - SHRINK)));
+      Math.round(availProd(FISICAS)), Math.round(LIBRES - FISICAS * SHRINK));
+ok('con LIBRE queda corto: el committed se resta dos veces',
+   availProd(LIBRES) < availProd(FISICAS) - 40);
 
-// ginger-Perú: gross = stock + committed  → se carga LIBRE (la convención OPUESTA)
-function grossGinger(stock){ return stock + COMMITTED; }
-var g_bien = grossGinger(LIBRES), g_mal = grossGinger(FISICAS);
-check('ginger-Perú con LIBRE: el gross son las cajas físicas', g_bien, FISICAS);
-ok('ginger-Perú con BRUTO: infla el stock', g_mal > FISICAS);
-ok('lo que sobra es el committed sumado dos veces', g_mal - FISICAS === COMMITTED);
-
-// El punto que hay que recordar: cargar igual en los dos stores rompe uno de los dos.
-ok('las dos convenciones son opuestas — no se puede cargar igual en ambos',
-   (LIBRES !== FISICAS) && (availProd(FISICAS) !== availProd(LIBRES)) && (grossGinger(LIBRES) !== grossGinger(FISICAS)));
+// ginger-Perú (store v2): free = stock − committed. MISMA dirección que el anterior.
+function freeGinger(stock){ return Math.max(0, stock - COMMITTED); }
+check('ginger-Perú con BRUTO: lo libre son las cajas que quedan', freeGinger(FISICAS), LIBRES);
+ok('con LIBRE queda corto igual que el otro store', freeGinger(LIBRES) < LIBRES);
+ok('las dos convenciones ahora apuntan al MISMO lado',
+   (availProd(FISICAS) < FISICAS) && (freeGinger(FISICAS) < FISICAS)
+   && (availProd(LIBRES) < availProd(FISICAS)) && (freeGinger(LIBRES) < freeGinger(FISICAS)));
+ok('y cargar el bruto en los dos es lo correcto en los dos',
+   Math.round(freeGinger(FISICAS)) === LIBRES && Math.round(availProd(FISICAS)) === Math.round(LIBRES - FISICAS*SHRINK));
 
 // ════ El runbook no perdió ningún snippet ═══════════════════════════════════
 group('Integridad del runbook');
@@ -168,8 +168,8 @@ var _row = function(store){                 // la fila de tabla que describe qu�
 };
 var _gRow = _row('jlz_bp_inv'), _pRow = _row('jlz_prod_inv_v1');
 ok('se encontró la fila de cada store en el runbook', !!_gRow && !!_pRow);
-ok('el runbook asocia ginger-Perú con cargar LIBRES y sumar el committed',
-   /LIBRES/.test(_gRow) && /suma/.test(_gRow));
+ok('el runbook manda cargar BRUTAS también en ginger-Perú, y restar',
+   /BRUTAS/.test(_gRow) && /resta/.test(_gRow));
 ok('el runbook asocia el store product-aware con cargar BRUTAS y restar',
    /BRUTAS/.test(_pRow) && /resta/.test(_pRow));
 ok('el chequeo de consola lleva el cache-buster', /\?v='\s*\+\s*Date\.now\(\)/.test(S_CONSOLE));

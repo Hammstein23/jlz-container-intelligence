@@ -13,16 +13,19 @@ quedó el inventario, si la verificación dio limpia, y qué conviene comprar.
 
 1. **Excel antes que committed.** Al revés, una orden se cuenta dos veces hasta el refresh siguiente.
 
-2. **Cada store carga el inventario de una forma distinta — y son opuestas.** Confundirlas cuenta
-   el committed dos veces, para abajo o para arriba según cuál.
+2. **Los cinco productos se cargan igual: las cajas BRUTAS, lo que hay físicamente.**
 
    | Store | Qué cargás | Qué hace la app con el committed |
    |---|---|---|
-   | **ginger-Perú** (`jlz_bp_inv`) | las cajas **LIBRES** (sin las reservadas) | lo **suma**: `gross = stock + committed` |
+   | **ginger-Perú** (`jlz_bp_inv_v2`) | las cajas **BRUTAS** (con las reservadas) | lo **resta**: `free = stock − committed` |
    | los otros cuatro (`jlz_prod_inv_v1`) | las cajas **BRUTAS** (con las reservadas) | lo **resta**: `available = onHand·shrink − committed` |
 
-   Regla de bolsillo: **en ginger cargás lo que podés vender; en los otros, lo que hay físicamente.**
-   El paso 3b lo verifica con números en los dos casos.
+   Regla de bolsillo: **cargás lo que hay en la cámara, siempre.** El paso 3b lo verifica.
+
+   > **Cambió el 2026-09-03.** Antes ginger-Perú se cargaba con las cajas LIBRES y la app le sumaba
+   > el committed — una convención opuesta a la de los otros cuatro, heredada de cuando ginger era el
+   > único producto. Ya no: `jlz_bp_inv_v2` guarda lo físico y la migración desde v1 corrió sola.
+   > Si ves un lote con decimales, es el reparto proporcional de esa migración; se corrige recargando.
 
 ---
 
@@ -108,15 +111,11 @@ Fuente: **WholesaleWare → Sales Desk**, con la data hasta ayer (domingo).
 
 **Ojo con la convención, que es distinta según el store** (ver la regla 2 arriba):
 
-- **ginger-Perú → cargá las cajas LIBRES**, sin las reservadas. La app le suma el committed
-  (`stockCasesGross = stockCases + committedNowCases`) y lo consume en su propia semana. Cargar
-  el bruto acá **infla** el stock: el committed se sumaría sobre cajas que ya lo incluyen.
-- **Los otros cuatro → cargá las cajas BRUTAS**, todas las físicas incluidas las reservadas.
-  La app resta el committed (`available = onHand·shrink − committed`). Cargar el libre acá
-  **hunde** el stock: las reservadas se descuentan dos veces y el plan pide comprar de más.
+**Los cinco igual: cargá las cajas BRUTAS**, todas las físicas incluidas las reservadas.
+La app resta el committed en cada caso, así que las reservadas se cuentan **una sola vez**.
 
-En los dos casos las cajas reservadas se cuentan **una sola vez** — lo que cambia es de qué lado
-de la cuenta las pone la app.
+Cargar el libre **hunde** el stock: las reservadas se descontarían dos veces y el plan pediría
+comprar de más.
 
 Excluir siempre:
 - **River Road Organics** (ginger) — ese producto no va al inventario.
@@ -143,12 +142,12 @@ estimada. Si no la encontrás, decilo y dejala vacía.
 Usar el snippet equivocado **no da error**: escribe en el store que no es y el producto se queda
 con el inventario de la semana pasada.
 
-### Snippet A — solo ginger-Perú (por PO)
+### Snippet A — solo ginger-Perú (por PO, cajas BRUTAS)
 
 ```javascript
 (function(){
   var LOTS = [
-    // {po:'2410367', cases:404}, {po:'2432242', cases:476},   ← Sales Desk sin River Road
+    // {po:'2410367', cases:404}, {po:'2432242', cases:476},   ← Sales Desk BRUTO, sin River Road
   ];
   var orders = (typeof getOrders==='function' ? getOrders() : []);
   var st = bpInvState(), rows = {}, matched = [], missing = [];
@@ -217,9 +216,9 @@ Sales Desk** — en los dos stores, aunque lleguen ahí por caminos opuestos.
 
 - **Los cuatro del store product-aware:** el `available` de abajo = cajas libres del Sales Desk.
   Si da **menos**, cargaste el libre en vez del bruto y las reservadas se restaron dos veces.
-- **ginger-Perú:** el "Available" del Buy Planner = lo que cargaste (`stockCases`), y el "on-hand
-  gross" = eso + el committed de la semana. Si el gross te da **más** que las cajas físicas del
-  Sales Desk, cargaste el bruto en vez del libre.
+- **ginger-Perú:** el "On hand · gross" del Buy Planner = lo que cargaste, y el "Available" =
+  eso menos el committed de la semana. Si el gross te da **menos** que las cajas físicas del
+  Sales Desk, cargaste el libre en vez del bruto.
 
 **Y antes de creerle al número: el committed del app tiene que parecerse al que reserva
 WholesaleWare.** El Sales Desk trae su propia columna `Committed`. Si la del app es **mucho más
@@ -241,11 +240,11 @@ Confirmalas con el chequeo del Paso 2 antes de seguir.
 // ginger-Perú (store propio): lo cargado = LIBRE; la app le suma el committed de la semana.
 (function(){
   var st = bpInvState();
-  var libre = Object.keys(st.rows||{}).reduce(function(s,k){ return s+(+((st.rows[k]||{}).cases)||0); }, 0);
+  var bruto = Object.keys(st.rows||{}).reduce(function(s,k){ return s+(+((st.rows[k]||{}).cases)||0); }, 0);
   var wk = dmWeekKey(new Date());
   var comm = (typeof committedInvForWeek==='function') ? (committedInvForWeek(wk,'ginger')||0) : 0;
-  console.log('ginger · Peru   libre (cargado) '+Math.round(libre)+
-              '  + committed '+Math.round(comm)+'  = gross '+Math.round(libre+comm)+
+  console.log('ginger · Peru   bruto (cargado) '+Math.round(bruto)+
+              '  − committed '+Math.round(comm)+'  = libre '+Math.round(bruto-comm)+
               '   ('+Object.keys(st.rows||{}).length+' lots)');
 })();
 
