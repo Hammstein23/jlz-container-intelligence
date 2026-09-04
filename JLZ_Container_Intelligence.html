@@ -15161,6 +15161,34 @@ function mtoNetRows(rows, prod, weeks){
   }).filter(Boolean);
 }
 
+// Las ÓRDENES concretas detrás del descuento, por cliente. La tasa por semana existe para la
+// aritmética, pero no es un hecho del negocio: Juan no compró "233 cajas por semana", compró 700 de
+// golpe el 13 de agosto. Mostrar el promedio inventa un ritmo que no existe — la pantalla tiene que
+// nombrar la orden real.
+function mtoOrdersByCustomer(prod, weeks){
+  var w = Math.max(1, weeks || 13);
+  var ords = (typeof getOrders === 'function') ? getOrders() : [];
+  var since = null;
+  try{ since = dmWeekKey(new Date(Date.now() - w * 7 * 86400000)); }catch(e){}
+  var _d = function(x){ var m = String(x).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? new Date(+m[1], +m[2]-1, +m[3]) : null; };
+  var out = {};
+  ords.forEach(function(o){
+    if(!o || o.status === 'Cancelled') return;
+    if(!Array.isArray(o.directShip) || !o.directShip.length) return;
+    if(((typeof _ordProd === 'function') ? _ordProd(o) : (o.product || 'ginger')) !== prod) return;
+    var d = o.arrivalActual; if(!d) return;                       // solo lo que ya llegó
+    var wk; try{ wk = dmWeekKey(_d(d)); }catch(e){ return; }
+    if(since && wk < since) return;
+    o.directShip.forEach(function(ds){
+      if(!ds || !ds.customer) return;
+      if(typeof dsIsOn === 'function' && dsIsOn(ds.customer, prod)) return;
+      (out[ds.customer] = out[ds.customer] || []).push({ po:o.jlzPo, cases:(+ds.cases || 0), on:String(d).slice(0,10) });
+    });
+  });
+  Object.keys(out).forEach(function(c){ out[c].sort(function(a,b){ return String(b.on).localeCompare(String(a.on)); }); });
+  return out;
+}
+
 function mtoByCustomer(prod, weeks){
   var w = Math.max(1, weeks || 13);
   var caseLb = (typeof productCaseLb === 'function') ? productCaseLb(prod) : 30;
@@ -25563,6 +25591,7 @@ function renderBuildupPanel(){
   // fila mientras el total decía 88, y la diferencia no se podía explicar mirando la tabla. Restándolo
   // acá, las filas vuelven a sumar el total — que es la única razón de ser de este panel.
   var _mtoBy = (typeof mtoByCustomer === 'function') ? mtoByCustomer(prod, _win) : {};
+  var _mtoOrdBy = (typeof mtoOrdersByCustomer === 'function') ? mtoOrdersByCustomer(prod, _win) : {};
   // El total de la columna lo calcula hybridSalesForWeek con las tasas POR CLIENTE del modelo. Si las
   // filas van netas y el total se calcula con las crudas, los dos números miden cosas distintas y la
   // tabla deja de cuadrar — o peor, se resta dos veces. Se le pasa un modelo con las mismas tasas
@@ -25679,10 +25708,22 @@ function renderBuildupPanel(){
     // Ahora el hecho vive en la ORDEN ("Bought for", panel de Orders) y el descuento sale de ahí.
     var dsBtn = '';
     var _mtoC = _mtoBy[c.c] || 0;
-    var mtoBadge = _mtoC >= 1
-      ? ('<span title="Bought to order for this customer &mdash; earmarked on the purchase order, so it never needs stock" '
+    // El "+" decía lo contrario de lo que pasa: esas cajas se RESTAN del plan, no se suman. Juan
+    // preguntó qué significaba, que es la señal de que la etiqueta no se explicaba sola.
+    var _mtoOrds = _mtoOrdBy[c.c] || [];
+    var _mtoLbl = '';
+    if(_mtoOrds.length === 1){
+      var _o1 = _mtoOrds[0];
+      _mtoLbl = _o1.cases.toLocaleString() + ' cs bought to order &middot; PO ' + esc(_o1.po) + ', ' + shortD(_o1.on);
+    } else if(_mtoOrds.length > 1){
+      var _sum = _mtoOrds.reduce(function(a, x){ return a + x.cases; }, 0);
+      _mtoLbl = _mtoOrds.length + ' orders bought to order &middot; ' + _sum.toLocaleString() + ' cs';
+    }
+    var mtoBadge = _mtoLbl
+      ? ('<span title="' + _mtoOrds.map(function(x){ return 'PO ' + x.po + ' \u00b7 ' + x.cases + ' cs \u00b7 ' + x.on; }).join(' | ')
+         + ' &#10;&#10;Bought against this customer&apos;s order, so it never waited in the cooler. Left out of the columns below." '
          + 'style="margin-left:6px;font-family:var(--fm);font-size:9px;font-weight:700;padding:1px 5px;border-radius:5px;'
-         + 'background:#ede9fe;border:1px solid #c4b5fd;color:#5b21b6;white-space:nowrap">+' + Math.round(_mtoC) + ' made to order</span>')
+         + 'background:#ede9fe;border:1px solid #c4b5fd;color:#5b21b6;white-space:nowrap">' + _mtoLbl + '</span>')
       : '';
     body += '<tr><td class="c"><span class="nm">' + esc(c.c) + '</span><span class="bd ' + (c.sporadic ? 'od' : 'st') + '">' + (c.sporadic ? 'OD' : 'ST') + '</span>' + dsBtn + mtoBadge + '<div class="mt">rr ' + Math.round(_rrOf(c)) + ' cs'
       + ((_qaF[c.c] != null && _qaF[c.c] < 1)
@@ -25707,6 +25748,12 @@ function renderBuildupPanel(){
   var h = dmZoneLabel(5,'Forward build-up','next 7 weeks — run-rate + committed, per customer') + '<div class="card dbu">';
   h += '<div class="dbu-hd"><div class="dbu-t">Demand build-up by customer</div><div class="dbu-s">How the projected weekly demand is built — invoiced run-rate + allocated (committed) orders. ' + usesLine + '</div></div>';
   h += '<div class="dbu-lg"><span><i class="sw a"></i>Allocated — real order placed</span><span><i class="sw r"></i>Run-rate — projected from history</span><span><b class="bd od">OD</b>order-driven <b class="bd st">ST</b>steady</span><span><b style="color:#b45309">not invoiced</b>&nbsp;sold, invoice not issued yet</span><span><b style="color:var(--gray-400)">N already sold</b>&nbsp;part of that week is already booked</span></div>';
+  if(Object.keys(_mtoBy).length){
+    h += '<div style="margin:-4px 0 10px;padding:7px 10px;border-radius:7px;background:#faf5ff;border:1px solid #e9d5ff;'
+       + 'font-size:11px;color:#5b21b6;line-height:1.5">'
+       + '<b>Bought to order</b> — some customers here are supplied by buying against their order, not from the cooler. '
+       + 'That volume is named on their row and left out of the columns below, because it never needs stock.</div>';
+  }
   h += '<div class="dbu-wrap"><table class="dbu-tbl"><thead>';
   if(histWeeks.length){
     h += '<tr class="dbu-grp"><th class="c"></th>'
