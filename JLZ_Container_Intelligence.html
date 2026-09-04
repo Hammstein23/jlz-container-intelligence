@@ -24305,7 +24305,24 @@ function dmEffectiveRunRateLbs(){
   const base = (win === 3 ? (m.runRate3 || m.runRate13) : win === 6 ? (m.runRate6 || m.runRate13) : win === 26 ? (m.runRate26 || m.runRate13) : m.runRate13);
   let ex = 0;
   qaQuietList().forEach(x => { ex += (x.rrLbs || 0) * (1 - qaPct(x.c) / 100); });
-  return Math.max(0, base - ex);
+  // ── El plan de ginger compra PERÚ, así que su demanda tiene que ser de Perú ────────────────────
+  // `qaModelG()` es el modelo de ginger sin filtrar por origen, pero el stock de este plan son lotes
+  // de POs de Perú y Hawaii tiene su propia vista. Sin esta resta, los ~7 cs/wk de Hawaii se cuentan
+  // DOS veces — una acá y otra allá — y el plan de Perú compra para una demanda que no le toca.
+  // Detectado el 2026-09-04 en la reconciliación: la tarjeta de Perú decía 884 y el plan usaba 892.
+  const _hwLbs = (function(){
+    try{
+      const rows = (typeof _dmRawAll !== 'undefined' ? (_dmRawAll || []) : [])
+        .filter(r => r && (r.prod || 'ginger') === 'ginger'
+                     && typeof dmRowOrigin === 'function' && dmRowOrigin(r) !== 'Peru');
+      if(!rows.length) return 0;
+      const hm = dmBuildModel(rows, false, m.caseLb || DM_CASE_LB, 'ginger');
+      if(!hm) return 0;
+      return (win === 3 ? (hm.runRate3 || hm.runRate13) : win === 6 ? (hm.runRate6 || hm.runRate13)
+            : win === 26 ? (hm.runRate26 || hm.runRate13) : hm.runRate13) || 0;
+    }catch(e){ return 0; }
+  })();
+  return Math.max(0, base - ex - _hwLbs);
 }
 // Buy-vs-sell breakdown for a run-rate in lbs. The headline (cs/wk) is the BUY unit (caseLb-lb packs);
 // this line adds the raw volume + how that volume actually sells, by presentation (the sales team's language).
@@ -24426,6 +24443,32 @@ function renderDmRunRate(){
     + '<div class="dmrr-bigrow"><div class="dmrr-big">'+bigRR.toLocaleString()+'</div><div class="dmrr-u">cs/wk</div><div class="dmrr-role">'+(win===26?'26-week smooth':win===13?'13-week base':win===6?'6-week momentum':'3-week spot')+'</div></div>'
     + dmSoldAsHTML(bigRR*cl, cl, m.presMix)
     + (dsCases>=1 ? ('<div style="font-family:var(--fm);font-size:11px;line-height:1.5;margin:-2px 0 10px;color:#7c3aed">＋ <b>~'+Math.round(dsCases).toLocaleString()+' cs/wk</b> '+((typeof dsLabelFor==='function')?dsLabelFor(_hpProd, mTotal):'direct-ship')+' <span style="color:var(--gray-400)">— order-driven, ships from supplier · excluded from this run-rate (never touches stock)</span></div>') : '')
+    // ── Lo comprado contra orden, nombrado ────────────────────────────────────────────────────────
+    // Sol-ti desaparecía de la lista de clientes: su tasa neta es 0 y la lista solo muestra >= 1 cs/wk.
+    // Meterlo de vuelta ahí sería ruido —esa lista existe para sumar el titular y una fila en 0 no suma—
+    // así que va en su propia línea, el mismo patrón que ya usa el direct-ship. Y nombra la ORDEN, no un
+    // promedio semanal: Juan no compró "233 por semana", compró 700 el 13 de agosto.
+    + (function(){
+        var od = {};
+        try{ od = (typeof mtoOrdersByCustomer === 'function') ? mtoOrdersByCustomer(_hpProd, win) : {}; }catch(e){}
+        var names = Object.keys(od); if(!names.length) return '';
+        // `esc` y `shortD` NO existen en este alcance — shortD vive dentro de renderBuildupPanel.
+        // El chequeo de sintaxis no lo habría visto: habría reventado recién al renderizar.
+        var esc = (typeof libEsc === 'function') ? libEsc : function(x){ return String(x == null ? '' : x); };
+        var shortD = function(iso){
+          try{ return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric' }); }
+          catch(e){ return String(iso || '').slice(5); }
+        };
+        var bits = names.map(function(c){
+          var l = od[c], cs = l.reduce(function(a, x){ return a + x.cases; }, 0);
+          return '<b>' + esc(c) + '</b> ' + cs.toLocaleString() + ' cs'
+               + (l.length === 1 ? (' <span style="opacity:.75">PO ' + esc(l[0].po) + ', ' + shortD(l[0].on) + '</span>')
+                                 : (' <span style="opacity:.75">' + l.length + ' orders</span>'));
+        });
+        return '<div style="font-family:var(--fm);font-size:11px;line-height:1.55;margin:-2px 0 10px;color:#5b21b6">'
+             + 'Bought to order in this window &middot; ' + bits.join(' &middot; ')
+             + '<span style="color:var(--gray-400)"> &mdash; not in the number above; you buy it when they order</span></div>';
+      })()
     + '<div class="dmrr-rib '+rc+'">'+rt+'</div>'
     + '<div class="dmrr-step"><div class="dmrr-h">Average of the '+win+' weeks it uses</div><div class="dmrr-wks">'+wksHtml+'</div><div class="dmrr-math">'+mathHtml+'</div>'+(m.nowcast?('<div style="font-size:10px;margin-top:5px;line-height:1.5">'+(_hasPrelim?'<span style="color:#b45309">⏳ preliminary (invoicing still catching up)</span>':'')+(_hasPrelim&&_hasNow?' &nbsp;·&nbsp; ':'')+(_hasNow?'<span style="color:#7c3aed">📋 booked orders (not yet invoiced)</span>':'')+' — most current read</div>'):'')+'</div>'
     + '<div class="dmrr-step"><div class="dmrr-h">Built from these customers <span class="dmrr-hs">— each account’s run-rate in the window</span></div><table class="dmrr-tbl"><tbody>'+rows+'</tbody></table>'
