@@ -100,6 +100,36 @@ if missing:
 
 print('  ok   prorrateo: las %d proyecciones pasan por bpSnapWeekDemand' % len(PROJECTORS))
 
+# ── Tercer guardián: la merma va en la DEMANDA, no en el stock ──────────────────────────────────
+# `available` tiene que ser el conteo físico menos lo comprometido — nada más. Con 48 cajas en cámara
+# la pantalla decía 46 porque le aplicaba la merma al inventario, y parecía que dos se evaporaban.
+# La merma es consumo: se saca más de la cámara por semana. Ginger ya lo hacía así; los otros cuatro
+# no, y esa era la otra mitad de la inconsistencia.
+stats = body_of('invmProductStats')
+if stats is None:
+    print('✗ no se encontró invmProductStats'); sys.exit(1)
+problems = []
+m_avail = re.search(r'var\s+availCases\s*=([^;]*);', stats)
+if not m_avail:
+    problems.append('no se encontró el cálculo de availCases')
+elif 'effOnHand' in m_avail.group(1):
+    problems.append('availCases vuelve a salir del stock con merma aplicada (effOnHand…)')
+if 'weeklyLbsBuy' not in stats:
+    problems.append('no existe weeklyLbsBuy: la merma dejó de inflar la demanda')
+else:
+    m_cov = re.search(r'var\s+coverWks\s*=([^;]*);', stats)
+    if m_cov and 'weeklyLbsBuy' not in m_cov.group(1):
+        problems.append('el cover no se mide contra la demanda inflada')
+
+if problems:
+    print('✗ la merma volvió al lado del stock:\n')
+    for w in problems: print('  · ' + w)
+    print('\n  available = físico − committed.  La merma infla la demanda semanal (weeklyLbsBuy),')
+    print('  igual que en ginger. No la apliques al inventario.\n')
+    sys.exit(1)
+
+print('  ok   merma: available es el conteo físico; la merma infla la demanda')
+
 n_plan = len(re.findall(r'cmPlanEntries\(\)', src)) - 1   # menos la definición
 print('  ok   committed: %d lectores de plan por cmPlanEntries(), %d de volumen declarados'
       % (n_plan, len(ALLOWED)))

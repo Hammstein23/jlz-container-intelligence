@@ -13392,6 +13392,31 @@ function renderOrderPanel() {
   if (!window._ordersPanelEditing) window._docRefresh = renderOrderPanel;
 }
 
+// Marcar / desmarcar una compra con destino. Escriben la MISMA estructura (`order.directShip[]`) que
+// ya leen el Buy Planner, el Simulator y el Inventario, así que no hay un segundo camino de datos.
+function ordAddBoughtFor(){
+  var o = (window._ordersData || [])[window._ordersPanelIdx];
+  if(!o) return;
+  var c = (document.getElementById('ord-bf-cust') || {}).value;
+  var n = parseInt((document.getElementById('ord-bf-cases') || {}).value, 10);
+  if(!c || !c.trim() || !(n > 0)) return;
+  addDirectShip(o.jlzPo, c.trim(), n);
+  ordAfterBoughtForChange();
+}
+function ordRemoveBoughtFor(i){
+  var o = (window._ordersData || [])[window._ordersPanelIdx];
+  if(!o) return;
+  removeDirectShip(o.jlzPo, i);
+  ordAfterBoughtForChange();
+}
+function ordAfterBoughtForChange(){
+  try{ if(typeof pushOrdersToSheet === 'function') pushOrdersToSheet(); }catch(e){}   // saveOrders() no sincroniza solo
+  try{ renderOrderPanel(); }catch(e){}
+  ['renderOrders','renderBuyPlanner','renderInventory','renderSimulator'].forEach(function(f){
+    try{ if(typeof window[f] === 'function') window[f](); }catch(e){}
+  });
+}
+
 // ── VIEW MODE — read-only display of the order ──
 function buildOrderViewMode(o) {
 
@@ -13560,6 +13585,49 @@ function buildOrderViewMode(o) {
               + o.observations + '</div>'
             + '</div>')
         : '')
+
+    // ── Bought for (made to order) ─────────────────────────────────────────────────────────────
+    // Una compra puede tener destino desde el día cero: se le pide al proveedor PARA un cliente
+    // concreto. Esas cajas entran al almacén pero no son stock libre — ya tienen dueño. Marcarlo acá,
+    // en la orden, es donde el hecho realmente vive; antes solo se podía desde Demand → Committed y
+    // encima solo para ginger (`_dmcType === 'direct' && prod === 'ginger'`), así que una orden de
+    // ajo o chalotes no se podía marcar en absoluto.
+    // Lo que marcás acá se resta de la llegada en el Buy Planner, el Simulator y el Inventario.
+    + (function(){
+        var ds = (typeof getDirectShip === 'function') ? getDirectShip(o.jlzPo) : [];
+        var tot = ds.reduce(function(a,d){ return a + (d.cases||0); }, 0);
+        var prod = o.product || 'ginger';
+        var esc = (typeof libEsc === 'function') ? libEsc : function(x){ return String(x==null?'':x); };
+        if (window._orderPanelCollapsed.boughtfor === undefined) window._orderPanelCollapsed.boughtfor = !ds.length;
+        var rows = ds.length
+          ? ds.map(function(d, i){
+              // El aviso que evita el tiro en el pie: marcar la ORDEN sin marcar al CLIENTE saca la
+              // oferta del plan pero deja su demanda en el run-rate, y ahí el plan compra de más.
+              var flagged = (typeof dsIsOn === 'function') ? dsIsOn(d.customer, prod) : false;
+              return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--gray-100)">'
+                + '<div style="flex:1"><b style="font-size:12.5px">' + esc(d.customer) + '</b>'
+                + '<span style="font-family:var(--fm);font-size:11px;color:var(--gray-500);margin-left:8px">' + (d.cases||0) + ' cs</span>'
+                + (flagged ? '' : '<div style="font-size:10.5px;color:#92400E;margin-top:2px;line-height:1.45">&#9888; '
+                    + esc(d.customer) + ' is not marked as made-to-order for ' + esc(prod) + ', so their demand still asks the plan '
+                    + 'for stock. Mark it in Demand &rarr; Customers, or the plan will over-buy.</div>')
+                + '</div>'
+                + '<button onclick="ordRemoveBoughtFor(' + i + ')" title="Remove" style="border:1px solid var(--gray-200);background:var(--white);'
+                + 'cursor:pointer;border-radius:5px;width:22px;height:22px;color:var(--gray-400);font-size:14px;line-height:1;flex:none">&times;</button>'
+                + '</div>';
+            }).join('')
+          : '<div style="font-size:12px;color:var(--gray-400);padding:4px 0 8px">Nothing earmarked &mdash; these cases go into general stock.</div>';
+        return grp('Bought for' + (tot > 0 ? (' · ' + tot + ' cs earmarked') : ''), 'boughtfor')
+          + '<div class="group-body"><div style="padding:2px 12px 12px">'
+          + rows
+          + '<div style="display:flex;gap:6px;margin-top:10px">'
+          +   '<input id="ord-bf-cust" placeholder="Customer" style="flex:1;height:30px;padding:0 8px;border:1px solid var(--gray-200);border-radius:6px;font-size:12px">'
+          +   '<input id="ord-bf-cases" type="number" min="1" placeholder="cs" style="width:74px;height:30px;padding:0 8px;border:1px solid var(--gray-200);border-radius:6px;font-size:12px;font-family:var(--fm)">'
+          +   '<button onclick="ordAddBoughtFor()" style="height:30px;padding:0 12px;border:1px solid var(--jlz);background:var(--jlz);color:#fff;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Add</button>'
+          + '</div>'
+          + '<div style="font-size:10.5px;color:var(--gray-400);margin-top:7px;line-height:1.5">'
+          +   'Earmarked cases arrive into the warehouse but are already spoken for, so they do not count as free stock in the Buy Planner, the Simulator or Inventory.</div>'
+          + '</div></div>';
+      })()
 
     // ── Procurement documents (Phase 1 step 4 — same section as Quality/Ops)
     //    Keyed by this order's PO; PO/BL/INV/PL are Drive-link docs. Also
@@ -14917,9 +14985,14 @@ function dsNamesFor(prod, model){
 }
 function dsLabelFor(prod, model){
   var n = dsNamesFor(prod, model);
-  if(!n.length) return 'direct-ship';
-  if(n.length === 1) return n[0] + ' direct-ship';
-  if(n.length === 2) return n[0] + ' + ' + n[1] + ' direct-ship';
+  if(!n.length) return 'made to order';
+  // "made to order" y no "direct-ship": lo que define al concepto para el plan de compra es que la
+  // mercadería se compra CONTRA una orden confirmada, no que evite el almacén. Sol-ti en turmeric
+  // nunca lo toca; el ajo de Whole Foods entra a la cámara y sale a los pocos días. Para el plan las
+  // dos son lo mismo — JLZ no asume riesgo de inventario — y la palabra vieja decía lo contrario de
+  // la mitad de los casos.
+  if(n.length === 1) return n[0] + ' made to order';
+  if(n.length === 2) return n[0] + ' + ' + n[1] + ' made to order';
   return n.length + ' accounts direct-ship';
 }
 // Averaging window (weeks) for the direct-ship business figure. Default 26 — a lumpy order-driven
@@ -15229,18 +15302,29 @@ function invmProductStats(p,origin){
   // NOTE: on-hand here is the PHYSICAL lot count. Load it gross (including reserved cases) so this
   // subtraction nets once; loading it already-net double-counts. prodCommittedTotal is current-week only.
   var committedCases=(typeof prodCommittedTotal==='function')?prodCommittedTotal(p,origin):0;
-  var availCases=Math.max(0, effOnHandCases-committedCases), availLbs=availCases*caseLb;
+  // ── La merma va del lado de la DEMANDA, no del stock ──────────────────────────────────────────
+  // Antes el disponible salía de `effOnHandCases` (= físico × (1−merma)), así que con 48 cajas en
+  // cámara la pantalla decía 46 y parecía que dos se habían evaporado del conteo. Físicamente están:
+  // de ahí sacás cajas para armar una orden, solo que necesitás sacar ALGUNAS MÁS porque una parte no
+  // sirve. Eso es consumo, no inventario. Y es como ya lo hacía ginger (`weeklyDemand = sold × 1,09`),
+  // que era la otra mitad de la inconsistencia.
+  // La cobertura da igual (es la misma división puesta al revés); lo que cambia es que el número que
+  // se muestra como disponible ahora es el real.
+  var availCases=Math.max(0, onHandCases-committedCases), availLbs=availCases*caseLb;
+  var weeklyLbsBuy=(shrinkF>0)?(weeklyLbs/shrinkF):weeklyLbs;      // lo que hay que SACAR de cámara por semana
+  var weeklyCasesBuy=weeklyLbsBuy>0?weeklyLbsBuy/caseLb:0;
   // Record this week's on-hand so the past-weeks block becomes exact going forward (same as ginger).
   try{ if(onHandCases>0 && typeof stockSnapRecord==='function') stockSnapRecord(p, onHandCases); }catch(e){}
   var directShipCases=(typeof invmDirectShipCases==='function')?invmDirectShipCases(p,origin):0;   // Sol-ti turmeric etc. — pass-through, shown separately
-  var coverWks=(weeklyLbs>0)?availLbs/weeklyLbs:(availLbs>0?Infinity:0);
-  var orderCases=Math.ceil(Math.max(0,(targetWks*weeklyLbs)-availLbs)/caseLb);
+  var coverWks=(weeklyLbsBuy>0)?availLbs/weeklyLbsBuy:(availLbs>0?Infinity:0);
+  var orderCases=Math.ceil(Math.max(0,(targetWks*weeklyLbsBuy)-availLbs)/caseLb);
   var status='ok';
   if(weeklyLbs>0){ if(coverWks<leadWks) status='ur'; else if(coverWks<targetWks) status='re'; }
   return {p:p,meta:meta,label:meta.label||p,caseLb:caseLb,lots:lots,allLots:allLots,onHandCases:onHandCases,onHandLbs:onHandLbs,costVal:costVal,excludedCases:excludedCases,excludedLbs:excludedLbs,
     origin:origin,origins:origins,supList:supList,
     shrinkPct:shrinkPct,effOnHandCases:effOnHandCases,effOnHandLbs:effOnHandLbs,committedCases:committedCases,availCases:availCases,availLbs:availLbs,directShipCases:directShipCases,
-    hasModel:!!m,rr13:rr13,win:win,presMix:(m&&m.presMix)||[],weeklyLbs:weeklyLbs,weeklyCases:weeklyCases,demandOverride:ovr,cv:cv,nWeeks:vals.length,
+    hasModel:!!m,rr13:rr13,win:win,presMix:(m&&m.presMix)||[],weeklyLbs:weeklyLbs,weeklyCases:weeklyCases,
+    weeklyLbsBuy:weeklyLbsBuy,weeklyCasesBuy:weeklyCasesBuy,demandOverride:ovr,cv:cv,nWeeks:vals.length,
     lead:lead,leadWks:leadWks,z:z,serviceLevel:svc,safetyWks:safetyWks,targetWks:targetWks,coverWks:coverWks,orderCases:orderCases,status:status};
 }
 function invmProdSetService(p,v){ var st=prodInvState(); if(!st[p]) st[p]={lots:[]}; st[p].serviceLevel=Math.max(50,Math.min(99.5,parseFloat(v)||95)); prodInvSave(st); invmReRender(); }
@@ -15657,7 +15741,7 @@ function invmAnalysisHTML(s){
     + (s.directShipCases>0 ? ('<div style="margin:6px 0 2px;padding:8px 11px;border:1px solid var(--gray-200);border-radius:8px;background:var(--gray-50);font-family:var(--fm);font-size:11.5px;line-height:1.55">'
         + '<div style="font-weight:700;color:var(--gray-600);text-transform:uppercase;letter-spacing:.04em;font-size:10px;margin-bottom:3px">Business split · this origin</div>'
         + '<div><span style="color:var(--jlz);font-weight:700">'+f(s.weeklyCases)+' cs/wk</span> stock-buy <span style="color:var(--gray-400)">— drives the order below</span></div>'
-        + '<div><span style="color:#7c3aed;font-weight:700">~'+f(s.directShipCases)+' cs/wk</span> '+((typeof dsLabelFor==='function')?dsLabelFor(s.p):'direct-ship')+' <span style="color:var(--gray-400)">— order-driven, ships on confirmation · no stock, doesn\'t drive the buy</span></div>'
+        + '<div><span style="color:#7c3aed;font-weight:700">~'+f(s.directShipCases)+' cs/wk</span> '+((typeof dsLabelFor==='function')?dsLabelFor(s.p):'made to order')+' <span style="color:var(--gray-400)">— order-driven, ships on confirmation · no stock, doesn\'t drive the buy</span></div>'
         + '<div style="margin-top:2px;color:var(--gray-500)">Total business ≈ <b>'+f(s.weeklyCases+s.directShipCases)+' cs/wk</b> <span style="color:var(--gray-400)">· both on the '+(s.win||13)+'-wk window</span></div>'
       + '</div>') : '')
     + '<div class="ipv-kpis">'
@@ -15668,8 +15752,8 @@ function invmAnalysisHTML(s){
     + '</div>';
   if(s.weeklyLbs>0 && s.leadWks>0){
     html += '<div class="ipv-formula">'
-      + '<b>available</b> = '+f(s.onHandCases)+' on-hand'+(s.shrinkPct>0?(' × (1−'+f1(s.shrinkPct)+'%)'):'')+(s.committedCases>0?(' − '+f(s.committedCases)+' committed'):'')+' = <b>'+f(s.availCases)+' cs</b> ('+f(s.availLbs)+' lb)<br>'
-      + '<b>current cover</b> = '+f(s.availLbs)+' lb ÷ '+f(s.weeklyLbs)+' lb/wk = <b>'+f1(s.coverWks)+' wk</b><br>'
+      + '<b>available</b> = '+f(s.onHandCases)+' on-hand'+(s.committedCases>0?(' − '+f(s.committedCases)+' committed'):'')+' = <b>'+f(s.availCases)+' cs</b> <span style="color:var(--gray-400)">&middot; the real count in the cooler</span><br>'
+      + (s.shrinkPct>0 ? ('<b>weekly draw</b> = '+f(s.weeklyCases)+' sold &divide; (1&minus;'+f1(s.shrinkPct)+'% shrink) = <b>'+f(s.weeklyCasesBuy)+' cs/wk</b> <span style="color:var(--gray-400)">&middot; what you actually pull from the cooler</span><br>') : '')      + '<b>current cover</b> = '+f(s.availLbs)+' lb ÷ '+f(s.weeklyLbsBuy)+' lb/wk = <b>'+f1(s.coverWks)+' wk</b><br>'
       + '<b>variability</b> (CV of your sales) = '+cvTxt+' · <b>safety</b> = z('+s.z.toFixed(2)+' @'+s.serviceLevel+'%) × CV × √lead = <b>'+f1(s.safetyWks)+' wk</b><br>'
       + '<b>target cover</b> = lead '+f1(s.leadWks)+' + safety '+f1(s.safetyWks)+' = <b>'+f1(s.targetWks)+' wk</b><br>'
       + '<b>order</b> = max(0, target×demand − available) ÷ '+f(s.caseLb)+' lb = <b>'+f(s.orderCases)+' cs</b>'
@@ -24999,7 +25083,10 @@ function dmcAdd() {
   var cust = (host.querySelector('#dmc-cust') || {}).value;
   var cases = parseInt((host.querySelector('#dmc-cases') || {}).value, 10);
   if(!cust || !cases || cases < 1) return;
-  if(_dmcType === 'direct' && prod === 'ginger') {
+  // Antes esto era `&& prod === 'ginger'`: una orden de ajo o chalotes no se podía marcar desde acá.
+  // El lugar canónico ahora es el panel de Orders ("Bought for"), pero este camino no tiene por qué
+  // seguir siendo solo de ginger — escribe exactamente la misma estructura.
+  if(_dmcType === 'direct') {
     var cont = host.querySelector('#dmc-cont'); if(!cont || !cont.value) return;
     addDirectShip(cont.value, cust, cases);      // week derived from the container's ETA
   } else {
@@ -25570,7 +25657,7 @@ function cxRenderList(){
     return '<tr class="'+(c.c===_cxState.sel?'sel':'')+'" data-c="'+cxEsc(c.c)+'">'
       + '<td class="l"><span class="cx-rank">'+(i+1)+'</span></td>'
       + '<td class="l"><span class="cx-nm">'+cxEsc(c.c)+'</span>'+stb+(c.sporadic?'<span class="cx-st od" title="Order-driven: buys sporadically. The plan uses its committed orders in the weeks it ordered, and resumes its run-rate beyond the last committed week — its average is not smeared across every week.">ORDER-DRIVEN</span>':'')
-      +(_cxDS(c.c)?'<span class="cx-st ds" title="Direct-ship: ships supplier \u2192 customer and never enters the warehouse. Real revenue, but NOT stock demand \u2014 it is excluded from the run-rate that drives the buy plan.">DIRECT-SHIP</span>':'')+dcb+'</td>'
+      +(_cxDS(c.c)?'<span class="cx-st ds" title="Made to order: bought against a confirmed customer order, not from standing stock. It may pass through the warehouse or ship supplier \u2192 customer directly \u2014 either way JLZ carries no inventory risk. Real revenue, but NOT stock demand \u2014 it is excluded from the run-rate that drives the buy plan.">DIRECT-SHIP</span>':'')+dcb+'</td>'
       + '<td class="l">'+cxSpark(c.spark, m.sparkWeeks, m.caseLb||DM_CASE_LB, c.c)+' <span class="cx-pill '+c.trend+'">'+tr+'</span></td>'
       + '<td class="cx-num">'+(_cxRr(c)>=1?cxFmtN(_cxRr(c))+' cs':'\u2014')+'</td>'
       + '<td class="cx-num" style="font-size:11px;color:var(--gray-500)">'+(c.cad!=null?c.cad+'d':'\u2014')+'</td>'

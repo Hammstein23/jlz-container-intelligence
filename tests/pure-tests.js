@@ -414,21 +414,24 @@ ok('el override de 13 semanas también compara contra la ventana, no contra la v
 
 // ════ Quién es direct-ship depende del PRODUCTO ═════════════════════════════
 // El par es cliente+producto: Sol-ti en turmeric, Whole Foods en garlic. La UI tenía "Sol-ti"
-// hardcodeado en tres lugares, así que la pantalla de garlic decía "Sol-ti direct-ship" cuando
+// hardcodeado en tres lugares, así que la pantalla de garlic decía "Sol-ti made to order" cuando
 // las 74 cs/sem eran de Whole Foods. Un cliente leyendo eso saca la conclusión equivocada.
-group('direct-ship · la etiqueta nombra a la cuenta real, no a Sol-ti');
+group('made to order · la etiqueta nombra a la cuenta real, no a Sol-ti');
+// Se llamaba "direct-ship", pero eso significa "nunca toca el almacén" y la mitad de los casos sí
+// entra a la cámara (el ajo de Whole Foods). Lo que define al concepto para el plan es que se compra
+// CONTRA una orden confirmada, no la ruta física.
 
 var _PAIRS = { 'sol-ti|turmeric':true, 'whole foods market|garlic':true };
 dsIsOn = function(cust, prod){ return !!_PAIRS[String(cust||'').trim().toLowerCase()+'|'+prod]; };
 var _MDL = { customers:[ {c:'Whole Foods Market'}, {c:'Sol-ti'}, {c:"Albert's Organics"} ] };
 
-check('garlic nombra a Whole Foods', dsLabelFor('garlic', _MDL), 'Whole Foods Market direct-ship');
-check('turmeric nombra a Sol-ti',    dsLabelFor('turmeric', _MDL), 'Sol-ti direct-ship');
-check('un producto sin direct-ship no inventa un nombre', dsLabelFor('shallots', _MDL), 'direct-ship');
+check('garlic nombra a Whole Foods', dsLabelFor('garlic', _MDL), 'Whole Foods Market made to order');
+check('turmeric nombra a Sol-ti',    dsLabelFor('turmeric', _MDL), 'Sol-ti made to order');
+check('un producto sin direct-ship no inventa un nombre', dsLabelFor('shallots', _MDL), 'made to order');
 check('solo devuelve las cuentas del producto pedido', dsNamesFor('garlic', _MDL).join(','), 'Whole Foods Market');
 
 _PAIRS['sol-ti|garlic'] = true;
-check('con dos cuentas las nombra a las dos', dsLabelFor('garlic', _MDL), 'Whole Foods Market + Sol-ti direct-ship');
+check('con dos cuentas las nombra a las dos', dsLabelFor('garlic', _MDL), 'Whole Foods Market + Sol-ti made to order');
 _PAIRS["albert's organics|garlic"] = true;
 check('con tres o más, cuenta en vez de enumerar', dsLabelFor('garlic', _MDL), '3 accounts direct-ship');
 
@@ -712,6 +715,35 @@ COMMITTED[0].shipped = true;
 check('marcada como despachada, ya no suma', Math.round(hybridSalesForWeek('2026-08-31', 892, _md, 'ginger')), 892);
 ok('y la entrada sigue en el store, para que el build-up la muestre como volumen',
    getCommitted().length === 1 && getCommitted()[0].cases === 1000);
+
+group('Bought for · una compra con destino no es stock libre');
+// Una orden puede pedirse PARA un cliente concreto. Esas cajas entran al almacén pero ya tienen
+// dueño, así que no son stock libre. Se marca en el panel de Orders y escribe order.directShip[],
+// que es lo que ya leen el Buy Planner, el Simulator y el Inventario — un solo camino de datos.
+(function(){
+  var ORDERS = [{ jlzPo:'2667517', product:'garlic', cases:140 },
+                { jlzPo:'2605240', product:'ginger', cases:1300 }];
+  getOrders  = function(){ return ORDERS; };
+  saveOrders = function(x){ ORDERS = x; };
+  findOrderForPo = function(po){ return ORDERS.filter(function(o){ return String(o.jlzPo)===String(po); })[0] || null; };
+
+  check('sin marcar, nada está apartado', directShipTotal('2667517'), 0);
+  addDirectShip('2667517', 'Whole Foods Market', 140);
+  check('marcada, las 140 quedan apartadas', directShipTotal('2667517'), 140);
+  check('la orden sigue teniendo sus 140 cajas físicas', findOrderForPo('2667517').cases, 140);
+  check('y lo que llega como stock libre es cero', Math.max(0, 140 - directShipTotal('2667517')), 0);
+  check('marcar una orden no toca a las otras', directShipTotal('2605240'), 0);
+
+  addDirectShip('2667517', 'Erewhon', 20);
+  check('se puede repartir entre varios destinos', directShipTotal('2667517'), 160);
+  removeDirectShip('2667517', 1);
+  check('y desmarcar uno deja el resto', directShipTotal('2667517'), 140);
+
+  addDirectShip('2667517', 'Nadie', 0);
+  check('cero cajas no se agrega', directShipTotal('2667517'), 140);
+  addDirectShip('9999999', 'Fantasma', 50);
+  check('un PO que no existe no rompe nada', directShipTotal('9999999'), 0);
+})();
 
 group('invmProjectionHTML · los otros cuatro también prorratean su primera semana');
 // La proyección de turmeric/garlic/shallots (y ginger-Hawaii) camina 13 semanas desde el lunes de la
