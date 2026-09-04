@@ -24484,7 +24484,17 @@ function renderCustomers(){
     if (cov) cov.innerHTML = '';
     return;
   }
+  // Sin esto había que volver a Demand para saber de qué producto eran estos clientes. El alcance es
+  // global (producto + origen), así que se muestra donde se está mirando.
+  const _cxP=(typeof getActiveProduct==='function')?getActiveProduct():'ginger';
+  const _cxO=(typeof getActiveOrigin==='function')?getActiveOrigin():'';
+  const _cxMeta=(typeof dmProductMeta==='function')?dmProductMeta(_cxP):{label:_cxP,accent:'var(--jlz)'};
+  const _cxW=(typeof dmWindow==='function')?dmWindow(_cxP):13;
   host.innerHTML = cxStyles() + dmZoneStyles()
+    + '<div class="cx-scope"><span class="dot" style="background:'+_cxMeta.accent+'"></span>'
+      + '<b>'+cxEsc(_cxMeta.label)+'</b>'+(_cxO?'<span class="or"> · '+cxEsc(_cxO)+'</span>':'<span class="or"> · all origins</span>')
+      + '<span class="org">ORG</span>'
+      + '<span class="hint">customers for this line &middot; run-rate on its '+_cxW+'-week window &middot; change it in Demand</span></div>'
     + dmZoneLabel(1,'Overview','clients, concentration &amp; margin')
     + cxKpis(m)
     + dmZoneLabel(2,'Accounts','every account — click a row for the 360')
@@ -25198,6 +25208,7 @@ function cxOverrideCard(sel){
   const c = sel.c;
   const ov = (typeof coGet === 'function') ? (coGet(c) || {}) : {};
   const jc = s => String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+  const _coWin = (typeof dmWindow === 'function') ? dmWindow((typeof getActiveProduct==='function')?getActiveProduct():'ginger') : 13;
   const rrModel = Math.round(sel.rrCasesModel != null ? sel.rrCasesModel : (sel.rrCases || 0));
   const rrEff = Math.round(sel.rrCases || 0);
   const rrMan = !!(sel.ovr && sel.ovr.rr);
@@ -25214,13 +25225,17 @@ function cxOverrideCard(sel){
       return '<button type="button"'+(o[1]===val?' class="on"':'')+' onclick="'+fn+'(\''+jc(c)+'\',\''+o[1]+'\')">'+o[0]+'</button>';
     }).join('') + '</div>';
   let h = '<div class="cxo">';
-  h += '<div class="cxo-h"><div class="cxo-t">Manual overrides</div>' + (anyOv ? '<button type="button" class="cxo-rsall" onclick="coReset(\''+jc(c)+'\')">Reset all</button>' : '') + '</div>';
+  h += '<div class="cxo-h"><div class="cxo-t">Manual overrides</div>'
+     + '<div class="cxo-sub">Use these when you know something the sales history does not: an account that just signed, one that told you it is doubling, or one whose big order was a one-off. An override is a <b>weekly rate</b>, so it applies to every window (3/6/13/26) and survives the weekly reload.</div>' + (anyOv ? '<button type="button" class="cxo-rsall" onclick="coReset(\''+jc(c)+'\')">Reset all</button>' : '') + '</div>';
   h += '<div class="cxo-row"><div><div class="cxo-lab">Weekly run-rate'+man(rrMan)+'</div><div class="cxo-model">model '+rrModel+' cs/wk'+rs(rrMan,'coClearRr(\''+jc(c)+'\')')+'</div></div>'
      + '<div class="cxo-rr'+(rrMan?' man':'')+'"><input type="number" min="0" step="1" value="'+rrEff+'" onchange="coSetRr(\''+jc(c)+'\',this.value)"><span>cs/wk</span></div></div>';
-  h += '<div class="cxo-eff">Plan buys <b>'+rrEff+'</b> cs/wk in weeks with no committed order (before shrink).</div>';
+  h += '<div class="cxo-eff">Cases per week this account buys, averaged over the last '+_coWin+' weeks. It is a <b>calendar</b> average: a week with no order counts as zero, it is not skipped &mdash; that is what makes the customers add up to the total.<br>The plan buys <b>'+rrEff+'</b> cs/wk for this account in weeks with no committed order (before shrink).</div>';
   h += '<div class="cxo-row"><div><div class="cxo-lab">Order pattern'+man(patSel!=='auto')+'</div><div class="cxo-model">model '+(patModel==='od'?'Order-driven':'Steady')+rs(patSel!=='auto','coSetPattern(\''+jc(c)+'\',\'auto\')')+'</div></div>'
      + seg('coSetPattern', patSel, [['Auto','auto'],['Order-driven','od'],['Steady','steady']]) + '</div>';
-  h += '<div class="cxo-eff">'+(patEff==='od' ? 'Committed orders drive the buy in the weeks it orders; run-rate resumes past its last committed week.' : 'Run-rate every week, plus any committed excess over it.')+'</div>';
+  h += '<div class="cxo-eff">'+(patEff==='od'
+      ? '<b>Order-driven</b> means it buys in bursts &mdash; it ordered in fewer than 35% of the weeks. Averaging that would smear one big order across every week, so the plan uses its <b>real committed orders</b> in the weeks it ordered, and only falls back to the average beyond the last order on file.'
+      : '<b>Steady</b> means it orders most weeks, so its average is a fair forecast. The plan projects the run-rate every week and adds only the part of a committed order that <b>exceeds</b> it &mdash; never both.')
+    + '<br><span style="color:var(--gray-400)">Decided automatically from the share of weeks with an order in the window (under 35% &rarr; order-driven). Override it when you know better.</span></div>';
   h += '<div class="cxo-row"><div><div class="cxo-lab">Status'+man(stSel!=='auto')+'</div><div class="cxo-model">model '+(stModel==='quiet'?'Quiet':'Active')+rs(stSel!=='auto','coSetStatus(\''+jc(c)+'\',\'auto\')')+'</div></div>'
      + seg('coSetStatus', stSel, [['Auto','auto'],['Active','active'],['Quiet','quiet']]) + '</div>';
   h += '<div class="cxo-eff last">'+(stEff==='quiet' ? 'Shows in the Quiet-accounts panel - kept in the plan by default; remove there only if it is gone.' : 'Treated as a normal active account.')+'</div>';
@@ -25446,7 +25461,8 @@ function cxStyles(){ return '<style>'
   + '.cx-st.od{background:#EDE9FE;color:#6D28D9}'
   + '.cxo{border:1px solid var(--gray-200);border-radius:8px;margin-top:12px;padding:2px 14px 12px;background:var(--white)}'
   + '.cxo-h{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:11px 0 5px;border-bottom:1px solid var(--gray-100)}'
-  + '.cxo-t{font-family:var(--fb);font-size:12px;font-weight:700;color:var(--gray-800)}'
+  + '.cxo-sub{flex-basis:100%;order:9;font-size:11.5px;color:var(--gray-500);line-height:1.5;margin-top:6px}'
++ '.cxo-t{font-family:var(--fb);font-size:12px;font-weight:700;color:var(--gray-800)}'
   + '.cxo-rsall{font-family:var(--fm);font-size:10px;font-weight:600;color:var(--gray-500);background:none;border:1px solid var(--gray-200);border-radius:5px;padding:3px 8px;cursor:pointer}'
   + '.cxo-rsall:hover{color:var(--gray-800);border-color:var(--gray-400)}'
   + '.cxo-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0 5px}'
@@ -25562,7 +25578,13 @@ function cxStyles(){ return '<style>'
   + '.cx-trace{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:14px 0;font-family:var(--fm);font-size:11px;font-weight:600}'
   + '.cx-trace .node{padding:7px 11px;border-radius:6px;border:1px solid var(--gray-200);background:var(--gray-50);color:var(--gray-700)}.cx-trace .node.on{background:var(--jlz-50);border-color:var(--jlz);color:var(--jlz)}.cx-trace .arr{color:var(--gray-300)}'
   + '.cx-note{font-size:11px;color:var(--gray-400);font-family:var(--fm);text-align:center;margin-top:10px;line-height:1.6}'
-  + '.cx-i{margin-left:3px;font-size:11px;color:var(--gray-400);cursor:help;font-style:normal;font-weight:400}.cx-i:hover{color:var(--jlz)}'
+  + '.cx-scope{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--gray-50);border:1px solid var(--gray-200);border-left:3px solid var(--jlz);border-radius:var(--r);padding:9px 13px;margin-bottom:14px;font-size:15px}'
++ '.cx-scope .dot{width:9px;height:9px;border-radius:2px;display:inline-block}'
++ '.cx-scope b{font-weight:700;letter-spacing:-.01em}'
++ '.cx-scope .or{color:var(--gray-500);font-weight:500}'
++ '.cx-scope .org{font-family:var(--fm);font-size:8px;font-weight:700;color:var(--jlz);background:var(--jlz-light);padding:1px 5px;border-radius:3px}'
++ '.cx-scope .hint{margin-left:auto;font-family:var(--fm);font-size:10px;color:var(--gray-400)}'
++ '.cx-i{margin-left:3px;font-size:11px;color:var(--gray-400);cursor:help;font-style:normal;font-weight:400}.cx-i:hover{color:var(--jlz)}'
   + '.cx-winsel{display:inline-flex;border:1px solid var(--gray-200);border-radius:5px;overflow:hidden}.cx-winsel button{height:24px;padding:0 9px;border:0;background:var(--white);color:var(--gray-600);font-family:var(--fm);font-size:10px;font-weight:600;cursor:pointer}.cx-winsel button+button{border-left:1px solid var(--gray-200)}.cx-winsel button.on{background:var(--jlz);color:#fff}'
   + '</style>'; }
 

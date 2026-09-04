@@ -619,4 +619,22 @@ ok('y el encabezado dice qué ventana está mostrando', /_cxWin\+'w<\/span>/.tes
 ok('las cuentas direct-ship quedan marcadas en la lista', /DIRECT-SHIP/.test(_lst));
 ok('el tooltip busca su div por clase, no por closure', /querySelector\('\.cx-tip'\)/.test(String(cxWireSparkTip)));
 
+// ════ Customers · qué estoy mirando y qué significa ════════════════════════
+// Había que volver a Demand para saber de qué producto eran estos clientes, y "order-driven" /
+// "weekly run-rate" no estaban explicados en ningún lado visible.
+group('Customers · alcance visible y términos explicados');
+
+var _rc=String(renderCustomers);
+ok('muestra el producto que se está mirando', /cx-scope/.test(_rc) && /_cxMeta\.label/.test(_rc));
+ok('y el origen, o dice que son todos', /_cxO\?/.test(_rc) && /all origins/.test(_rc));
+ok('y con qué ventana está midiendo el run-rate', /_cxW\+'-week window/.test(_rc));
+
+var _oc=String(cxOverrideCard);
+ok('explica order-driven con la regla real (35% de las semanas)', /35%/.test(_oc));
+ok('dice por qué no se promedia una cuenta grumosa', /smear/.test(_oc));
+ok('explica steady y que nunca cuenta dos veces', /exceeds/.test(_oc) && /never both/.test(_oc));
+ok('explica que el run-rate es promedio de CALENDARIO', /calendar/.test(_oc) && /counts as zero/.test(_oc));
+ok('y que la ventana la manda el producto', /_coWin/.test(_oc));
+ok('dice para qué sirve un override manual', /just signed/.test(_oc) && /weekly rate/.test(_oc));
+
 summary();

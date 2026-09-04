@@ -33,7 +33,7 @@ echo "══ Modelo de demanda ════════════════�
 python3 "$DIR/extract.py" "$HTML" "$TMP/app.js" \
   dmWeekKey nowcastProductModel dmToggleOther renderBuildupPanel dmEffectiveRunRateLbs \
   dmISOLocal bpFutureWeeks bpWeeksOfCover hybridSalesForWeek dsNamesFor dsLabelFor jlzSyncScope getActiveOrigin \
-  dmLineOrigins dmLineStats dmProductSeries dmProductMeta dmSeriesCompare dmBuildModel invmDirectShipCases dmFocusRows dmComboSVG dmFmt0 dmMoney2 dmRenderTrendPrice dmWireChartTip cxSpark cxRenderList cxWireSparkTip
+  dmLineOrigins dmLineStats dmProductSeries dmProductMeta dmSeriesCompare dmBuildModel invmDirectShipCases dmFocusRows dmComboSVG dmFmt0 dmMoney2 dmRenderTrendPrice dmWireChartTip cxSpark cxRenderList cxWireSparkTip renderCustomers cxOverrideCard
 run_suite "demanda" "$TMP/app.js" "$DIR/pure-tests.js"
 
 echo
