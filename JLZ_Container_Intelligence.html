@@ -14472,8 +14472,50 @@ function bpGetPipelineByWeek() {
 // (transport, shrink/day, cleaning base + deterioration) come from your saved
 // container snapshots (jlz_container_history). Net $/lb = (landed + cleaning@age)
 // / (1 - shrink@age) = the true break-even per pound.
-var BP_INV_LS='jlz_bp_inv';
-function bpInvState(){ try{var o=JSON.parse(localStorage.getItem(BP_INV_LS)||'{}')||{}; if(!o.rows)o.rows={}; return o;}catch(e){return{rows:{}};} }
+// ── El inventario de ginger-Perú guarda lo FÍSICO, igual que los otros cuatro productos ──────────
+// v1 (`jlz_bp_inv`) guardaba las cajas LIBRES y el Buy Planner le sumaba el committed; los otros
+// cuatro (`jlz_prod_inv_v1`) guardaban lo bruto y restaban. Dos convenciones opuestas para la misma
+// pregunta, alimentadas por el mismo Sales Desk — no por una razón del negocio, sino porque ginger es
+// el store original y la Fase 2 lo dejó explícitamente sin tocar ("ginger untouched", af5044c).
+// Costaba caro: había que acordarse de cargar un número distinto según el producto, equivocarse no
+// daba error, e Inventory mostraba 2.184 mientras el Buy Planner mostraba 2.334 del mismo momento.
+var BP_INV_LS='jlz_bp_inv_v2';
+var BP_INV_LS_V1='jlz_bp_inv';
+
+// Migración de una sola vez. El committed de la semana se reparte entre los lotes en proporción a su
+// tamaño: el TOTAL queda exacto (que es lo que usa el plan), pero el reparto por lote es una
+// estimación — una orden reservada no dice de qué lote sale. Se recarga el lunes y queda exacto.
+function bpInvMigrateV1(){
+  try{
+    var raw = localStorage.getItem(BP_INV_LS_V1);
+    if(raw == null) return null;
+    var o = JSON.parse(raw) || {}; if(!o.rows) o.rows = {};
+    var com = 0;
+    try{ if(typeof committedInvForWeek === 'function' && typeof dmWeekKey === 'function')
+           com = committedInvForWeek(dmWeekKey(new Date()), 'ginger') || 0; }catch(e){}
+    var keys = Object.keys(o.rows);
+    var tot = keys.reduce(function(a,k){ return a + (+((o.rows[k]||{}).cases) || 0); }, 0);
+    if(com > 0 && tot > 0){
+      keys.forEach(function(k){
+        var r = o.rows[k]; if(!r) return;
+        r.cases = (+r.cases || 0) + com * ((+r.cases || 0) / tot);
+      });
+    }
+    o.migratedFromV1 = { on: (typeof bpTodayISO === 'function' ? bpTodayISO() : null),
+                         addedCases: Math.round((com > 0 && tot > 0) ? com : 0),
+                         estimated: (com > 0 && tot > 0) };
+    localStorage.setItem(BP_INV_LS, JSON.stringify(o));
+    return o;
+  }catch(e){ return null; }
+}
+
+function bpInvState(){
+  try{
+    var raw = localStorage.getItem(BP_INV_LS);
+    if(raw == null){ var mig = bpInvMigrateV1(); if(mig) return mig; }
+    var o = JSON.parse(raw || '{}') || {}; if(!o.rows) o.rows = {}; return o;
+  }catch(e){ return { rows:{} }; }
+}
 // Se sella la fecha del guardado: el Buy Planner compara stock contra demanda, y sin saber de cuándo
 // es cada foto no hay forma de ver que están desfasadas. El 2026-09-03 el stock era del lunes y la
 // demanda de la semana en curso, y desde la pantalla eso era invisible.
@@ -16105,10 +16147,13 @@ function renderBuyPlanner() {
   // behavior is identical to before.
   const _bpNowWk = (typeof dmWeekKey === 'function') ? dmWeekKey(new Date()) : null;
   const committedNowCases = (_bpNowWk && typeof committedInvForWeek === 'function') ? (committedInvForWeek(_bpNowWk, 'ginger') || 0) : 0;
-  const stockCasesGross = stockCases + committedNowCases;
+  // El store ya guarda lo FÍSICO (v2), así que el bruto es directamente lo cargado y lo libre se
+  // obtiene restando, igual que en turmeric/garlic/shallots.
+  const stockCasesGross = stockCases;
+  const stockCasesFree = Math.max(0, stockCases - committedNowCases);
   // Record this week's real on-hand so the history becomes exact from here on (overwrites within the same
   // week, so it always holds the latest reading). Only when there is actual stock loaded.
-  try{ if (stockCases > 0 && typeof stockSnapRecord === 'function') stockSnapRecord('ginger', stockCases); }catch(e){}
+  try{ if (stockCases > 0 && typeof stockSnapRecord === 'function') stockSnapRecord('ginger', stockCasesFree); }catch(e){}   // la serie viene en LIBRE desde siempre; no se mezcla
   const baseline = parseInt(document.getElementById('bp-baseline')?.value || '8');
   // Shrink % is now an editable input (1-40), replacing the old yield on/off toggle.
   // Always applied — the question is the magnitude, not whether to apply it at all.
@@ -16190,7 +16235,7 @@ function renderBuyPlanner() {
 
   // Update cases sub-label inside the snapshot banner
   const stockCasesEl = document.getElementById('bp-stock-cases');
-  if (stockCasesEl) stockCasesEl.textContent = Math.round(stockCases).toLocaleString() + ' cases';
+  if (stockCasesEl) stockCasesEl.textContent = Math.round(stockCasesFree).toLocaleString() + ' cases';
   // Phase 2: fill the gross-on-hand and committed summary boxes (Available = the input above).
   const _ohgEl = document.getElementById('bp-onhand-gross');
   if (_ohgEl) _ohgEl.textContent = Math.round(stockCasesGross).toLocaleString();
@@ -20831,7 +20876,7 @@ function simRenderProjection(realOrders, hypoOrders) {
   // week) and consume the committed per week, so a reserved order is netted once. committed 0 → unchanged.
   const _simNowWk = (typeof dmWeekKey === 'function') ? dmWeekKey(new Date()) : null;
   const committedNowCasesSim = (_simNowWk && typeof committedInvForWeek === 'function') ? (committedInvForWeek(_simNowWk, 'ginger') || 0) : 0;
-  const stockCasesGross = stockCases + committedNowCasesSim;
+  const stockCasesGross = stockCases;                      // v2: el store ya es bruto
   const baseline = parseInt(document.getElementById('bp-baseline')?.value || '8');
   const shrinkPctInput = parseFloat(document.getElementById('bp-shrink-pct')?.value);
   const shrinkPct = (isFinite(shrinkPctInput) && shrinkPctInput >= 0) ? shrinkPctInput / 100 : 0.14;
