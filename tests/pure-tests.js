@@ -683,6 +683,49 @@ check('con 6 días nunca se pone optimista por más de 7 puntos', peorDesvio(6) 
 check('con 5 días (lun-vie) sí — por eso se descartó',          peorDesvio(5) >= -7, false);
 check('y la constante del código es 6',                          DM_SELL_DAYS, 6);
 
+group('cmCasesInBuyPack · una caja de 5 lb no es una caja de 30');
+// El committed viene en la caja que se VENDIÓ; el run-rate y el plan trabajan en la que se COMPRA.
+// Compararlos directo infla siempre, porque los packs chicos tienen más cajas por libra. Convertir por
+// PESO es lo correcto acá: toda la mercadería entra en el pack grande y se reempaca, así que una venta
+// de 5 lb consume el granel igual.
+productCaseLb = function(p){ return (p === 'shallots') ? 50 : 30; };
+ooClassifySku = function(sku){ var m = String(sku||'').match(/(\d+)\s*Lbs?/i);
+                               return m ? { packLbs: parseInt(m[1],10) } : null; };
+
+check('una caja de 30 lb es una caja',
+      cmCasesInBuyPack({ cases:8, sku:'OG-TUR-30Lbs-PR-FJ' }, 'turmeric'), 8);
+check('seis de 5 lb son una de 30',
+      cmCasesInBuyPack({ cases:6, sku:'OG-TUR-5Lbs-PR-FJ' }, 'turmeric'), 1);
+check('tres de 10 lb son una de 30',
+      cmCasesInBuyPack({ cases:3, sku:'OG-TUR-10Lbs-PR-FJ' }, 'turmeric'), 1);
+// el caso real: Earl's tenía 21 cajas de 10 lb, que son 7 de 30 — no 21
+check('el caso de Earl’s: 21 de 10 lb = 7 de 30',
+      cmCasesInBuyPack({ cases:21, sku:'OG-TUR-10Lbs-PR-FJ' }, 'turmeric'), 7);
+check('shallots compra en sacos de 50: 20 lb es 0,4',
+      Math.round(cmCasesInBuyPack({ cases:1, sku:'OG-SHA-20lbs-LG' }, 'shallots') * 100) / 100, 0.4);
+check('sin SKU legible se asume ya en el pack de compra (carga manual)',
+      cmCasesInBuyPack({ cases:12 }, 'turmeric'), 12);
+check('cero cajas es cero',        cmCasesInBuyPack({ cases:0, sku:'OG-TUR-5Lbs' }, 'turmeric'), 0);
+check('una entrada rota no rompe', cmCasesInBuyPack(null, 'turmeric'), 0);
+
+group('hybridSalesForWeek · el committed se compara en la MISMA unidad que el run-rate');
+// Sin convertir, Earl's (21 cajas de 10 lb, run-rate 11) parecía estar comprando el doble de lo normal
+// y el modelo le sumaba 10 cajas de demanda que no existían.
+hybridSalesForWeek = HYBRID_REAL;
+_cmShipped = function(c){ return !!(c && c.shipped); };
+_cmProd    = function(c){ return c.prod; };
+_cmOriginFor = function(){ return ''; };
+dmWindow   = function(){ return 3; };
+isDirectShipRow = function(){ return false; };
+var _mE = { customers:[{ c:"Earl's", rrCases:11, rr3Cases:11 }] };
+COMMITTED = [{ type:'inv', wk:'2026-08-31', customer:"Earl's", cases:21,
+               prod:'turmeric', sku:'OG-TUR-10Lbs-PR-FJ' }];
+check('21 cajas de 10 lb no inflan un run-rate de 11',
+      Math.round(hybridSalesForWeek('2026-08-31', 88, _mE, 'turmeric')), 88);
+COMMITTED[0].sku = 'OG-TUR-30Lbs-PR-FJ';
+ok('pero 21 cajas de 30 lb sí, porque ahí sí superan su promedio',
+   Math.round(hybridSalesForWeek('2026-08-31', 88, _mE, 'turmeric')) > 88);
+
 group('cmPlanEntries · el único filtro de las despachadas');
 (function(){
   var real = getCommitted;

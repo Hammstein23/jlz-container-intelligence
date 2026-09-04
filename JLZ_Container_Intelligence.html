@@ -11839,6 +11839,28 @@ function _cmKey(c){ return String((c && c.orderNo) || '') + '|' + String((c && c
 // 1.000 cs el 1-sep y el plan seguía pidiendo 4 contenedores en vez de 3.
 // Todo lo que alimenta STOCK o DEMANDA lee de acá. Las vistas de VOLUMEN (el panel de Committed
 // orders, el build-up) siguen leyendo el store completo a propósito: ahí esas cajas SÍ se muestran.
+// ── Las cajas de una orden, en el PACK DE COMPRA ────────────────────────────────────────────────
+// El committed viene en la caja que se VENDIÓ (5, 10, 30 lb), pero el run-rate y el plan trabajan en
+// el pack que se COMPRA. Compararlos directo es restar kilos de libras, y el error siempre infla,
+// porque los packs chicos tienen más cajas por libra.
+//
+// Caso real 2026-09-04, turmeric: Earl's tenía 21 cajas de 10 lb comprometidas. Eso son 7 cajas de 30.
+// El modelo comparaba 21 contra su run-rate de 11, concluía que estaban comprando más de lo normal y
+// le sumaba 10 cajas de demanda que no existían.
+//
+// Convertir por PESO es correcto porque toda la mercadería entra en el pack grande y se reempaca:
+// una venta de 5 lb consume el granel igual. Una entrada sin SKU legible (carga manual) se asume ya
+// en el pack de compra, que es la convención de siempre.
+function cmCasesInBuyPack(c, prod){
+  var cs = (+((c && c.cases)) || 0);
+  if(!(cs > 0)) return 0;
+  var caseLb = (typeof productCaseLb === 'function') ? productCaseLb(prod) : 30;
+  if(!(caseLb > 0)) return cs;
+  var pk = null;
+  try{ if(typeof ooClassifySku === 'function' && c && c.sku) pk = (ooClassifySku(c.sku) || {}).packLbs; }catch(e){}
+  return (pk > 0) ? (cs * pk / caseLb) : cs;
+}
+
 function cmPlanEntries(){
   var all = (typeof getCommitted === 'function') ? getCommitted() : null;
   if(!Array.isArray(all)) return [];                 // store vacío o todavía sin cargar
@@ -11846,7 +11868,8 @@ function cmPlanEntries(){
 }
 function committedInvForWeek(wk, product) {
   var p = product || 'ginger';
-  return cmPlanEntries().reduce(function(s, c){ return s + ((c.wk === wk && c.type === 'inv' && _cmProd(c) === p) ? (c.cases || 0) : 0); }, 0);
+  return cmPlanEntries().reduce(function(s, c){
+    return s + ((c.wk === wk && c.type === 'inv' && _cmProd(c) === p) ? cmCasesInBuyPack(c, p) : 0); }, 0);
 }
 // Hybrid weekly sales demand (raw cases, pre-shrink). Starts from the run-rate baseline (salesDemand)
 // and adjusts per account:
@@ -11891,7 +11914,7 @@ function hybridSalesForWeek(wk, salesDemand, model, product, extraOrders, origin
   cmPlanEntries().forEach(function(c){
     if (!c || c.type !== 'inv' || !c.wk || _cmProd(c) !== _hp) return;
     if (_hpOrg && typeof _cmOriginFor === 'function'){ var _o = _cmOriginFor(c); if (_o && _o !== _hpOrg) return; }
-    _acc(c.customer, c.wk, c.cases);
+    _acc(c.customer, c.wk, cmCasesInBuyPack(c, _hp));   // en el pack de compra: se compara contra el run-rate
   });
   // Extra (hypothetical) orders — Simulator scenarios — netted IDENTICALLY to committed: for an
   // order-driven account a scenario order REPLACES its run-rate that week (no double-count); a
