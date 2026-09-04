@@ -716,6 +716,53 @@ check('marcada como despachada, ya no suma', Math.round(hybridSalesForWeek('2026
 ok('y la entrada sigue en el store, para que el build-up la muestre como volumen',
    getCommitted().length === 1 && getCommitted()[0].cases === 1000);
 
+group('mtoDetectCandidates · propone, no marca');
+// Encuentra las compras contra orden en el historial para no tener que marcarlas de memoria.
+// El filtro que de verdad importa es el de cuentas "a saltos": sin él, la coincidencia exacta dispara
+// cada vez que una PO de rutina cae la semana que un cliente habitual compró algo parecido — en
+// cúrcuma proponía 17 candidatos cuando solo 5 eran reales.
+(function(){
+  var HOY = new Date(2026, 8, 4);
+  var iso = function(n){ var d = new Date(HOY.getTime() - n*7*86400000); return d.toISOString().slice(0,10); };
+  dmWeekKey = function(d){ var x=new Date(d); var g=(x.getDay()+6)%7; x.setDate(x.getDate()-g);
+    return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); };
+  productCaseLb = function(){ return 30; };
+  dmIsInternalAcct = function(c){ return c === 'Compost'; };
+  _ordProd = function(o){ return o.product || 'ginger'; };
+
+  // rutina del producto: POs de 100. Sol-ti compra a saltos; Albert's todas las semanas.
+  var ORD = [
+    { jlzPo:'RUT1', product:'turmeric', status:'Arrived', arrivalActual:iso(2),  cases:100 },
+    { jlzPo:'RUT2', product:'turmeric', status:'Arrived', arrivalActual:iso(4),  cases:100 },
+    { jlzPo:'RUT3', product:'turmeric', status:'Arrived', arrivalActual:iso(6),  cases:100 },
+    { jlzPo:'BIG',  product:'turmeric', status:'Arrived', arrivalActual:iso(3),  cases:700 },
+    { jlzPo:'YA',   product:'turmeric', status:'Arrived', arrivalActual:iso(5),  cases:700,
+      directShip:[{customer:'Sol-ti', cases:700}] },
+    { jlzPo:'CANC', product:'turmeric', status:'Cancelled', arrivalActual:iso(3), cases:700 }
+  ];
+  var VENTAS = [];
+  // Albert's compra 100 cs TODAS las semanas → habitual, se abastece de stock
+  for(var i=0;i<26;i++) VENTAS.push({ prod:'turmeric', c:"Albert's", d:iso(i), lbs:100*30 });
+  // Sol-ti compra 700 solo dos veces
+  VENTAS.push({ prod:'turmeric', c:'Sol-ti', d:iso(3), lbs:700*30 });
+  VENTAS.push({ prod:'turmeric', c:'Sol-ti', d:iso(5), lbs:700*30 });
+  getOrders = function(){ return ORD; };
+  _dmRawAll = VENTAS;
+
+  var c = mtoDetectCandidates('turmeric', 26);
+  check('propone un solo candidato', c.length, 1);
+  check('y es la PO grande', c[0].po, 'BIG');
+  check('atribuida a la cuenta que compra a saltos', c[0].customer, 'Sol-ti');
+  check('con la señal más fuerte', c[0].signal, 'exact+outsized');
+  ok('las POs de rutina NO se proponen, aunque calcen con Albert’s',
+     c.every(function(x){ return String(x.po).indexOf('RUT') < 0; }));
+  ok('la ya marcada no se vuelve a proponer', c.every(function(x){ return x.po !== 'YA'; }));
+  ok('la cancelada tampoco',                  c.every(function(x){ return x.po !== 'CANC'; }));
+  ok('dice en cuántas semanas compró esa cuenta', c[0].weeksBought === 2 && c[0].ofWeeks === 26);
+  check('no marca nada por su cuenta',
+        (ORD.filter(function(o){ return Array.isArray(o.directShip) && o.directShip.length; })).length, 1);
+})();
+
 group('mtoCasesPerWeek · lo comprado contra orden, orden por orden');
 // El flag por cliente saca a la cuenta entera. Esto solo saca las cajas que compraste para alguien,
 // así que el mismo cliente puede tener stock y contra-orden a la vez — que es el caso real del ajo.

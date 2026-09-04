@@ -15000,6 +15000,89 @@ function dsToggle(cust, prod){
   try{ if(typeof renderBuyPlanner==='function') renderBuyPlanner(); }catch(e){}
   try{ if(typeof invmReRender==='function') invmReRender(); }catch(e){}
 }
+// ── Detector de compras contra orden en el historial ────────────────────────────────────────────
+// Marcar 132 órdenes de memoria no es realista. Pero el patrón se ve en los datos: una compra hecha
+// PARA alguien deja dos huellas — la PO se sale del tamaño habitual del producto, y el cliente compra
+// esa cantidad en esa semana. En cúrcuma la coincidencia es exacta cinco veces seguidas (400, 950,
+// 700, 700, 700 de Sol-ti); en ajo la rutina son POs de ~64 y las de 134/140 rompen la cadencia justo
+// cuando aparece Whole Foods.
+//
+// NO marca nada: propone. La decisión es de Juan, pero sobre datos en vez de memoria.
+//
+// SIN UI a propósito. Esto fue una herramienta de MIGRACIÓN: sirvió para encontrar las 8 compras
+// contra orden que había en el historial (2026-09-04) y ya cumplió. De ahí en adelante Juan marca cada
+// orden cuando la carga, en el panel "Bought for" — un botón permanente para algo que se usa una vez
+// es basura en la pantalla. Queda acá porque puede volver a hacer falta (un producto nuevo, una
+// auditoría); se corre desde la consola:
+//
+//     mtoDetectCandidates('turmeric', 26)
+function mtoDetectCandidates(prod, weeks){
+  var w = Math.max(4, weeks || 26);
+  var caseLb = (typeof productCaseLb === 'function') ? productCaseLb(prod) : 30;
+  var ords = (typeof getOrders === 'function') ? getOrders() : [];
+  var raw  = (typeof _dmRawAll !== 'undefined' ? (_dmRawAll || []) : []);
+  var since = null;
+  try{ since = dmWeekKey(new Date(Date.now() - w * 7 * 86400000)); }catch(e){}
+  var _d = function(x){ var m = String(x).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? new Date(+m[1], +m[2]-1, +m[3]) : null; };
+
+  // ventas por semana y cliente
+  var byWk = {}, wksDe = {};
+  raw.forEach(function(r){
+    if(!r || (r.prod || 'ginger') !== prod || !r.d) return;
+    var dd = _d(r.d); if(!dd) return;
+    var k; try{ k = dmWeekKey(dd); }catch(e){ return; }
+    if(since && k < since) return;
+    (byWk[k] = byWk[k] || {});
+    byWk[k][r.c] = (byWk[k][r.c] || 0) + (+r.lbs || 0) / caseLb;
+    (wksDe[r.c] = wksDe[r.c] || {})[k] = 1;
+  });
+  // El filtro que saca el ruido. Sin esto la "coincidencia exacta" dispara cada vez que una PO de
+  // rutina cae la semana que un cliente habitual compró algo parecido: en cúrcuma proponía 17 cuando
+  // solo 5 eran reales. Una compra CONTRA ORDEN es para una cuenta que compra a saltos; la que compra
+  // todas las semanas se abastece del stock.
+  var lumpy = function(c){ var n = Object.keys(wksDe[c] || {}).length; return n > 0 && n <= Math.round(w * 0.4); };
+
+  // el tamaño "de rutina" del producto = mediana de las POs del período
+  var mine = ords.filter(function(o){
+    if(!o || o.status === 'Cancelled') return false;
+    if(((typeof _ordProd === 'function') ? _ordProd(o) : (o.product || 'ginger')) !== prod) return false;
+    var d = o.arrivalActual || o.arrivalEstimated; if(!d) return false;
+    var k; try{ k = dmWeekKey(_d(d)); }catch(e){ return false; }
+    return !since || k >= since;
+  });
+  var sizes = mine.map(function(o){ return +o.cases || 0; }).filter(function(x){ return x > 0; }).sort(function(a,b){ return a-b; });
+  var routine = sizes.length ? sizes[Math.floor(sizes.length/2)] : 0;
+
+  var out = [];
+  mine.forEach(function(o){
+    if(Array.isArray(o.directShip) && o.directShip.length) return;      // ya marcada
+    var cs = +o.cases || 0; if(!(cs > 0)) return;
+    var k; try{ k = dmWeekKey(_d(o.arrivalActual || o.arrivalEstimated)); }catch(e){ return; }
+    // el cliente puede facturar la semana de la llegada o la siguiente
+    var wks = [k];
+    try{ wks.push(dmWeekKey(new Date(_d(k).getTime() + 7*86400000))); }catch(e){}
+    var best = null;
+    wks.forEach(function(wk){
+      var m = byWk[wk] || {};
+      Object.keys(m).forEach(function(cust){
+        if(typeof dmIsInternalAcct === 'function' && dmIsInternalAcct(cust)) return;
+        if(!lumpy(cust)) return;
+        var got = m[cust], gap = Math.abs(got - cs) / cs, cand = null;
+        var big = (routine > 0 && cs >= routine * 1.8);
+        if(gap <= 0.15 && big)            cand = { signal:'exact+outsized', score: 2 - gap };
+        else if(gap <= 0.15)              cand = { signal:'exact',          score: 1 - gap };
+        else if(big && got >= cs * 0.45)  cand = { signal:'outsized',       score: 0.5 };
+        if(cand && (!best || cand.score > best.score))
+          best = { po:o.jlzPo, cases:cs, wk:wk, customer:cust, custCases:Math.round(got),
+                   signal:cand.signal, score:cand.score, routine:routine,
+                   weeksBought:Object.keys(wksDe[cust] || {}).length, ofWeeks:w };
+      });
+    });
+    if(best) out.push(best);
+  });
+  return out.sort(function(a,b){ return b.score - a.score || String(b.wk).localeCompare(String(a.wk)); });
+}
+
 // ── Cuánta demanda se cubre CONTRA ORDEN, según las POs marcadas en Orders ──────────────────────
 // El flag por cliente (`dsIsOn`) saca a la cuenta ENTERA de la demanda de stock. Esto es el bisturí:
 // solo las cajas que efectivamente compraste para alguien, orden por orden. El mismo cliente puede
