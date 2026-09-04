@@ -710,6 +710,25 @@ check('marcada como despachada, ya no suma', Math.round(hybridSalesForWeek('2026
 ok('y la entrada sigue en el store, para que el build-up la muestre como volumen',
    getCommitted().length === 1 && getCommitted()[0].cases === 1000);
 
+group('bpSnapWeekDemand · la semana del conteo se consume solo por lo que le queda');
+// 2026: 31-ago lun · 3-sep jue · 6-sep dom.  Caso real: demanda 900, committed abierto 150, merma 1.09.
+var LUN = new Date(2026,7,31), JUE = new Date(2026,8,3), SAB = new Date(2026,8,5);
+check('conteo del lunes: no se toca, la semana entera está por delante',
+      Math.round(bpSnapWeekDemand(900, 150, 1.09, LUN)), 900);
+// jueves → quedan 3 de 6 días. El committed (150×1.09=163) entra entero; el resto se parte al medio.
+check('conteo del jueves: solo la mitad de lo proyectado',
+      Math.round(bpSnapWeekDemand(900, 150, 1.09, JUE)), Math.round(163.5 + (900-163.5)*0.5));
+ok('y eso es bastante menos que la semana completa', bpSnapWeekDemand(900, 150, 1.09, JUE) < 600);
+check('sábado: ya casi no queda semana',
+      Math.round(bpSnapWeekDemand(900, 150, 1.09, SAB)), Math.round(163.5 + (900-163.5)/6));
+ok('el committed nunca se prorratea — son órdenes reales con fecha',
+   bpSnapWeekDemand(900, 150, 1.09, SAB) >= 163);
+check('sin committed, se prorratea todo',
+      Math.round(bpSnapWeekDemand(900, 0, 1.09, JUE)), 450);
+check('si el committed supera la demanda, no la infla',
+      Math.round(bpSnapWeekDemand(200, 900, 1.09, JUE)), 200);
+check('demanda cero se queda en cero', bpSnapWeekDemand(0, 150, 1.09, JUE), 0);
+
 group('renderWeekPanel · el HTML cierra bien en las dos ramas');
 // El panel tiene dos salidas (la tabla normal y el estado "no hay demanda de stock") y comparten el
 // <div class="dwk"> de apertura. Un </div> de menos en cualquiera de las dos rompe el layout de todo

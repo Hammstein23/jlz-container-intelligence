@@ -15978,6 +15978,21 @@ function bpLeadTimeSigmaWeeks(){
 // suben los lunes y el inventario los lunes y jueves. A mitad de semana eso significa mirar un stock
 // de hace tres días contra una demanda de la semana en curso, sin nada en pantalla que lo diga.
 // Este sello no corrige nada — solo hace visible qué tan vieja es cada mitad de la comparación.
+// Cuánto de la semana del CONTEO queda todavía por consumir.
+// `weeksElapsed` descuenta el tiempo desde la foto de inventario en semanas ISO enteras, así que un
+// conteo de mitad de semana da 0 y la fracción ya vivida se pierde: se le restaba la demanda de la
+// semana COMPLETA a un stock que ya venía neto de esos días. El 2026-09-03 (jueves) eran ~450 cajas
+// de más contra un conteo de 2.334 — el plan proyectaba de aquí al domingo lo mismo que una semana
+// entera, y por eso no cerraba al leerlo.
+// El committed abierto NO se prorratea: son órdenes reales con fecha que todavía tienen que salir.
+function bpSnapWeekDemand(wkDemand, committedWk, infl, snapDate){
+  if(!(wkDemand > 0) || typeof dmWeekPace !== 'function') return wkDemand;
+  var left = dmWeekPace(snapDate).aheadPct;                  // 6 días hábiles; el día del conteo cuenta como pendiente
+  if(!(left < 1)) return wkDemand;                           // conteo del lunes → la semana entera está por delante
+  var firm = Math.min(wkDemand, Math.max(0, (committedWk || 0) * (infl || 1)));
+  return firm + (wkDemand - firm) * left;
+}
+
 function bpFreshnessStamp(){
   var bits = [], stale = 0;
   try{
@@ -15989,6 +16004,18 @@ function bpFreshnessStamp(){
       stale = Math.max(0, Math.round((new Date(n.getFullYear(), n.getMonth(), n.getDate()) - a) / 864e5));
       bits.push('sales through <b>' + last + '</b>' + (stale > 0 ? ' (' + stale + 'd ago)' : ' (today)'));
     } else { bits.push('no sales loaded'); }
+  }catch(e){}
+  // La fecha del conteo decide cuánta demanda se consume en su propia semana (bpSnapWeekDemand), y de
+  // eso depende un contenedor entero. Pero el campo se autocompleta con "hoy" si nadie lo toca, así que
+  // puede quedar diciendo jueves sobre un inventario cargado el lunes. `savedAt` (que se sella solo al
+  // guardar) es el testigo independiente: si no coinciden, hay que avisar en vez de prorratear a ciegas.
+  try{
+    var _snap = localStorage.getItem('bp_stock_date');
+    var _saved = (typeof bpInvState === 'function') ? (bpInvState() || {}).savedAt : null;
+    if(_snap && _saved && _snap !== _saved){
+      bits.push('<b>counted ' + _saved + ' but dated ' + _snap + '</b> \u2014 fix the Snapshot date');
+      stale = Math.max(stale, 3);                    // fuerza el aviso: el prorrateo de la semana depende de esto
+    }
   }catch(e){}
   try{
     var st = (typeof bpInvState === 'function') ? bpInvState() : null;
@@ -16233,6 +16260,10 @@ function renderBuyPlanner() {
   const pipelineByWeek = bpGetPipelineByWeek();
   const todayWk = (typeof isoWeek === 'function') ? isoWeek(new Date().toISOString().slice(0,10)) : snapWk;
   const weeksElapsed = (snapWk != null && todayWk != null) ? Math.max(0, todayWk - snapWk) : 0;
+  // La semana y el día exactos del conteo: `weeksElapsed` solo ve semanas enteras, y la fracción que
+  // se le escapa es justamente la que hace que un conteo de mitad de semana se consuma dos veces.
+  const _snapDate = snapDateStr ? new Date(snapDateStr + 'T00:00:00') : null;
+  const _snapWkKey = (_snapDate && typeof dmWeekKey === 'function') ? dmWeekKey(_snapDate) : null;
   let runningStock = stockCasesGross - (weeksElapsed * weeklyDemand);   // Phase 2: start from gross on-hand; committed is consumed per week below
   const rows = futureWeeks.map(fw => {
     const arrivals = pipelineByWeek[fw.week] || [];
@@ -16250,7 +16281,18 @@ function renderBuyPlanner() {
     const _hybridSales = (_wkKey && _bpMdl && _bpMdl.customers && typeof hybridSalesForWeek === 'function')
       ? hybridSalesForWeek(_wkKey, salesDemand, _bpMdl) : null;
     const _infl = (salesDemand > 0) ? (weeklyDemand / salesDemand) : 1;
-    const wkDemand = (_hybridSales != null) ? (_hybridSales * _infl) : Math.max(committedWk, weeklyDemand);
+    let wkDemand = (_hybridSales != null) ? (_hybridSales * _infl) : Math.max(committedWk, weeklyDemand);
+    // ── La semana del CONTEO se consume solo por lo que le queda ──────────────────────────────────
+    // `weeksElapsed` (arriba) descuenta el tiempo transcurrido desde la foto de inventario, pero mide
+    // en semanas ISO enteras: un conteo del jueves da 0 y la fracción de semana ya vivida se pierde.
+    // Resultado: se le restaba la demanda de la semana COMPLETA a un stock que ya venía neto de
+    // lunes a miércoles. El 2026-09-03 eso eran ~450 cajas de más contra un conteo de 2.334 — el plan
+    // proyectaba de aquí al domingo lo mismo que una semana entera.
+    // Solo se prorratea la parte PROYECTADA. El committed que sigue abierto son órdenes reales con
+    // fecha, que todavía tienen que salir, así que entra entero.
+    if (_wkKey && _snapWkKey && _wkKey === _snapWkKey){
+      wkDemand = bpSnapWeekDemand(wkDemand, committedWk, _infl, _snapDate);
+    }
     const startingStock = runningStock;
     runningStock = runningStock + arrivalCases - wkDemand;
     return {
