@@ -763,6 +763,48 @@ group('mtoDetectCandidates · propone, no marca');
         (ORD.filter(function(o){ return Array.isArray(o.directShip) && o.directShip.length; })).length, 1);
 })();
 
+group('mtoNetRows · descontar en las FILAS, para que la aritmética de pantalla cierre');
+// El panel de Run-rate muestra su propia cuenta: (764 + 99 + 101) ÷ 3 = 321. Si el descuento se aplica
+// al final, esa cuenta deja de dar el número de arriba y el panel se contradice solo. Descontando en
+// las filas de venta, las barras por semana, la lista de clientes y el titular salen todos del mismo
+// modelo ya neto.
+(function(){
+  var HOY = new Date(2026, 8, 4);
+  var W = function(n){ return new Date(HOY.getTime() - n*7*86400000).toISOString().slice(0,10); };
+  getOrders = function(){ return [
+    { jlzPo:'P', product:'turmeric', status:'Arrived', arrivalActual:W(3),
+      directShip:[{ customer:'Sol-ti', cases:700 }] }
+  ]; };
+  _ordProd = function(o){ return o.product; };
+  dsIsOn = function(){ return false; };
+  productCaseLb = function(){ return 30; };
+  dmWeekKey = function(d){ var x=new Date(d); var g=(x.getDay()+6)%7; x.setDate(x.getDate()-g);
+    return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); };
+
+  var ROWS = [
+    { prod:'turmeric', c:'Sol-ti',   d:W(3), lbs:700*30 },      // la venta contra orden
+    { prod:'turmeric', c:'Sol-ti',   d:W(8), lbs:100*30 },      // otra suya, más vieja
+    { prod:'turmeric', c:"Albert's", d:W(1), lbs:88*30 },
+    { prod:'turmeric', c:"Albert's", d:W(2), lbs:88*30 }
+  ];
+  _dmRawAll = ROWS;
+
+  var net = mtoNetRows(ROWS, 'turmeric', 26);
+  var lbsDe = function(rs, c){ return rs.filter(function(r){ return r.c===c; })
+                                        .reduce(function(a,r){ return a+(+r.lbs||0); }, 0); };
+  check('a Sol-ti se le descuentan exactamente las 700 marcadas',
+        Math.round((lbsDe(ROWS,'Sol-ti') - lbsDe(net,'Sol-ti'))/30), 700);
+  check('le queda lo que NO fue contra orden', Math.round(lbsDe(net,'Sol-ti')/30), 100);
+  check('los demás clientes no se tocan',      Math.round(lbsDe(net,"Albert's")/30), 176);
+  ok('la fila consumida entera desaparece',    net.filter(function(r){ return r.c==='Sol-ti'; }).length === 1);
+  ok('sin órdenes marcadas devuelve las filas tal cual',
+     mtoNetRows(ROWS, 'garlic', 26).length === ROWS.length);
+  // el techo también aplica acá: no puede descontar más de lo vendido
+  _dmRawAll = [{ prod:'turmeric', c:'Sol-ti', d:W(3), lbs:200*30 }];
+  var chico = mtoNetRows(_dmRawAll, 'turmeric', 26);
+  check('nunca deja libras negativas', chico.reduce(function(a,r){ return a+(+r.lbs||0); }, 0), 0);
+})();
+
 group('El descuento se resta UNA vez: en la fila y en el total, no en ambos por separado');
 // Si el total se calcula con las tasas crudas del modelo y las filas van netas, los dos números miden
 // cosas distintas: Sol-ti mostraba 162 cs/wk en su fila mientras el total decía 88, y la diferencia no

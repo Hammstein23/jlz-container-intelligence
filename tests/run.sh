@@ -33,6 +33,10 @@ echo "══ Sintaxis de los bloques inline ════════════
 python3 "$DIR/syntax-check.py" || FAILED=1
 echo
 
+echo "══ Coherencia del descuento contra-orden ══════════════════════"
+python3 "$DIR/demand-coherence.py" || FAILED=1
+echo
+
 echo "══ Guardián del store de committed ════════════════════════════"
 python3 "$DIR/committed-guard.py" || FAILED=1
 echo
@@ -40,7 +44,7 @@ echo
 echo "══ Modelo de demanda ═══════════════════════════════════════════"
 python3 "$DIR/extract.py" "$HTML" "$TMP/app.js" \
   dmWeekKey nowcastProductModel dmToggleOther renderBuildupPanel dmEffectiveRunRateLbs \
-  dmISOLocal bpFutureWeeks bpWeeksOfCover mtoDetectCandidates mtoByCustomer mtoCasesPerWeek dmcArrivingOrders ordBoughtForCustomers addDirectShip removeDirectShip directShipTotal getDirectShip _mutateOrderDirectShip bpInvState bpInvMigrateV1 invmProjectionHTML invmOverview cmPlanEntries dmWeekPace bpSnapWeekDemand renderWeekPanel hybridSalesForWeek dsNamesFor dsLabelFor jlzSyncScope getActiveOrigin \
+  dmISOLocal bpFutureWeeks bpWeeksOfCover mtoDetectCandidates mtoNetRows mtoByCustomer mtoCasesPerWeek dmcArrivingOrders ordBoughtForCustomers addDirectShip removeDirectShip directShipTotal getDirectShip _mutateOrderDirectShip bpInvState bpInvMigrateV1 invmProjectionHTML invmOverview cmPlanEntries dmWeekPace bpSnapWeekDemand renderWeekPanel hybridSalesForWeek dsNamesFor dsLabelFor jlzSyncScope getActiveOrigin \
   dmLineOrigins dmLineStats dmProductSeries dmProductMeta dmSeriesCompare dmBuildModel invmDirectShipCases dmFocusRows dmComboSVG dmFmt0 dmMoney2 dmRenderTrendPrice dmWireChartTip cxSpark cxRenderList cxWireSparkTip renderCustomers cxOverrideCard
 # Constantes top-level que las funciones extraídas necesitan. extract.py solo saca funciones,
 # así que sin esto el test las leería de un stub y estaría probando el stub, no producción.

@@ -15115,6 +15115,52 @@ function mtoDetectCandidates(prod, weeks){
 // Enchufado al cálculo de la demanda el 2026-09-04. El aviso del panel de la orden lo consulta para
 // dejar de avisar de algo que ya no pasa.
 try{ if(typeof window !== 'undefined') window._mtoWired = true; }catch(e){}
+// Las mismas filas de venta, con lo comprado contra orden ya descontado. Se resta de las ventas del
+// cliente empezando por las más recientes (las POs marcadas son recientes) hasta agotar lo marcado.
+// Trabajar a nivel de FILA y no de agregado es lo que hace que todo cuadre a la vez: las barras por
+// semana, la lista de clientes y el titular salen del mismo modelo, así que la aritmética que el panel
+// muestra en pantalla —(764 + 99 + 101) ÷ 3— sigue dando el número de arriba.
+// El MISMO modelo con las tasas por cliente ya netas. Toda pantalla de PLANIFICACIÓN lo usa; las que
+// muestran el negocio real (Customers, Trend & Price, Committed, Buy confidence) leen el modelo crudo
+// a propósito — ahí Sol-ti y Whole Foods tienen que aparecer con lo que de verdad compraron.
+// Existía escrito a mano en dos lugares y faltaba en otros tres, que es como aparecen los números que
+// no cuadran entre pantallas. Una sola definición.
+function mtoNetModel(m, prod, weeks){
+  if(!m || !Array.isArray(m.customers)) return m;
+  var by = (typeof mtoByCustomer === 'function') ? mtoByCustomer(prod, weeks) : {};
+  if(!Object.keys(by).length) return m;
+  var out = {}; for(var k in m) out[k] = m[k];
+  out.customers = m.customers.map(function(c){
+    if(!c || !c.c || !(by[c.c] > 0)) return c;
+    var n = {}; for(var k2 in c) n[k2] = c[k2];
+    ['rrCases','rr3Cases','rr6Cases','rr26Cases'].forEach(function(k3){
+      if(n[k3] != null) n[k3] = Math.max(0, n[k3] - by[c.c]); });
+    return n;
+  });
+  out._mtoNet = true;
+  return out;
+}
+
+function mtoNetRows(rows, prod, weeks){
+  var by = mtoByCustomer(prod, weeks);
+  var names = Object.keys(by);
+  if(!names.length || !Array.isArray(rows)) return rows;
+  var caseLb = (typeof productCaseLb === 'function') ? productCaseLb(prod) : 30;
+  var left = {};
+  names.forEach(function(c){ left[c] = by[c] * Math.max(1, weeks || 13) * caseLb; });   // en libras
+  var out = rows.slice().sort(function(a, b){ return String(b.d || '').localeCompare(String(a.d || '')); });
+  return out.map(function(r){
+    if(!r || left[r.c] == null || !(left[r.c] > 0)) return r;
+    var lbs = +r.lbs || 0; if(!(lbs > 0)) return r;
+    var take = Math.min(lbs, left[r.c]);
+    left[r.c] -= take;
+    if(take >= lbs) return null;                       // esa venta entera fue contra orden
+    var n = {}; for(var k in r) n[k] = r[k];
+    n.lbs = lbs - take;
+    return n;
+  }).filter(Boolean);
+}
+
 function mtoByCustomer(prod, weeks){
   var w = Math.max(1, weeks || 13);
   var caseLb = (typeof productCaseLb === 'function') ? productCaseLb(prod) : 30;
@@ -15402,7 +15448,13 @@ function invmProductModel(p,origin){
   if(typeof _dmRawAll!=='undefined' && Array.isArray(_dmRawAll) && typeof dmBuild==='function'){
     // The rows are filtered to THIS origin, so dmBuild must nowcast with the same origin — it already
     // does the completion, and calling nowcastProductModel again on top would double-count.
-    try{ return dmBuild(_dmRawAll.filter(function(r){ return (r.prod||'ginger')===p && invmOriginMatch(r,origin) && !isDirectShipRow(r); }), false, p, origin);
+    // Lo comprado contra orden se descuenta ACÁ, en las filas, igual que en el panel de Run-rate.
+    // Antes se restaba al agregado en invmProductStats mientras la zona 3 lo hacía por fila: dos
+    // mecanismos para lo mismo daban dos números distintos (101 contra 88 en turmeric). Un solo lugar.
+    try{
+      var _f = _dmRawAll.filter(function(r){ return (r.prod||'ginger')===p && invmOriginMatch(r,origin) && !isDirectShipRow(r); });
+      try{ if(typeof mtoNetRows==='function') _f = mtoNetRows(_f, p, (typeof dmWindow==='function')?dmWindow(p,origin):13); }catch(e){}
+      return dmBuild(_f, false, p, origin);
     }catch(e){ return null; }
   }
   return null;
@@ -15497,8 +15549,10 @@ function invmProductStats(p,origin){
   // las POs marcadas (no del cliente entero): el ajo de Whole Foods que salió de cámara sigue
   // contando, las 274 cajas de las dos POs que se compraron para ellos no.
   // Un override manual NO se toca: si Juan escribió un número, ese número es la demanda.
+  // `rrWin` YA viene neto: invmProductModel descuenta lo contra-orden en las filas. Restarlo otra vez
+  // acá sería contarlo dos veces. `_mto` queda solo para MOSTRAR el volumen en el carril de al lado.
   var _mto=(typeof mtoCasesPerWeek==='function')?mtoCasesPerWeek(p, win):0;
-  var weeklyLbs=(ovr!=null&&ovr>0)?ovr*caseLb:Math.max(0, rrWin - _mto*caseLb);
+  var weeklyLbs=(ovr!=null&&ovr>0)?ovr*caseLb:rrWin;
   var weeklyCases=weeklyLbs>0?weeklyLbs/caseLb:0;
   var series=(m&&Array.isArray(m.weeklyReliable)&&m.weeklyReliable.length)?m.weeklyReliable:((m&&Array.isArray(m.weekly))?m.weekly:[]);
   var vals=series.map(function(w){ return (w&&w.lbs)||0; }).filter(function(x){ return x>0; }).slice(-13);
@@ -16675,7 +16729,13 @@ function renderBuyPlanner() {
     // committed adds on top. We then apply the same shrink inflation. No model → legacy max().
     const _wkKey = (typeof dmWeekKey === 'function' && fw.weekStartDate) ? dmWeekKey(fw.weekStartDate) : null;
     const committedWk = (_wkKey && typeof committedInvForWeek === 'function') ? committedInvForWeek(_wkKey) : 0;
-    const _bpMdl = (typeof _dmModelG !== 'undefined' ? _dmModelG : ((typeof window!=='undefined' && window._dmModelG) || null));
+    // El modelo tiene que llegar con las MISMAS tasas netas que la base, o hybridSalesForWeek vuelve a
+    // restar el run-rate del cliente encima de una base que ya lo tenía descontado — el total se hunde.
+    // Hoy ginger no tiene órdenes marcadas, así que no muerde; queda cerrado antes de que muerda.
+    const _bpMdlRaw = (typeof _dmModelG !== 'undefined' ? _dmModelG : ((typeof window!=='undefined' && window._dmModelG) || null));
+    const _bpMdl = (typeof mtoNetModel === 'function')
+      ? mtoNetModel(_bpMdlRaw, 'ginger', (typeof dmWindow === 'function') ? dmWindow('ginger') : 13)
+      : _bpMdlRaw;
     const _hybridSales = (_wkKey && _bpMdl && _bpMdl.customers && typeof hybridSalesForWeek === 'function')
       ? hybridSalesForWeek(_wkKey, salesDemand, _bpMdl) : null;
     const _infl = (salesDemand > 0) ? (weeklyDemand / salesDemand) : 1;
@@ -21228,7 +21288,13 @@ function simRenderProjection(realOrders, hypoOrders) {
   const baseAvgSim = baseline === 4 ? avg4 : baseline === 12 ? avg12 : avg8;
   // Use the Demand module run-rate (Peru ginger, lbs→30-lb cases) to match Buy Planner; fall back to pasted-sales avg
   const _dmRR = (typeof dmEffectiveRunRateLbs === 'function') ? dmEffectiveRunRateLbs() : null;
-  const salesDemand = (_dmRR != null) ? (_dmRR / 30) : baseAvgSim;
+  // Lo comprado contra orden sale también acá, o el Simulator proyecta un consumo que no existe y
+  // vuelve a desalinearse del Buy Planner — el mismo desfase que ya arreglamos con el prorrateo.
+  const _simMto = (function(){ try{
+    return (typeof mtoCasesPerWeek === 'function')
+      ? mtoCasesPerWeek('ginger', (typeof dmWindow === 'function') ? dmWindow('ginger') : 13) : 0;
+  }catch(e){ return 0; } })();
+  const salesDemand = Math.max(0, ((_dmRR != null) ? (_dmRR / 30) : baseAvgSim) - _simMto);
   // Use the Buy Planner's OWN weekly demand (its time-based shrink) so the two projections agree
   // week for week; fall back to the fixed-% calc only if the Buy Planner digest isn't ready yet.
   const weeklyDemand = (typeof window !== 'undefined' && window._bpDigest && window._bpDigest.weeklyDemand > 0)
@@ -21291,7 +21357,11 @@ function simRenderProjection(realOrders, hypoOrders) {
   // Mismo anclaje que el Buy Planner: la fecha del conteo de inventario, no "hoy".
   const _simSnapDate = snapDateStr ? new Date(snapDateStr + 'T00:00:00') : null;
   const _simSnapWkKey = (_simSnapDate && typeof dmWeekKey === 'function') ? dmWeekKey(_simSnapDate) : null;
-  const _simMdl = (typeof _dmModelG !== 'undefined' ? _dmModelG : ((typeof window!=='undefined' && window._dmModelG) || null));
+  const _simMdlRaw = (typeof _dmModelG !== 'undefined' ? _dmModelG : ((typeof window!=='undefined' && window._dmModelG) || null));
+  // Mismas tasas netas que la base, o hybridSalesForWeek resta el run-rate del cliente por segunda vez.
+  const _simMdl = (typeof mtoNetModel === 'function')
+    ? mtoNetModel(_simMdlRaw, 'ginger', (typeof dmWindow === 'function') ? dmWindow('ginger') : 13)
+    : _simMdlRaw;
   const _simHypoExtra = (typeof simActiveHypoSales === 'function') ? simActiveHypoSales() : [];
   const _simInfl = (salesDemand > 0) ? (weeklyDemand / salesDemand) : 1;
   const _simWkDemand = (fw) => {
@@ -24242,7 +24312,12 @@ function renderDmRunRate(){
     if(typeof dmFilteredRows==='function' && typeof isDirectShipRow==='function' && typeof dmBuildModel==='function'){
       var _rows = dmFilteredRows();
       if(_rows.some(isDirectShipRow)){
-        var _ms = dmBuildModel(_rows.filter(function(r){ return !isDirectShipRow(r); }), false, cl, (typeof productFocus==='function')?productFocus():null);
+        // Y también lo comprado contra orden: este panel dice "STOCKABLE demand", así que una compra
+        // con destino no va acá. Antes lo hacía el flag por cliente (retirado); ahora sale de las
+        // órdenes marcadas, que es más fino: descuenta las cajas de Sol-ti, no a Sol-ti entero.
+        var _base = _rows.filter(function(r){ return !isDirectShipRow(r); });
+        try{ if(typeof mtoNetRows === 'function') _base = mtoNetRows(_base, _hpProd, (typeof dmWindow==='function')?dmWindow(_hpProd):13); }catch(e){}
+        var _ms = dmBuildModel(_base, false, cl, (typeof productFocus==='function')?productFocus():null);
         if(_ms && _ms.runRate13>0 && Array.isArray(_ms.weeklyReliable)) m = _ms;
         var _p=(typeof getActiveProduct==='function')?getActiveProduct():null;
         var _o=(typeof _dmOrigin!=='undefined' && _dmOrigin && _dmOrigin!=='All')?_dmOrigin:'all';
@@ -24693,6 +24768,8 @@ function dmWeekStatus(){
   var m = _useG ? ((typeof _dmModelG !== 'undefined' && _dmModelG) ? _dmModelG : (typeof _dmModel !== 'undefined' ? _dmModel : null))
                 : ((typeof _dmModel !== 'undefined') ? _dmModel : null);
   if(!m || !Array.isArray(m.customers) || !m.customers.length) return null;
+  // Esta zona dice cuánto de la semana falta CUBRIR con stock, así que lo comprado contra orden no va.
+  m = (typeof mtoNetModel === 'function') ? mtoNetModel(m, prod, (typeof dmWindow === 'function') ? dmWindow(prod) : 13) : m;
   var caseLb = m.caseLb || DM_CASE_LB;
   var wk = dmWeekKey(new Date());
   var pace = dmWeekPace();
@@ -24950,6 +25027,11 @@ function dmLineStats(p, o){
     return (r.prod||'ginger')===p && (!o || dmRowOrigin(r)===o);
   });
   var stockRows = rows.filter(function(r){ try{ return !isDirectShipRow(r); }catch(e){ return true; } });
+  // Estas tarjetas son el resumen de PLANIFICACIÓN: run-rate y cobertura por producto+origen. Lo
+  // comprado contra orden no se cubre con stock, así que sale acá también — por fila, el mismo
+  // mecanismo que usan la zona 3 y el modelo de los cuatro productos. Sin esto la tarjeta decía un
+  // número y el plan de compra otro, para el mismo producto.
+  try{ if(typeof mtoNetRows === 'function') stockRows = mtoNetRows(stockRows, p, win); }catch(e){}
   var m = null;
   try{
     m = dmBuildModel(stockRows, false, cl, p);
@@ -25476,18 +25558,7 @@ function renderBuildupPanel(){
   // filas van netas y el total se calcula con las crudas, los dos números miden cosas distintas y la
   // tabla deja de cuadrar — o peor, se resta dos veces. Se le pasa un modelo con las mismas tasas
   // netas que muestran las filas: una sola definición de "cuánto stock necesita este cliente".
-  var _mNet = m;
-  if(Object.keys(_mtoBy).length){
-    _mNet = {}; for(var _k in m) _mNet[_k] = m[_k];
-    _mNet.customers = (m.customers || []).map(function(c){
-      if(!c || !c.c || !(_mtoBy[c.c] > 0)) return c;
-      var n = {}; for(var k2 in c) n[k2] = c[k2];
-      ['rrCases','rr3Cases','rr6Cases','rr26Cases'].forEach(function(k3){
-        if(n[k3] != null) n[k3] = Math.max(0, n[k3] - _mtoBy[c.c]);
-      });
-      return n;
-    });
-  }
+  var _mNet = (typeof mtoNetModel === 'function') ? mtoNetModel(m, prod, _win) : m;
   var _rrOf = function(cust){
     var v = (cust[_rrKey] != null ? cust[_rrKey] : cust.rrCases) || 0;
     v = Math.max(0, v - (_mtoBy[cust.c] || 0));
