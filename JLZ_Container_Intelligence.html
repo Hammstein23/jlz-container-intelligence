@@ -6112,8 +6112,20 @@ table.mo-drill td.r{text-align:right;font-family:var(--fm)}
 <script>
 (function(){
 var D=MI_SEED;
-(function(){try{var s=localStorage.getItem('jlz_mi_v4');if(s){var l=JSON.parse(s);if(l&&l.meta&&l.meta.data_through>=D.meta.data_through)D=l;}}catch(e){}})();
+(function(){try{var s=localStorage.getItem('jlz_mi_v4');if(s){var l=JSON.parse(s);if(l&&l.meta&&l.meta.data_through>=D.meta.data_through)D=_miSanitize(l);}}catch(e){}})();
 function saveD(){try{localStorage.setItem('jlz_mi_v4',JSON.stringify(D));}catch(e){}}
+// XSS almacenado: la data de market-intel entra por un archivo Veritrade (buyer, country, razón social
+// del proveedor) y muchos mibRender*/mifRender* la interpolan cruda (roster, chips, tablas, scorecard).
+// Igual que getHistory/_ordSanitize, se sanea en el boundary — al importar y al cargar de localStorage —
+// quitando < > " de todo valor de texto. Los nombres SUNAT reales no los usan; el matching canónico no
+// se ve afectado (compara en mayúsculas por substring).
+function _miSanitize(o){
+  if(o==null) return o;
+  if(typeof o==='string') return /[<>"]/.test(o) ? o.replace(/[<>"]/g,'') : o;
+  if(Array.isArray(o)){ for(var i=0;i<o.length;i++) o[i]=_miSanitize(o[i]); return o; }
+  if(typeof o==='object'){ for(var k in o){ if(Object.prototype.hasOwnProperty.call(o,k)) o[k]=_miSanitize(o[k]); } return o; }
+  return o;
+}
 var PC=null,SC=null,SVC=null,SPC=null,miInited=false,mktSortKey='lbs';
 
 var curPriceCountry='United States',curMktCountry='United States',curRangeW=26,curPriceMode='Both',ptDrillOpen=null;
@@ -6148,7 +6160,7 @@ function miInit(){
 
 function populateCountrySelectors(){
   var countries=(D.meta&&D.meta.countries)?D.meta.countries:['United States','Netherlands','Canada','Spain','United Kingdom','Germany','Italy','Dominican Republic','Other'];
-  var opts='<option value="_ALL">All countries</option>'+countries.map(function(c){return '<option value="'+c+'">'+c+'</option>';}).join('');
+  var opts='<option value="_ALL">All countries</option>'+countries.map(function(c){return '<option value="'+esc_(c)+'">'+esc_(c)+'</option>';}).join('');
   var pc=ge('mi-price-country'),mc=ge('mi-mkt-country');
   if(pc){pc.innerHTML=opts;pc.value=curPriceCountry;}
   if(mc){mc.innerHTML=opts;mc.value=curMktCountry;}
@@ -6725,7 +6737,7 @@ window.miLoad=function(input){
   var file=input.files[0];if(!file)return;
   if(typeof XLSX==='undefined'){alert('XLSX not ready');return;}
   var reader=new FileReader();
-  reader.onload=function(e){try{var wb=XLSX.read(e.target.result,{type:'array',cellDates:true});var ws=wb.Sheets[wb.SheetNames[0]];var raw=XLSX.utils.sheet_to_json(ws,{range:5,raw:true,cellDates:true});if(!raw.length){alert('No data found');return;}processVT(raw,function(nd){if(nd){D=mergeD(D,nd);saveD();miInited=false;PC=null;SC=null;SVC=null;SPC=null;miInit();alert('Updated through '+D.meta.data_through);}});}catch(err){alert('Error: '+err.message);}};
+  reader.onload=function(e){try{var wb=XLSX.read(e.target.result,{type:'array',cellDates:true});var ws=wb.Sheets[wb.SheetNames[0]];var raw=XLSX.utils.sheet_to_json(ws,{range:5,raw:true,cellDates:true});if(!raw.length){alert('No data found');return;}processVT(raw,function(nd){if(nd){D=_miSanitize(mergeD(D,nd));saveD();miInited=false;PC=null;SC=null;SVC=null;SPC=null;miInit();alert('Updated through '+D.meta.data_through);}});}catch(err){alert('Error: '+err.message);}};
   reader.readAsArrayBuffer(file);input.value='';
 };
 
@@ -7554,7 +7566,7 @@ function mibRenderFobSettings(){
   });
   var rows=MIB_MYSUP.map(function(s){
     var supOrders=mine.filter(function(o){return s.pat.test(o.supplier||'');});
-    if(supOrders.length===0)return '<div class="mib-fobrow"><span class="nm">'+s.name+'</span><span style="color:var(--gray-400);font-size:11px">no orders</span></div>';
+    if(supOrders.length===0)return '<div class="mib-fobrow"><span class="nm">'+libEsc(s.name)+'</span><span style="color:var(--gray-400);font-size:11px">no orders</span></div>';
     var withCosts=supOrders.filter(function(o){
       // "Complete" means: has cifTotal + netWeightLb + at least freight or insurance set (and customs if DDP).
       // Zero freight is valid for DDP (bundled) so we don't require it there.
@@ -7573,7 +7585,7 @@ function mibRenderFobSettings(){
     var color=missing===0?'var(--green-700)':(missing===supOrders.length?'var(--red-600)':'var(--amber-700)');
     var pct=Math.round(100*withCosts/supOrders.length);
     return '<div class="mib-fobrow">'
-      +'<span class="nm">'+s.name+'</span>'
+      +'<span class="nm">'+libEsc(s.name)+'</span>'
       +'<span style="font-size:11px;color:var(--gray-500)">'+supOrders.length+' order'+(supOrders.length===1?'':'s')+'</span>'
       +'<span style="font-size:11px;font-weight:600;color:'+color+'">'+withCosts+'/'+supOrders.length+' with FOB costs ('+pct+'%)</span>'
       +(missing>0?'<span style="font-size:10px;color:var(--gray-500);margin-left:4px">'+missing+' need freight/insurance'+(supOrders.some(function(o){return o.incoterm==='DDP';})?'/customs':'')+'</span>':'')
@@ -10186,10 +10198,23 @@ function currentSnapshot() {
   };
 }
 
+// Defensa-en-profundidad contra XSS almacenado en History: las secciones S1-S4, los dropdowns y
+// Insights leen de este store y lo interpolan en muchas celdas (módulo denso). En vez de escapar
+// cada sink a mano — whack-a-mole que ya nos mordió con las órdenes — se sanitiza en el boundary de
+// lectura, igual que _ordSanitize hace con getOrders(): se recorre cada snapshot y a todo valor de
+// texto se le quitan < > " (los caracteres que rompen a HTML). Los nombres de proveedor legítimos no
+// los usan. Los sinks además pasan por libEsc(), así que un & se muestra bien; acá solo cerramos XSS.
+function _histSanitize(o){
+  if(o == null) return o;
+  if(typeof o === 'string') return /[<>"]/.test(o) ? o.replace(/[<>"]/g,'') : o;
+  if(Array.isArray(o)){ for(var i=0;i<o.length;i++) o[i] = _histSanitize(o[i]); return o; }
+  if(typeof o === 'object'){ for(var k in o){ if(Object.prototype.hasOwnProperty.call(o,k)) o[k] = _histSanitize(o[k]); } return o; }
+  return o;
+}
 function getHistory() {
   try {
     const raw = JSON.parse(localStorage.getItem('jlz_container_history') || '[]');
-    return raw.map(s => (typeof migrateSnapshot === 'function') ? migrateSnapshot(s) : s);
+    return raw.map(s => _histSanitize((typeof migrateSnapshot === 'function') ? migrateSnapshot(s) : s));
   } catch(e) { return []; }
 }
 function saveHistory(h) {
@@ -10497,12 +10522,12 @@ function renderComparison() {
   if(supSel2) {
     const suppliers = [...new Set(allData.map(x=>x.vendor).filter(Boolean))].sort();
     const cur = supSel2.value;
-    supSel2.innerHTML = '<option value="">All suppliers</option>' + suppliers.map(s=>'<option value="'+s+'"'+(s===cur?' selected':'')+'>'+s+'</option>').join('');
+    supSel2.innerHTML = '<option value="">All suppliers</option>' + suppliers.map(s=>'<option value="'+libEsc(s)+'"'+(s===cur?' selected':'')+'>'+libEsc(s)+'</option>').join('');
   }
   if(seaSel2) {
     const seasons = [...new Set(allData.map(x=>x.season).filter(Boolean))].sort();
     const cur = seaSel2.value;
-    seaSel2.innerHTML = '<option value="">All seasons</option>' + seasons.map(s=>'<option value="'+s+'"'+(s===cur?' selected':'')+'>'+s+'</option>').join('');
+    seaSel2.innerHTML = '<option value="">All seasons</option>' + seasons.map(s=>'<option value="'+esc_(s)+'"'+(s===cur?' selected':'')+'>'+esc_(s)+'</option>').join('');
   }
   if(yearSel2) {
     const years = [...new Set(allData.map(x=>x.arrival?x.arrival.substring(0,4):'').filter(Boolean))].sort().reverse();
@@ -10818,7 +10843,7 @@ function renderComparison() {
     };
     b1.innerHTML = pag1.visible.map(x => '<tr style="'+rowBar(x)+'">'
       +cell((x.po||'&mdash;')+modeChip(x.po)+convChip(x),'left')
-      +cell((x.vendor||'&mdash;')+(x.incoterm?' <span style="font-size:9px;color:var(--gray-400);font-family:var(--fm)">'+x.incoterm+'</span>':''),'left')
+      +cell((x.vendor?libEsc(x.vendor):'&mdash;')+(x.incoterm?' <span style="font-size:9px;color:var(--gray-400);font-family:var(--fm)">'+libEsc(x.incoterm)+'</span>':''),'left')
       +cell(x.arrival||'—','left')
       +'<td style="padding:6px 10px;text-align:center;border-bottom:1px solid var(--gray-100)">'+statusBadge(x)+'</td>'
       +cell(fmtC(x.netSales))
@@ -10960,7 +10985,7 @@ function renderComparison() {
       const total = Object.values(c).reduce((s,v)=>s+v,0);
       return '<tr style="'+rowBar3(x)+'">'
         +cell((x.po||'&mdash;')+modeChip(x.po)+convChip(x),'left')
-        +cell((x.vendor||'&mdash;')+(x.incoterm?' <span style="font-size:9px;color:var(--gray-400);font-family:var(--fm)">'+x.incoterm+'</span>':''),'left')
+        +cell((x.vendor?libEsc(x.vendor):'&mdash;')+(x.incoterm?' <span style="font-size:9px;color:var(--gray-400);font-family:var(--fm)">'+libEsc(x.incoterm)+'</span>':''),'left')
         +cell(x.arrival||'—','left')
         +cell(fmtC(total))
         +COST_CATS.map(cat=>cell(fmtC(c[cat]))).join('')
@@ -11254,7 +11279,7 @@ function renderInsights() {
     const suppliers = [...new Set(allData.map(x => x._canon).filter(Boolean))].sort();
     const cur = supEl.value;
     supEl.innerHTML = '<option value="">All suppliers</option>'
-      + suppliers.map(v => '<option value="' + v + '"' + (v === cur ? ' selected' : '') + '>' + v + '</option>').join('');
+      + suppliers.map(v => '<option value="' + libEsc(v) + '"' + (v === cur ? ' selected' : '') + '>' + libEsc(v) + '</option>').join('');
   }
   if (seaEl) {
     const seasons = [...new Set(allData.map(x => x.season).filter(Boolean))].sort();
@@ -11391,7 +11416,7 @@ function renderInsights() {
     return '<span style="font-size:9px;font-weight:700;padding:1px 7px;border-radius:3px;background:' + c[0] + ';color:' + c[1] + ';border:1px solid ' + c[2] + '">' + (tier || '\u2014') + '</span>';
   };
   const shelfRow = (x, dim) => '<tr style="' + (dim ? 'opacity:.45;' : '') + 'border-bottom:1px solid var(--gray-100)">'
-    + '<td style="padding:8px 10px;color:var(--gray-700);font-weight:600">' + x.name + '</td>'
+    + '<td style="padding:8px 10px;color:var(--gray-700);font-weight:600">' + libEsc(x.name) + '</td>'
     + '<td style="padding:8px 10px;text-align:right;color:var(--gray-500)">' + x.n + '</td>'
     + '<td style="padding:8px 10px;text-align:right;color:var(--gray-500)">' + fmtLbs(x.lbs) + '</td>'
     + '<td style="padding:8px 10px;text-align:right;font-weight:700;color:var(--gray-800)">' + (x.ds != null ? x.ds.toFixed(2) + '%' : '\u2014') + '</td>'
@@ -11414,16 +11439,16 @@ function renderInsights() {
       const avgDaysP = daysArr.length ? daysArr.reduce((a, b) => a + b, 0) / daysArr.length : 0;
       const priceW = insWavg(included.map(x => [f(x.priceLb), x._lbs]));
       const savedLbs = (worst.ds - best.ds) / 100 * avgLbsC * avgDaysP;
-      let txt = '<strong>' + best.name + '</strong> holds best at <strong>' + best.ds.toFixed(2) + '%/day</strong> (n=' + best.n + ', lbs-weighted). '
-        + 'Moving one ~' + Math.round(avgLbsC / 1000) + 'k-lb container from ' + worst.name + ' (' + worst.ds.toFixed(2) + '%/day) saves ~'
+      let txt = '<strong>' + libEsc(best.name) + '</strong> holds best at <strong>' + best.ds.toFixed(2) + '%/day</strong> (n=' + best.n + ', lbs-weighted). '
+        + 'Moving one ~' + Math.round(avgLbsC / 1000) + 'k-lb container from ' + libEsc(worst.name) + ' (' + worst.ds.toFixed(2) + '%/day) saves ~'
         + Math.round(savedLbs).toLocaleString() + ' lbs over your average ' + Math.round(avgDaysP) + '-day hold'
         + (priceW ? ' \u2014 about ' + fmt$(savedLbs * priceW) + ' at $' + priceW.toFixed(2) + '/lb invoice' : '') + '.';
       const teaser = unranked.find(u => u.ds != null && u.ds < best.ds);
-      if (teaser) txt += ' ' + teaser.name + ' shows a better rate (' + teaser.ds.toFixed(2) + '%/day) but n=' + teaser.n + ' is not evidence yet.';
+      if (teaser) txt += ' ' + libEsc(teaser.name) + ' shows a better rate (' + teaser.ds.toFixed(2) + '%/day) but n=' + teaser.n + ' is not evidence yet.';
       verdictEl.innerHTML = txt;
       verdictEl.style.display = 'block';
     } else if (rk.length === 1) {
-      verdictEl.innerHTML = 'Only <strong>' + rk[0].name + '</strong> has enough containers to rank (n=' + rk[0].n + ', ' + rk[0].ds.toFixed(2) + '%/day). Comparisons unlock as other suppliers reach ' + INS_MIN_RANK_N + ' containers.';
+      verdictEl.innerHTML = 'Only <strong>' + libEsc(rk[0].name) + '</strong> has enough containers to rank (n=' + rk[0].n + ', ' + rk[0].ds.toFixed(2) + '%/day). Comparisons unlock as other suppliers reach ' + INS_MIN_RANK_N + ' containers.';
       verdictEl.style.display = 'block';
     } else { verdictEl.style.display = 'none'; }
   }
@@ -11540,7 +11565,7 @@ function renderInsights() {
   });
   setHTML('sc-head', '<tr style="background:var(--gray-50);border-bottom:2px solid var(--gray-200)">'
     + '<th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--gray-500)">Metric</th>'
-    + colOrder.map(x => '<th style="padding:8px 10px;text-align:right;font-weight:600;color:var(--gray-500);white-space:nowrap">' + x.name
+    + colOrder.map(x => '<th style="padding:8px 10px;text-align:right;font-weight:600;color:var(--gray-500);white-space:nowrap">' + libEsc(x.name)
       + '<div style="font-weight:400;color:var(--gray-300);font-size:9px">n=' + x.n + '</div></th>').join('') + '</tr>');
   const scCell = v => '<td style="padding:7px 10px;text-align:right;border-bottom:1px solid var(--gray-100);font-weight:600;color:var(--gray-800)">' + v + '</td>';
   const scRows = [];
@@ -11652,7 +11677,7 @@ function renderInsights() {
   const bottom3 = sortedByMargin.slice(-3).reverse();
   const perfRow = (x, color) => '<tr>'
     + '<td style="padding:6px 4px;color:var(--gray-700);font-weight:600;font-size:11px;font-family:var(--fm)">PO ' + (x.po || '\u2014') + '</td>'
-    + '<td style="padding:6px 4px;color:var(--gray-500);font-size:10px">' + x._canon + '</td>'
+    + '<td style="padding:6px 4px;color:var(--gray-500);font-size:10px">' + libEsc(x._canon) + '</td>'
     + '<td style="padding:6px 4px;color:var(--gray-400);font-size:10px;text-align:right">' + (x.arrival || '\u2014') + '</td>'
     + '<td style="padding:6px 4px;text-align:right;font-weight:700;color:' + color + ';font-size:12px">' + f(x.netMargin).toFixed(1) + '%</td></tr>';
   setHTML('top-performers', top3.length ? top3.map(x => perfRow(x, 'var(--green-600)')).join('')
@@ -16109,7 +16134,7 @@ function invmRenderProduct(p){
         + '<td style="'+td+';color:var(--gray-800);'+strike+'">'+esc(l.lot)+'</td>'
         + '<td style="'+td+';color:var(--gray-700)">'+esc(l.origin)+'</td>'
         + '<td style="'+td+';color:var(--gray-700)">'+esc(l.supplier)+'</td>'
-        + '<td style="padding:6px 14px;border-bottom:1px solid var(--gray-100)"><input type="date" value="'+(l.received||'')+'" onchange="invmProdSetLotReceived(\''+p+'\','+idx+',this.value)" style="'+dinp+'"></td>'
+        + '<td style="padding:6px 14px;border-bottom:1px solid var(--gray-100)"><input type="date" value="'+esc(l.received||'')+'" onchange="invmProdSetLotReceived(\''+p+'\','+idx+',this.value)" style="'+dinp+'"></td>'
         + '<td style="'+td+';text-align:right">'+ageBadge(storedOf(l))+'</td>'
         + '<td style="padding:6px 14px;border-bottom:1px solid var(--gray-100);text-align:right"><input type="number" step="1" value="'+(parseFloat(l.cases)||0)+'" onchange="invmProdSetLotCases(\''+p+'\','+idx+',this.value)" style="width:60px;text-align:right;font-family:var(--fm);font-size:11.5px;border:1px solid var(--gray-200);border-radius:5px;padding:2px 6px;color:var(--gray-900);'+strike+'"></td>'
         + '<td style="'+td+';text-align:right;color:var(--gray-700);'+strike+'">'+f((parseFloat(l.cases)||0)*s.caseLb)+'</td>'
