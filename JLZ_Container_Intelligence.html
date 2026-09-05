@@ -2325,7 +2325,7 @@ async function authGenerateAddUserSnippet() {
     return;
   }
   if (AUTH_USERS.some(u => u.username === username)) {
-    result.innerHTML = authErrorBox('A user with email "' + email + '" already exists.');
+    result.innerHTML = authErrorBox('A user with email "' + libEsc(email) + '" already exists.');
     return;
   }
   if (password.length < 6) {
@@ -11792,8 +11792,28 @@ if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined') 
 // Following the same pattern as getHistory()/saveHistory() for consistency.
 // Key: 'jlz_orders_pipeline' — keeps Orders state completely isolated from
 // the workflow-tab containers (which live under 'jlz_container_history').
+// ── Defensa en profundidad contra XSS almacenado ────────────────────────────────────────────────
+// Los campos estructurados de una orden (proveedor, contenedor, contrato, puerto, lote) NUNCA son
+// HTML legítimo: un proveedor es "Añawi", un contenedor es "W2881A2637576". Pero se renderizan en
+// muchos lugares (tablas, dropdowns de filtro, panel de detalle, Home, Simulator) y basta que UNO se
+// olvide de escapar para que un valor con `<img onerror>` ejecute código en el navegador de todos los
+// usuarios y robe el token del backend. Un pentest lo confirmó: el proveedor ejecutaba en 6 lugares.
+// Escapar en cada render es whack-a-mole. Acá se neutralizan `< > "` en la ENTRADA, un solo punto que
+// cubre venga el dato del Sheet compartido, de un Excel importado o de la edición manual. `observations`
+// es texto libre y NO se toca acá — ese se escapa en su render (puede llevar comillas legítimas).
+var _ORD_HTML_SAFE = ['supplier','containerNo','contractNo','portOfDischarge','jbjLotNo','jlzPo','incoterm'];
+function _ordSanitize(o){
+  if(!o || typeof o !== 'object') return o;
+  _ORD_HTML_SAFE.forEach(function(k){
+    if(typeof o[k] === 'string' && /[<>"]/.test(o[k])) o[k] = o[k].replace(/[<>"]/g, '');
+  });
+  return o;
+}
 function getOrders() {
-  try { return JSON.parse(localStorage.getItem('jlz_orders_pipeline') || '[]'); }
+  try {
+    var arr = JSON.parse(localStorage.getItem('jlz_orders_pipeline') || '[]');
+    return Array.isArray(arr) ? arr.map(_ordSanitize) : [];
+  }
   catch(e) { return []; }
 }
 function saveOrders(arr) {
@@ -13053,12 +13073,12 @@ function renderOrders() {
       + '<td style="padding:10px 12px">' + ordStatusChip(o.status) + ordDowngradedChip(o, poEsc) + '</td>'
       + '<td style="padding:10px 12px;color:var(--gray-800);font-weight:600">' + (o.jlzPo || '—') + modeChip + _bfTag + '</td>'
       + '<td style="padding:10px 12px">' + ordProductChip(_ordProd(o)) + '</td>'
-      + '<td style="padding:10px 12px;color:var(--gray-700)"><div style="display:flex;align-items:center;gap:6px"><span>' + (o.supplier || '—') + '</span>' + incotermChip + '</div></td>'
-      + '<td style="padding:10px 12px;color:var(--gray-500);font-size:10px">' + (o.contractNo || '—') + '</td>'
-      + '<td style="padding:10px 12px;color:var(--gray-500);font-size:10px">' + (o.containerNo || '—') + '</td>'
+      + '<td style="padding:10px 12px;color:var(--gray-700)"><div style="display:flex;align-items:center;gap:6px"><span>' + libEsc(o.supplier || '—') + '</span>' + incotermChip + '</div></td>'
+      + '<td style="padding:10px 12px;color:var(--gray-500);font-size:10px">' + libEsc(o.contractNo || '—') + '</td>'
+      + '<td style="padding:10px 12px;color:var(--gray-500);font-size:10px">' + libEsc(o.containerNo || '—') + '</td>'
       + '<td style="padding:10px 12px;' + etdStyle + '">' + etdTxt + '</td>'
       + '<td style="padding:10px 12px;' + etaStyle + '">' + etaTxt + '</td>'
-      + '<td style="padding:10px 12px;color:' + portColor + '">' + (o.portOfDischarge || '—') + '</td>'
+      + '<td style="padding:10px 12px;color:' + portColor + '">' + libEsc(o.portOfDischarge || '—') + '</td>'
       + '<td style="padding:10px 12px;text-align:right;color:var(--gray-700)">' + (o.cases ? o.cases.toLocaleString() : '—') + '</td>'
       + '<td style="padding:10px 12px;text-align:right;color:var(--gray-700);font-family:var(--fd)">' + (cifLb ? '$' + cifLb.toFixed(3) : '—') + '</td>'
       + '<td style="padding:10px 12px;text-align:center">' + nextBtn + '</td>'
@@ -13701,7 +13721,7 @@ function buildOrderViewMode(o) {
         ? (grp('Observations', 'observations')
             + '<div class="group-body">'
             + '<div style="font-size:var(--text-12);color:var(--gray-700);line-height:1.55;padding:10px 12px;background:var(--gray-50);border-radius:var(--radius-sm);border-left:3px solid var(--amber-400)">'
-              + o.observations + '</div>'
+              + libEsc(o.observations) + '</div>'
             + '</div>')
         : '')
 
@@ -14386,8 +14406,8 @@ function parseImportPreview() {
     return '<tr style="border-bottom:1px solid var(--gray-200)">'
       + '<td style="padding:6px 10px">' + ordStatusChip(o.status) + '</td>'
       + '<td style="padding:6px 10px;color:var(--gray-800);font-weight:600;font-family:var(--fm);font-size:11px">' + String(o.jlzPo) + '</td>'
-      + '<td style="padding:6px 10px;color:var(--gray-700);font-size:11px">' + (o.supplier || '—') + '</td>'
-      + '<td style="padding:6px 10px;color:var(--gray-500);font-size:10px;font-family:var(--fm)">' + (o.containerNo || '—') + '</td>'
+      + '<td style="padding:6px 10px;color:var(--gray-700);font-size:11px">' + libEsc(o.supplier || '—') + '</td>'
+      + '<td style="padding:6px 10px;color:var(--gray-500);font-size:10px;font-family:var(--fm)">' + libEsc(o.containerNo || '—') + '</td>'
       + '<td style="padding:6px 10px;color:var(--gray-600);font-size:11px">' + (o.arrivalEstimated ? fmtWeekDate(o.arrivalEstimated) : '—') + '</td>'
       + '<td style="padding:6px 10px;color:var(--gray-600);font-size:11px;text-align:right">' + (o.cases ? o.cases.toLocaleString() : '—') + '</td>'
       + '</tr>';
@@ -20955,7 +20975,7 @@ function simRenderPipelineList(realOrders) {
       : '<span class="chip chip-success" style="cursor:pointer" onclick="simToggleDowngraded(\'' + po + '\')" title="Click to mark downgraded (de-certified → conventional)">✓ Counts as organic</span>';
     html += '<tr style="border-bottom:1px solid var(--gray-100);' + rowBg + '">'
       + '<td style="padding:9px 12px;font-family:var(--fm);font-weight:600;color:var(--gray-800)">' + po + '</td>'
-      + '<td style="padding:9px 12px;color:var(--gray-700)">' + (o.supplier || '—') + '</td>'
+      + '<td style="padding:9px 12px;color:var(--gray-700)">' + libEsc(o.supplier || '—') + '</td>'
       + '<td style="padding:9px 12px;color:var(--gray-600)">' + modeIcon + '</td>'
       + '<td style="padding:9px 12px;color:var(--jlz);font-weight:600">' + (wk ? 'Wk ' + wk : '—') + '</td>'
       + '<td style="padding:9px 12px;text-align:right;font-family:var(--fm);color:var(--gray-700)">' + (o.cases || 0).toLocaleString() + '</td>'

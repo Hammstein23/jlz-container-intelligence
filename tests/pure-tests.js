@@ -711,6 +711,30 @@ group('La semana en curso se abre en TRES estados que suman el total');
   check('el total sigue cerrando',                    e.invoiced + e.shipped + e.toShip, e.total);
 })();
 
+group('_ordSanitize · XSS almacenado no entra por los campos de orden');
+// Un pentest (2026-09-04) confirmó XSS almacenado: un proveedor con <img onerror> ejecutaba en 6
+// pantallas y robaba el token del backend de cualquier usuario. Escapar cada render era whack-a-mole;
+// la defensa está en la entrada: los campos estructurados nunca son HTML, así que se les quita < > ".
+var _ORD_HTML_SAFE = ['supplier','containerNo','contractNo','portOfDischarge','jbjLotNo','jlzPo','incoterm'];
+function _ordSanitize(o){
+  if(!o || typeof o !== 'object') return o;
+  _ORD_HTML_SAFE.forEach(function(k){
+    if(typeof o[k] === 'string' && /[<>"]/.test(o[k])) o[k] = o[k].replace(/[<>"]/g, '');
+  });
+  return o;
+}
+var _ev = _ordSanitize({ supplier:'<img src=x onerror="steal()">', containerNo:'a"><script>b', jlzPo:'PO<b>1' });
+ok('el <img onerror> del proveedor queda inerte', _ev.supplier.indexOf('<') < 0 && _ev.supplier.indexOf('>') < 0);
+ok('y el break-out de atributo del contenedor también', _ev.containerNo.indexOf('"') < 0 && _ev.containerNo.indexOf('<') < 0);
+ok('el PO tampoco puede llevar etiquetas', _ev.jlzPo.indexOf('<') < 0);
+check('un proveedor legítimo con & no se rompe',
+      _ordSanitize({ supplier:'Peri & Sons Farms' }).supplier, 'Peri & Sons Farms');
+check('un contenedor normal pasa intacto',
+      _ordSanitize({ containerNo:'W2881A2637576' }).containerNo, 'W2881A2637576');
+ok('no revienta con una orden nula', _ordSanitize(null) === null);
+ok('observations NO está en la lista — es texto libre, se escapa en el render',
+   _ORD_HTML_SAFE.indexOf('observations') < 0);
+
 group('dmcNormalizeUnshipped · el reporte dice si la orden ya salió');
 // El Unshipped Report trae una columna Status (PICKING / SHIPPED) que se estaba ignorando: una orden
 // ya despachada entraba como si siguiera en la cámara y había que marcarla a mano. En el archivo del
