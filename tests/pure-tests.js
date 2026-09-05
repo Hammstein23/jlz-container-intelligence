@@ -711,6 +711,22 @@ group('La semana en curso se abre en TRES estados que suman el total');
   check('el total sigue cerrando',                    e.invoiced + e.shipped + e.toShip, e.total);
 })();
 
+group('_sheetSafe · formula injection no llega al Google Sheet');
+// Un Excel malicioso con un proveedor "=HYPERLINK(...)" se escribiría como fórmula viva en el Sheet
+// compartido y se ejecutaría cuando Juan o Michael lo abren. Se prefija con ' lo que empieza peligroso.
+function _sheetSafe(v){ return (typeof v === 'string' && /^[=+\-@\t\r]/.test(v)) ? ("'" + v) : v; }
+function _sheetSafeRows(rows){ return Array.isArray(rows) ? rows.map(function(r){ return Array.isArray(r) ? r.map(_sheetSafe) : _sheetSafe(r); }) : rows; }
+check('una fórmula HYPERLINK queda neutralizada', _sheetSafe('=HYPERLINK("http://evil","x")'), "'=HYPERLINK(\"http://evil\",\"x\")");
+check('un + al inicio también', _sheetSafe('+cmd'), "'+cmd");
+check('un @ también (Excel DDE)', _sheetSafe('@SUM(A1)'), "'@SUM(A1)");
+check('un - al inicio también',  _sheetSafe('-2+3'), "'-2+3");
+check('un nombre normal no se toca', _sheetSafe('Añawi'), 'Añawi');
+check('un número no se toca (no es string)', _sheetSafe(975), 975);
+check('una fecha texto normal pasa', _sheetSafe('2026-09-04'), '2026-09-04');
+var r = _sheetSafeRows([['=A1', 'ok', 5], ['normal', '@x', 10]]);
+ok('recorre filas y celdas', r[0][0] === "'=A1" && r[1][1] === "'@x" && r[0][1] === 'ok' && r[0][2] === 5);
+ok('no revienta con algo que no es array', _sheetSafeRows('x') === 'x');
+
 group('_ordSanitize · XSS almacenado no entra por los campos de orden');
 // Un pentest (2026-09-04) confirmó XSS almacenado: un proveedor con <img onerror> ejecutaba en 6
 // pantallas y robaba el token del backend de cualquier usuario. Escapar cada render era whack-a-mole;

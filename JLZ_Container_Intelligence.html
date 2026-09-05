@@ -7773,7 +7773,12 @@ function mibEnsureDefaultRange(){
 
 
 <script>
-pdfjsLib.GlobalWorkerOptions.workerSrc='vendor/pdf.worker.min.js';   // local: un worker por URL no admite integrity
+pdfjsLib.GlobalWorkerOptions.workerSrc='vendor/pdf.worker.min.js';
+// pdf.js 3.11.174 es vulnerable a CVE-2024-4367: un PDF con una fuente maliciosa puede ejecutar
+// JavaScript durante el procesamiento — y esta app procesa PDFs de documentos de contenedor, que
+// podrían llegar por mail. La mitigación oficial de Mozilla es `isEvalSupported:false` (desactiva el
+// Function()/eval que el exploit usa) + `disableFontFace:true`. Se pasa en cada getDocument. Solo
+// extraemos texto (getTextContent), nunca renderizamos a canvas, así que esto no rompe nada visible.   // local: un worker por URL no admite integrity
 
 // ── TABS ──
 // switchTab defined in head
@@ -8958,7 +8963,7 @@ function renderRecommendedActions() {
 // ── PDF EXTRACTION ──
 async function extractPdfText(file) {
   const buf = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({data:buf}).promise;
+  const pdf = await pdfjsLib.getDocument({data:buf, isEvalSupported: false, disableFontFace: true}).promise;
   const lines=[]; let allText='';
   for(let p=1;p<=pdf.numPages;p++) {
     const page = await pdf.getPage(p);
@@ -9257,7 +9262,7 @@ async function parseWO(file) {
 async function parseQR(file) {
   const dz=el('dz-qr'); dz.className='dz loading';
   try {
-    const pdfDoc = await pdfjsLib.getDocument({data: await file.arrayBuffer()}).promise;
+    const pdfDoc = await pdfjsLib.getDocument({data: await file.arrayBuffer(), isEvalSupported: false, disableFontFace: true}).promise;
     const allLines = [];
     for(let p=1; p<=pdfDoc.numPages; p++) {
       const page = await pdfDoc.getPage(p);
@@ -19570,6 +19575,20 @@ setInterval(() => {
 // ── PUSH ORDERS TO SHEETS ──
 // Called on every save/edit/delete in the Orders module. Sends the full
 // pipeline state + all change history entries.
+// ── Defensa contra formula injection en el Google Sheet ─────────────────────────────────────────
+// Un valor de texto que empieza con = + - @ (o tab/CR) lo interpreta Google Sheets como FÓRMULA al
+// escribirlo. Un Excel malicioso con un proveedor "=HYPERLINK(\"http://evil\",\"pago\")" se escribiría
+// como fórmula viva en el Sheet compartido, y se ejecuta cuando Juan o Michael lo abren — exfiltración
+// o phishing sin necesidad de XSS. Prefijar con ' neutraliza: Sheets lo trata como texto literal y el
+// apóstrofo no se muestra. Los números pasan intactos (no son string).
+function _sheetSafe(v){
+  return (typeof v === 'string' && /^[=+\-@\t\r]/.test(v)) ? ("'" + v) : v;
+}
+function _sheetSafeRows(rows){
+  return Array.isArray(rows)
+    ? rows.map(function(r){ return Array.isArray(r) ? r.map(_sheetSafe) : _sheetSafe(r); })
+    : rows;
+}
 function pushOrdersToSheet() {
   const gasUrl = getGasUrl();
   if (!gasUrl) return;  // silently skip if not configured
@@ -19636,7 +19655,7 @@ function pushOrdersToSheet() {
     method: 'POST',
     mode: 'no-cors',
     headers: { 'Content-Type': 'text/plain' },
-    body: withToken({ action: 'replaceOrders', orderRows, changeRows, user: authUserEmail() }),
+    body: withToken({ action: 'replaceOrders', orderRows: _sheetSafeRows(orderRows), changeRows, user: authUserEmail() }),
   })
   .then(() => {
     // no-cors returns opaque — we can't read the body, so we assume success
@@ -26771,7 +26790,7 @@ async function dmSaveForecast(){
   if (typeof markSyncStart === 'function') markSyncStart();
   try {
     await fetch(gasUrl, { method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain'},
-      body: withToken({ action:'appendForecast', forecastRow: row, user:(typeof authUserEmail==='function'?authUserEmail():'') }) });
+      body: withToken({ action:'appendForecast', forecastRow: _sheetSafeRows([row])[0], user:(typeof authUserEmail==='function'?authUserEmail():'') }) });
     if (typeof markSyncSuccess === 'function') setTimeout(markSyncSuccess, 200);
     if (btn){ btn.textContent = '\u2713 Saved'; setTimeout(()=>{ const b=document.getElementById('dm-snap-btn'); if (b) b.textContent = 'Save this week\u2019s forecast'; }, 2000); }
     setTimeout(dmPullAccuracy, 1000);
@@ -26841,7 +26860,7 @@ function dmPushDemand(rows){
   if (!gasUrl || !rows) return;
   if (typeof markSyncStart === 'function') markSyncStart();
   fetch(gasUrl, { method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain'},
-    body: withToken({ action:'replaceDemand', demandRows: rows, user: (typeof authUserEmail==='function'?authUserEmail():'') }) })
+    body: withToken({ action:'replaceDemand', demandRows: _sheetSafeRows(rows), user: (typeof authUserEmail==='function'?authUserEmail():'') }) })
     .then(() => { if (typeof markSyncSuccess === 'function') setTimeout(markSyncSuccess, 200); })
     .catch(err => { console.warn('dmPushDemand failed:', err); if (typeof markSyncError === 'function') markSyncError(); });
 }
