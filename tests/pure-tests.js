@@ -1514,6 +1514,23 @@ check('y las cajas se cargan igual', _lx.cases, 10);
 check('un SKU con HTML no entra', invmParseInventoryReport([{ 'SKU':'OG-SHA-50Lbs-LG'+_XSS,
   'Lot #':'Y', 'Vendor':'v', 'Qty Received (Base UOM)':5, 'Qty Sold (Base UOM) for Lot':0 }]).lots.length, 0);
 
+// WholesaleWare escribe sus propios SKU con mayúsculas inconsistentes — hoy mismo conviven
+// 'OG-GAR-30lbs-Colossal' y 'OG-GAR-30Lbs-SuperJumbo'. Con match exacto, el día que alguien
+// "arregle" ese typo, esas cajas desaparecen de la app sin aviso.
+group('invmCanonSku — las mayúsculas del SKU no pueden borrar stock');
+check('resuelve el SKU tal cual viene',   invmCanonSku('OG-GAR-30lbs-Colossal'), 'OG-GAR-30lbs-Colossal');
+check('…y con las mayúsculas cambiadas',  invmCanonSku('OG-GAR-30Lbs-COLOSSAL'), 'OG-GAR-30lbs-Colossal');
+check('…y con espacios al costado',       invmCanonSku('  og-sha-50lbs-lg  '),   'OG-SHA-50Lbs-LG');
+check('un SKU que no es de compra no resuelve', invmCanonSku('OG-TUR-5Lbs-PR-FJ'), '');
+check('"__proto__" no resuelve a nada',   invmCanonSku('__proto__'), '');
+check('null no explota',                  invmCanonSku(null), '');
+// El lote se guarda con la forma CANÓNICA, no con la del archivo: así el resto de la app
+// (el descuento del committed, que compara por SKU) ve un solo string.
+var _cs = invmParseInventoryReport([{ 'SKU':'og-gar-30LBS-colossal', 'Lot #':'W2931A1', 'Vendor':'JLZ Produce Manufacturing',
+  'Qty Received (Base UOM)':140, 'Qty Sold (Base UOM) for Lot':140, 'Qty on Hand (Base UOM)':140 }]);
+check('el SKU se guarda canónico, no como vino', _cs.lots[0].sku, 'OG-GAR-30lbs-Colossal');
+check('…y las cajas entran igual', _cs.lots[0].cases, 140);
+
 // ═══ bpInvLot — el lote de reempaque no cuelga de una orden ═════════════════
 // El store de ginger-Perú está keyeado por ORDEN DE COMPRA. Un W-lot lleva en su número el PO de
 // MANUFACTURA, que nunca está en Orders — así que sin una fila que sepa vivir sin orden, las

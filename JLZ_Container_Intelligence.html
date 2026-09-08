@@ -15169,6 +15169,19 @@ var INVM_BUY_SKUS = {
 // senal que hoy coincide 100% (299 filas, 0 discrepancias) y se usa solo como CONTROL: si algun
 // dia dejan de coincidir, cambio algo en WholesaleWare y se avisa en el preview en vez de adivinar.
 function invmIsWLot(lot){ return /^W\d/i.test(String(lot == null ? '' : lot)); }
+// WholesaleWare NO es consistente con las mayusculas de sus propios SKU: conviven
+// 'OG-GAR-30lbs-Colossal' y 'OG-GAR-30Lbs-SuperJumbo'. Con match exacto, el dia que alguien
+// "arregle" ese typo alla, esas cajas desaparecen de la app sin un solo aviso. Se busca por
+// minusculas y se guarda SIEMPRE la forma canonica, asi el resto de la app ve un unico string.
+function invmCanonSku(sku){
+  var q = String(sku == null ? '' : sku).trim().toLowerCase();
+  if(!q) return '';
+  for(var k in INVM_BUY_SKUS){                          // son 7: no vale la pena cachear
+    // hasOwnProperty, no lookup directo: '__proto__' devolveria Object.prototype, que es truthy.
+    if(Object.prototype.hasOwnProperty.call(INVM_BUY_SKUS, k) && k.toLowerCase() === q) return k;
+  }
+  return '';
+}
 function invmInvReportPhysical(recv, sold, onHand, isW){
   return isW ? Math.max(0, onHand) : Math.max(0, recv - sold);
 }
@@ -15196,7 +15209,8 @@ function invmParseInventoryReport(rows){
   var out = { lots: [], flags: [], stats: { total: 0, kept: 0, offSku: 0, depleted: 0, wlots: 0, wcases: 0 } };
   (rows || []).forEach(function(r){
     out.stats.total++;
-    var sku = str(r['SKU']), meta = INVM_BUY_SKUS[sku];
+    var sku = invmCanonSku(r['SKU']);                    // normaliza mayusculas y descarta '__proto__'
+    var meta = sku ? INVM_BUY_SKUS[sku] : null;
     if(!meta){ out.stats.offSku++; return; }              // 5/10/20 lb, empaque, vLot, otros productos
     var lot = str(r['Lot #']), vendor = str(r['Vendor']), isW = invmIsWLot(lot);
     if(isW !== /JLZ\s*Produce\s*Manufactur/i.test(vendor)) {
@@ -15452,15 +15466,20 @@ function invrRenderPreview(){
   // que ningun PO matchee con Orders, y que el archivo no traiga ninguna fila de ginger-Peru
   // (export filtrado por categoria, SKU renombrado en WholesaleWare). El segundo no deja ningun
   // PO en bpMissing, asi que mirar bpMissing dejaba pasar el borrado.
-  var _gp = p.groups.filter(function(g){ return g.key === 'ginger|Peru'; })[0] || { before:0, after:0 };
-  var blocked = _gp.after === 0 && _gp.before > 0;
+  // Ninguna linea puede caer a cero en silencio. Se mira el RESULTADO, no la causa, porque hay
+  // varios caminos al mismo cero: ningun PO matchea, el export vino filtrado por categoria, o
+  // WholesaleWare renombro un SKU. Antes esto cubria solo ginger, y un garlic borrado pasaba.
+  var _zeroed = p.groups.filter(function(g){ return g.after === 0 && g.before > 0; });
+  var blocked = _zeroed.length > 0;
   if(blocked){
-    fl.push(box('warn','&#128721;','This import would drop ginger-Peru from ' + invmF(_gp.before) + ' to zero.',
+    var _names = _zeroed.map(function(g){ return libEsc(g.product + ' \u00b7 ' + g.origin)
+                 + ' (' + invmF(g.before) + ' cs)'; }).join(', ');
+    fl.push(box('warn','&#128721;','This import would drop ' + _names + ' to zero.',
       (p.bpMissing.length
-        ? 'None of the ginger POs in this file exist in Orders. Load them in the Orders tab first: '
+        ? 'Those POs do not exist in Orders. Load them in the Orders tab first: '
           + p.bpMissing.map(function(m){ return '<span style="font-family:var(--fm,monospace)">' + libEsc(m.po) + '</span>'; }).join(', ') + '.'
-        : 'The file contains no ginger-Peru rows at all. Re-export the Inventory Report without any '
-          + 'category filter, or check whether the ginger SKU was renamed in WholesaleWare.')
+        : 'The file contains no rows for that line at all. Re-export the Inventory Report without any '
+          + 'category filter, and check whether the SKU was renamed in WholesaleWare.')
       + ' Nothing was changed.'));
   }
   if(p.bpMissing.length && !blocked){

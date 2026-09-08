@@ -51,7 +51,7 @@ python3 "$DIR/extract.py" "$HTML" "$TMP/app.js" \
   dmISOLocal bpFutureWeeks bpWeeksOfCover mtoDetectCandidates mtoNetRows mtoByCustomer mtoCasesPerWeek dmcArrivingOrders ordBoughtForCustomers addDirectShip removeDirectShip directShipTotal getDirectShip _mutateOrderDirectShip bpInvState bpInvMigrateV1 invmProjectionHTML invmOverview _sheetSafe _sheetSafeRows _ordSanitize dmcNormalizeUnshipped dmcExcelDate cmCasesInBuyPack cmPlanEntries dmWeekPace bpSnapWeekDemand renderWeekPanel hybridSalesForWeek dsNamesFor dsLabelFor jlzSyncScope getActiveOrigin \
   dmLineOrigins dmLineStats dmProductSeries dmProductMeta dmSeriesCompare dmBuildModel invmDirectShipCases dmFocusRows dmComboSVG dmFmt0 dmMoney2 dmRenderTrendPrice dmWireChartTip cxSpark cxRenderList cxWireSparkTip renderCustomers cxOverrideCard \
   invmIsWLot invmInvReportPhysical invmParseInventoryReport invmInvReportIsBpLot invmInvReportPlan bpCcId ooDateToISO \
-  bpInvLot bpOrderById bpOrderCifLb bpOrderPerCaseLb bpInvRate bpDaysSince bpEtaOf
+  bpInvLot bpOrderById bpOrderCifLb bpOrderPerCaseLb bpInvRate bpDaysSince bpEtaOf invmCanonSku
 # Constantes top-level que las funciones extraídas necesitan. extract.py solo saca funciones,
 # así que sin esto el test las leería de un stub y estaría probando el stub, no producción.
 for _c in DM_SELL_DAYS BP_INV_LS BP_INV_LS_V1; do
