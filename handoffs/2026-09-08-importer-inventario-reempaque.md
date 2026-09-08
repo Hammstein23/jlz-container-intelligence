@@ -5,11 +5,11 @@
 
 ## Estado
 
-- **Commiteado** en `d1a83c1` y anteriores: el importer completo (`invr*` + modal `#invr-modal`),
-  el parser (`invmParseInventoryReport`), el plan de escritura (`invmInvReportPlan`), la fila de
-  reempaque, `tests/repack-guard.py` y el runbook `.claude/commands/lunes.md` reescrito.
-- **SIN commitear** (44 líneas, 3 archivos): `invmCanonSku` (SKU case-insensitive) + el freno de
-  cero generalizado a todos los productos + sus tests.
+- **TODO COMMITEADO** hasta `c97d9f4`; árbol limpio. Incluye: el importer completo (`invr*` +
+  modal `#invr-modal`), el parser (`invmParseInventoryReport`), el plan de escritura
+  (`invmInvReportPlan`), la fila de reempaque, `invmCanonSku` (SKU case-insensitive), el freno de
+  cero generalizado a los cinco productos, el sanitizador de entrada del XLS,
+  `tests/repack-guard.py` y el runbook `.claude/commands/lunes.md` reescrito.
 - **Suite verde:** 383 checks (demanda) + 42 (runbook) + 4 guardianes python.
 - **NO desplegado.** Juan todavía no corrió el importer en la app real ni una vez.
 
