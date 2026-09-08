@@ -129,6 +129,44 @@ Lo que prueba y lo que no: confirma que la app leyó bien el archivo. **No** con
 archivo sea un extracto completo de WholesaleWare — para eso hay que correr el reporte de
 nuevo (filtrando por `Target Fulfillment Date`) y comparar contra él.
 
+## 4. `./tests/inv-report-check.py` — el Inventory Report real contra el importer
+
+```bash
+./tests/inv-report-check.py                       # el más nuevo de ~/Downloads
+./tests/inv-report-check.py <inventory.xlsx> <unshipped.xlsx>
+```
+
+Corre solo dentro de `run.sh` cuando hay archivo; sin archivo se saltea y sale limpio.
+
+Existe por una razón concreta: **el harness sintético daba verde con el bug de los W-lots.**
+Generaba una orden para *cada* PO del archivo, lotes de reempaque incluidos, así que los W-lots
+siempre encontraban orden y nunca se caían — el test estaba probando su propio andamio. Se perdían
+1.189 de 3.213 cajas de ginger todos los lunes y ningún check lo veía.
+
+Este no le da orden a los W-lots, que es la realidad: su número lleva el PO de **manufactura**
+(`W2939A2674126`), una orden de reempaque interna que por construcción nunca está en Orders. El
+check que importa corre el plan **sin una sola orden** y exige que las cajas de reempaque sigan ahí.
+
+Lo demás es recuento independiente: rehace la física desde las filas crudas del `.xlsx`
+(W-lot → on-hand; lote real → recibido − vendido) y la compara contra el parser y contra el plan,
+grupo por grupo. Si el archivo trae también el **Unshipped Sales Order Report** del mismo día,
+calcula el committed de la semana en curso y con eso el **LIBRE**, que es el segundo número que
+valida el importer.
+
+**Los `.xlsx` no se commitean.** El repo es público —se sirve por GitHub Pages— y el Unshipped
+Report trae nombres de clientes. Por eso el archivo se pasa por ruta y vive en `~/Downloads`.
+
+Para probar que el harness sirve, corrélo contra una copia con el fix revertido:
+
+```bash
+./tests/inv-report-check.py --html /ruta/copia-rota.html
+```
+
+**Verificado el 2026-09-08** con `Inventory Report-09.07.2026.xlsx`: contra producción, 18 checks
+verdes (ginger bruto **3.217**, libre **2.250**). Contra una copia donde los W-lots vuelven a
+agruparse por PO: **8 FAIL** y el bruto se derrumba a **2.132** — las 1.085 cajas de reempaque
+desaparecidas. Sale con código 1.
+
 ## Por qué corren así
 
 La app es un solo HTML sin build step, y `node` normalmente no está instalado en esta

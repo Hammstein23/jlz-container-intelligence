@@ -92,4 +92,11 @@ else
   echo "no se encontró $RUNBOOK — salteado"
 fi
 
+echo
+echo "══ Inventory Report real ═══════════════════════════════════════"
+# El único que depende de un archivo. Si no hay ninguno en ~/Downloads se saltea y sale limpio,
+# así que run.sh sigue corriendo cualquier día. Se le pasa el mismo $HTML para que probar el
+# harness contra una copia rota siga funcionando de punta a punta.
+python3 "$DIR/inv-report-check.py" --html "$HTML" || FAILED=1
+
 exit $FAILED
