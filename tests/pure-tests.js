@@ -1408,8 +1408,10 @@ check('una fecha ilegible queda vacía, nunca inventada',
 // Escribir en el store equivocado NO da error: el producto se queda con el inventario de la
 // semana pasada y nadie se entera hasta que el plan de compra sale mal.
 group('invmInvReportPlan — el plan de escritura');
+// Orders SOLO tiene ordenes de COMPRA. El PO de un W-lot es de manufactura y nunca esta aca —
+// esa es justamente la razon por la que los W-lots no pueden entrar por PO.
 var _ORD = [{ id:'o-2523058', jlzPo:'2523058', status:'Arrived' },
-            { id:'o-2674126', jlzPo:'2674126', status:'In Transit' }];
+            { id:'o-2629655', jlzPo:'2629655', status:'In Transit' }];
 var _PARSED = invmParseInventoryReport(_INV07);
 var _PREV = {
   turmeric:{ serviceLevel:95, lots:[ { lot:'2260876-0001', cases:7, excluded:true, origin:'Fiji' },
@@ -1422,10 +1424,42 @@ var _grp = function(k){ return _P.groups.filter(function(g){ return g.key === k;
 
 check('ginger-Perú va al store por PO, no al product-aware', _grp('ginger|Peru').store, 'bp');
 check('turmeric va al store product-aware',                  _grp('turmeric|Fiji').store, 'prod');
-check('solo carga los POs que existen en Orders', Object.keys(_P.bpRows).length, 2);
-check('…y el resto se avisa, no se pierde en silencio', _P.bpMissing.length, 5);
-check('lo que entra es la suma de los POs que sí matchearon',
-      _grp('ginger|Peru').after, 1152 + 700);
+// LA prueba de fuego, y la que faltaba: con Orders conteniendo solo POs de compra reales, el
+// store tiene que recibir TODO el bruto — los 2 lotes reales MAS los 5 W-lots. 3.099 no es un
+// numero mio: es el Floor Count que mostraba el Sales Desk del 09/07 para ginger-Peru.
+// Sin esto, el test anterior daba verde con 1.852 y se perdian 967 cajas en silencio, mientras
+// el committed que esos mismos W-lots sirven SI se restaba. El libre salia 1.165 en vez de 2.132.
+check('el store recibe el BRUTO completo, W-lots incluidos',
+      _grp('ginger|Peru').after, 1152 + 980 + (700 + 144 + 72 + 45 + 6));
+check('…que es el Floor Count del Sales Desk', _grp('ginger|Peru').after, 3099);
+check('2 lotes reales + 5 W-lots = 7 filas', Object.keys(_P.bpRows).length, 7);
+check('ningun PO queda sin cargar', _P.bpMissing.length, 0);
+
+// Un W-lot NO se busca en Orders: entra como fila de reempaque con su propia metadata.
+var _rep = Object.keys(_P.bpRows).filter(function(k){ return _P.bpRows[k].repack; });
+check('los 5 W-lots entran como reempaque', _rep.length, 5);
+ok('la llave de un reempaque es el lote, no el PO de manufactura',
+   _rep.every(function(k){ return k.indexOf('W:') === 0; }));
+ok('ninguna fila de reempaque quedo reportada como PO faltante',
+   !_P.bpMissing.some(function(m){ return String(m.po) === '2674126'; }));
+var _r1 = _P.bpRows['W:W2939A2674126'] || {};
+check('el reempaque lleva sus cajas', _r1.cases, 700);
+check('…y de que lote salieron', (_r1.repack || {}).lot, 'W2939A2674126');
+check('…y su costo por caja, para el costo puesto', typeof (_r1.repack || {}).costCase, 'number');
+check('…y el proveedor interno', (_r1.repack || {}).supplier, 'JLZ Produce Manufacturing');
+
+// Con un PO real ausente de Orders, ese SI se avisa — pero los W-lots entran igual.
+var _P1 = invmInvReportPlan(_PARSED, [{ id:'o-2523058', jlzPo:'2523058', status:'Arrived' }],
+                            { rows:{} }, _PREV);
+check('un PO de compra que falta se reporta', _P1.bpMissing.length, 1);
+check('…y es el que falta, no un W-lot', _P1.bpMissing[0].po, '2629655');
+check('…y los W-lots entran lo mismo', _P1.groups.filter(function(g){
+      return g.key === 'ginger|Peru'; })[0].after, 1152 + (700 + 144 + 72 + 45 + 6));
+
+// El ajuste manual de dias de almacen es curado a mano y alimenta la merma estimada del lote:
+// el reemplazo total lo pisaba.
+var _P2d = invmInvReportPlan(_PARSED, _ORD, { rows:{ 'o-2523058':{ cases:1, days:9 } } }, _PREV);
+check('preserva el ajuste manual de días', (_P2d.bpRows['o-2523058'] || {}).days, 9);
 check('muestra lo que había antes, para poder comparar', _grp('ginger|Peru').before, 1500);
 ok('ningún lote de ginger-Perú se cuela en el store product-aware',
    !_P.prodLots.ginger || !_P.prodLots.ginger.some(function(l){ return l.origin === 'Peru'; }));
@@ -1456,11 +1490,55 @@ check('Colossal y Super Jumbo se muestran desglosados aunque compartan origen',
 
 // Un PO ya recibido que sigue "In Transit" se cuenta dos veces: stock + en camino.
 check('detecta el PO recibido que sigue figurando en camino', _P.pipeline.length, 1);
-check('…y dice cuál es', _P.pipeline[0].po, '2674126');
+check('…y dice cuál es', _P.pipeline[0].po, '2629655');
 ok('no marca los que ya están en Arrived',
    !_P.pipeline.some(function(x){ return x.po === '2523058'; }));
 
 check('no rompe sin órdenes ni stores previos',
       invmInvReportPlan(_PARSED, null, null, null).groups.length > 0, true);
+
+// El XLS es entrada NO confiable y lo que sale del parser termina en innerHTML (l.po y l.sup se
+// renderizan sin escapar). Se limpia en el BOUNDARY, como [[xss-stored-orders]]: un solo lugar.
+group('invmParseInventoryReport — el archivo es entrada no confiable');
+var _XSS = '<img src=x onerror=alert(1)>';
+var _px = invmParseInventoryReport([{ 'SKU':'OG-SHA-50Lbs-LG', 'Lot #':'X'+_XSS,
+  'Vendor':'Peri'+_XSS, 'PO #':'99'+_XSS, 'Origin':_XSS,
+  'Qty Received (Base UOM)':10, 'Qty Sold (Base UOM) for Lot':0, 'Qty on Hand (Base UOM)':10 }]);
+var _lx = _px.lots[0];
+ok('el lote no puede traer HTML',      !/[<>"]/.test(_lx.lot));
+ok('el proveedor tampoco',             !/[<>"]/.test(_lx.supplier));
+ok('el PO tampoco',                    !/[<>"]/.test(_lx.po));
+ok('ni el origen crudo que se guarda', !/[<>"]/.test(_lx.originRaw));
+check('y las cajas se cargan igual', _lx.cases, 10);
+// Un SKU envenenado no matchea la allow-list, así que la fila cae por off-SKU: doble red.
+check('un SKU con HTML no entra', invmParseInventoryReport([{ 'SKU':'OG-SHA-50Lbs-LG'+_XSS,
+  'Lot #':'Y', 'Vendor':'v', 'Qty Received (Base UOM)':5, 'Qty Sold (Base UOM) for Lot':0 }]).lots.length, 0);
+
+// ═══ bpInvLot — el lote de reempaque no cuelga de una orden ═════════════════
+// El store de ginger-Perú está keyeado por ORDEN DE COMPRA. Un W-lot lleva en su número el PO de
+// MANUFACTURA, que nunca está en Orders — así que sin una fila que sepa vivir sin orden, las
+// 1.189 cajas de reempaque (37% del bruto de ginger) no tienen dónde entrar.
+group('bpInvLot — un lote de reempaque vive sin orden de compra');
+getOrders = function(){ return []; };                       // Orders vacío: nada matchea
+var _stR = { rates:{ transportLb:0.10, shrinkDay:0.5, cleanBase:0, cleanDetPctWk:0 },
+  rows:{ 'W:W2939A2674126': { cases:700, repack:{ lot:'W2939A2674126', po:'2674126',
+           received:'2026-09-05', costCase:35.5551, supplier:'JLZ Produce Manufacturing' } },
+         'huerfana': { cases:99 } } };
+var _LR = bpInvLot('W:W2939A2674126', _stR, null);
+check('cuenta sus cajas aunque ninguna orden matchee', _LR.cases, 700);
+// Un W-lot puede venir de un contenedor sea o air y no hay forma de saber cuál: estamparle uno
+// sería inventarlo, y CLAUDE.md dice que sea y air nunca se mezclan.
+check('no lo marca sea ni air', _LR.mode, 'repack');
+// El costo del reempaque ya viene asignado por WholesaleWare e incluye el flete del contenedor
+// de origen; sumarle transporte otra vez lo contaría dos veces.
+check('el costo puesto sale del costo por caja del reporte', Math.round(_LR.landed * 30), 36);
+ok('los días de almacén salen de la fecha del W-lot, no de una orden', _LR.stored > 0);
+ok('lleva su metadata para que invmCompute lo reconozca', !!(_LR.rs && _LR.rs.repack));
+
+// Una fila sin orden Y sin metadata de reempaque es huérfana (su orden se borró): invmCompute la
+// descarta. La diferencia entre las dos es exactamente `rs.repack`.
+var _LH = bpInvLot('huerfana', _stR, null);
+check('la fila huérfana no tiene orden', _LH.o, null);
+ok('…ni metadata de reempaque, que es lo que la distingue', !(_LH.rs && _LH.rs.repack));
 
 summary();

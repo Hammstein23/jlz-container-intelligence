@@ -5558,6 +5558,7 @@ function authInjectLogo() {
 .invm-muted{color:var(--gray-400);font-weight:400;font-size:10.5px}
 .invm-mc{display:inline-block;font-size:9px;font-weight:700;padding:1px 6px;border-radius:4px;font-family:var(--fb,sans-serif)}
 .invm-mc.sea{background:#e0f2fe;color:#0369a1}.invm-mc.air{background:#ede9fe;color:#6d28d9}
+.invm-mc.repack{background:#f1f5f9;color:#475569}
 .invm-cin{width:60px;font-family:var(--fm,monospace);font-size:12px;padding:4px 6px;border:1px solid var(--gray-200);border-radius:5px;text-align:right;background:#fffdf5}
 .invm-cin.lock{background:var(--gray-50);color:var(--gray-500);border-style:dashed}
 .invm-zone{display:inline-block;font-size:9px;font-weight:700;padding:2px 8px;border-radius:9px;font-family:var(--fb,sans-serif)}
@@ -14859,10 +14860,16 @@ function bpInvRate(key,hist,st){ st=st||bpInvState(); if(st.rates && st.rates[ke
 
 function bpInvLot(id,st,hist){
   var o=bpOrderById(id), rs=(st.rows&&st.rows[id])||{};
-  var cif=o?bpOrderCifLb(o):0;
-  var transport=bpInvRate('transportLb',hist,st); transport=(transport!=null)?transport:0;
-  var landed=cif+transport;
+  // Lote de REEMPAQUE (W-lot): cajas fisicas que ya no cuelgan de una orden de compra. Su numero
+  // lleva el PO de manufactura, que por construccion NUNCA esta en Orders, asi que sin esta rama
+  // la fila se descartaba en invmCompute y el bruto de ginger salia ~37% corto.
+  var rp=rs.repack||null;
   var perCase=o?bpOrderPerCaseLb(o):(typeof DM_CASE_LB!=='undefined'?DM_CASE_LB:30);
+  var cif=o?bpOrderCifLb(o):((rp&&rp.costCase>0&&perCase>0)?(rp.costCase/perCase):0);
+  var transport=bpInvRate('transportLb',hist,st); transport=(transport!=null)?transport:0;
+  // El costo del reempaque ya viene ASIGNADO por WholesaleWare (incluye el flete del contenedor
+  // de origen), asi que sumarle transporte otra vez lo contaria dos veces.
+  var landed=cif+(rp?0:transport);
   // Frente B: direct-ship cases cross-dock port -> customer and never enter the warehouse.
   // A receiving sheet (rs.cases) is a hand-curated physical count that already excludes them,
   // so only net the order-total fallback. (ASSUMPTION: rs.cases excludes cross-dock — confirm
@@ -14870,7 +14877,7 @@ function bpInvLot(id,st,hist){
   var _ds=(typeof directShipTotal==='function' && o)?directShipTotal(o.jlzPo):0;
   var cases=(rs.cases!=null)?rs.cases:Math.max(0,(o?(parseFloat(o.cases)||0):0)-_ds);
   var lbs=cases*perCase;
-  var stored=bpDaysSince(o?bpEtaOf(o):'');
+  var stored=bpDaysSince(o?bpEtaOf(o):(rp?(rp.received||''):''));
   var defDays=(st.defDays!=null)?st.defDays:14;
   var addD=(rs.days!=null)?rs.days:defDays;
   var totD=stored+addD, totW=totD/7;
@@ -14881,7 +14888,9 @@ function bpInvLot(id,st,hist){
   var clnDet=bpInvRate('cleanDetPctWk',hist,st)||0;
   var cln=clnBase*(1+(clnDet/100)*totW);
   var delivered=landed+cln, sf=(shrPct>0&&shrPct<100)?(1-shrPct/100):1, net=delivered/sf;
-  var mode=rs.mode||(o&&o.mode==='air'?'air':'sea');
+  // 'repack' es un modo propio a proposito: el W-lot puede venir de un contenedor sea o air y no
+  // hay forma de saber cual, asi que estamparle uno seria inventarlo. CLAUDE.md: nunca se mezclan.
+  var mode=rs.mode||(rp?'repack':(o&&o.mode==='air'?'air':'sea'));
   return {o:o,rs:rs,cif:cif,landed:landed,cases:cases,directShip:_ds,lbs:lbs,stored:stored,addD:addD,totD:totD,shrPct:shrPct,cln:cln,delivered:delivered,net:net,val:delivered*lbs,mode:mode};
 }
 
@@ -14914,11 +14923,16 @@ function invmCompute(){
   var rate=invmRate(hist), perDay=demand/7;
   var clnBase=bpInvRate('cleanBase',hist,st)||0, clnDet=bpInvRate('cleanDetPctWk',hist,st)||0;
   var lots=Object.keys(st.rows||{}).map(function(id){
-    var L=bpInvLot(id,st,hist); if(!L.o || L.cases<=0) return null;
-    return { id:id, po:String(L.o.jlzPo||id), sup:L.o.supplier||'?', mode:L.mode,
+    var L=bpInvLot(id,st,hist); if(L.cases<=0) return null;
+    // Una fila sin orden Y sin metadata de reempaque es huerfana (su orden se borro): se descarta.
+    // Pero un lote de reempaque SI es stock fisico y tiene que contar, o el bruto sale corto.
+    var rp=L.rs && L.rs.repack;
+    if(!L.o && !rp) return null;
+    return { id:id, po: rp ? String(rp.lot||rp.po||id) : String(L.o.jlzPo||id),
+      sup: rp ? (rp.supplier||'Repack') : (L.o.supplier||'?'), mode:L.mode, repack: !!rp,
       stored:L.stored, cases:L.cases, directShip:L.directShip||0, lbs:L.lbs, landed:L.landed,
       addManual:(st.rows[id] && st.rows[id].days!=null)?st.rows[id].days:null, expDays:shelf-L.stored,
-      downgraded: !!(L.o.downgraded) };
+      downgraded: !!(L.o && L.o.downgraded) };
   }).filter(Boolean);
   // Downgraded containers are a NEW segregation axis (organic vs
   // conventional) -- same rigor as sea/air, formal/informal. They never
@@ -15010,7 +15024,7 @@ function invmLots(m,t){
     h+='<tr>'+
       '<td class="l"><span class="invm-po">'+l.po+'</span>'+(l.directShip>0?'<br><span style="font-size:9px;font-family:var(--fm);color:#6d28d9;background:#ede9fe;padding:1px 5px;border-radius:99px;white-space:nowrap" title="Sold port → customer, never entered the warehouse — not counted as stock or shrink">'+invmF(l.directShip)+' cs direct-shipped</span>':'')+'</td>'+
       '<td class="l"><span class="invm-supn">'+l.sup+'</span></td>'+
-      '<td class="l"><span class="invm-mc '+l.mode+'">'+(l.mode==='air'?'AIR':'SEA')+'</span></td>'+
+      '<td class="l"><span class="invm-mc '+l.mode+'">'+(l.mode==='repack'?'REPACK':(l.mode==='air'?'AIR':'SEA'))+'</span></td>'+
       '<td>'+l.stored+'d</td><td class="invm-muted">in '+l.expDays+'d</td>'+
       '<td><input class="invm-cin" type="number" value="'+l.cases+'" onchange="invmSetCases(\''+l.id+'\',this.value)"></td>'+
       '<td>'+addCell+'</td><td><b>'+Math.round(l.total)+'d</b></td>'+
@@ -15160,7 +15174,15 @@ function invmInvReportPhysical(recv, sold, onHand, isW){
 }
 function invmParseInventoryReport(rows){
   var num = function(v){ var n = parseFloat(String(v == null ? '' : v).replace(/,/g, '')); return isFinite(n) ? n : 0; };
-  var str = function(v){ return String(v == null ? '' : v).trim(); };
+  // BOUNDARY: un XLS es entrada NO confiable, y lo que sale de aca termina en el store y de ahi
+  // en innerHTML (l.po y l.sup se renderizan sin escapar en la tabla de lots y en las alertas).
+  // Se limpia una vez a la entrada, como _ordSanitize / _histSanitize / _miSanitize — no sink por
+  // sink, que es una carrera que siempre se pierde. Antes esto venia de Orders, ya sanitizado;
+  // con los lotes de reempaque pasa a venir del archivo.
+  var str = function(v){
+    var t = String(v == null ? '' : v).trim();
+    return /[<>"]/.test(t) ? t.replace(/[<>"]/g, '') : t;
+  };
   // Tres formas posibles segun como se leyo el libro: objeto Date (cellDates:true), serial de
   // Excel, o texto MM/DD/YYYY. Nunca inventamos una fecha: si no se puede leer, va vacia.
   var iso = function(v){
@@ -15209,23 +15231,47 @@ function invmInvReportPlan(parsed, orders, bpSt, prodSt){
   orders = orders || []; bpSt = bpSt || {}; prodSt = prodSt || {};
 
   // ── ginger-Peru: por PO, porque el lote fisico no es la llave de ese store ────────────────
+  var bpBefore = 0, rowsPrev = bpSt.rows || {};
+  Object.keys(rowsPrev).forEach(function(k){ bpBefore += (+((rowsPrev[k] || {}).cases) || 0); });
+  var bpAfter = 0, bpLots = 0, bpW = 0, bpWc = 0, bpSkus = {};
+  var bpAll = lots.filter(invmInvReportIsBpLot);
+  // El ajuste manual de dias de almacen (rs.days) y el modo son curados a mano: el reemplazo total
+  // los pisaria, y con ellos la merma estimada del lote.
+  var carry = function(key, row){
+    var pv = rowsPrev[key];
+    if(pv && pv.days != null) row.days = pv.days;
+    if(pv && pv.mode) row.mode = pv.mode;
+    return row;
+  };
+
+  // Lotes REALES: por PO, que es la llave de este store (se arma desde Orders).
   var byPo = {};
-  lots.filter(invmInvReportIsBpLot).forEach(function(l){
+  bpAll.filter(function(l){ return !l.isW; }).forEach(function(l){
     var po = String(l.po || '');
     if(!byPo[po]) byPo[po] = { po: po, cases: 0, lots: [] };
     byPo[po].cases += l.cases; byPo[po].lots.push(l);          // varios lotes pueden colgar de un PO
   });
-  var bpBefore = 0, rowsPrev = bpSt.rows || {};
-  Object.keys(rowsPrev).forEach(function(k){ bpBefore += (+((rowsPrev[k] || {}).cases) || 0); });
-  var bpAfter = 0, bpLots = 0, bpW = 0, bpWc = 0, bpSkus = {};
   Object.keys(byPo).forEach(function(po){
     var d = byPo[po];
     var o = orders.filter(function(x){ return String(x.jlzPo || '') === po || String(x.id || '') === po; })[0];
     if(!o){ plan.bpMissing.push({ po: po, cases: d.cases }); return; }   // sin orden no hay lote posible
-    plan.bpRows[bpCcId(o)] = { cases: d.cases };
+    var key = bpCcId(o);
+    plan.bpRows[key] = carry(key, { cases: d.cases });
     bpAfter += d.cases; bpLots++;
-    d.lots.forEach(function(l){ if(l.isW){ bpW++; bpWc += l.cases; }
-                                if(l.sku) bpSkus[l.sku] = (bpSkus[l.sku] || 0) + l.cases; });
+    d.lots.forEach(function(l){ if(l.sku) bpSkus[l.sku] = (bpSkus[l.sku] || 0) + l.cases; });
+  });
+
+  // W-LOTS: van como filas de REEMPAQUE, no por PO. El numero de un W-lot lleva el PO de
+  // MANUFACTURA (W2939A|2674126), que es una orden de reempaque interna y por construccion nunca
+  // esta en Orders. Agruparlos por PO los mandaba a bpMissing: se perdian 1.189 de 3.213 cajas de
+  // ginger (37% del bruto) y encima el committed que esos mismos W-lots sirven SI se restaba.
+  // Ese era el doble descuento que dejaba el libre en 1.057 cuando eran 2.246.
+  bpAll.filter(function(l){ return l.isW; }).forEach(function(l){
+    var key = 'W:' + l.lot;
+    plan.bpRows[key] = carry(key, { cases: l.cases, repack: {
+      lot: l.lot, po: l.po, received: l.received, costCase: l.avgCost, supplier: l.supplier } });
+    bpAfter += l.cases; bpLots++; bpW++; bpWc += l.cases;
+    if(l.sku) bpSkus[l.sku] = (bpSkus[l.sku] || 0) + l.cases;
   });
   plan.groups.push({ key:'ginger|Peru', product:'ginger', origin:'Peru', store:'bp',
                      before: Math.round(bpBefore), after: bpAfter, lots: bpLots, wlots: bpW,
@@ -15401,13 +15447,21 @@ function invrRenderPreview(){
     return '<div style="display:flex;gap:10px;padding:11px 13px;border-radius:9px;margin-bottom:8px;font-size:12.5px;line-height:1.5;background:' + c[0] + ';border:1px solid ' + c[1] + ';color:' + c[2] + '">'
          + '<span style="flex:none">' + icon + '</span><div><b>' + title + '</b> ' + body + '</div></div>';
   };
-  // Si el archivo trae ginger-Peru pero NINGUN PO matchea con Orders, confirmar dejaria el ginger
-  // en cero. Eso no es un aviso, es un freno: el plan de compra entero cuelga de ese numero.
-  var blocked = p.bpMissing.length > 0 && !Object.keys(p.bpRows).length;
+  // NUNCA dejar ginger-Peru en cero en silencio: de ese numero cuelga el plan de compra entero.
+  // Se mira el RESULTADO, no la causa, porque hay dos caminos distintos que llevan al mismo cero:
+  // que ningun PO matchee con Orders, y que el archivo no traiga ninguna fila de ginger-Peru
+  // (export filtrado por categoria, SKU renombrado en WholesaleWare). El segundo no deja ningun
+  // PO en bpMissing, asi que mirar bpMissing dejaba pasar el borrado.
+  var _gp = p.groups.filter(function(g){ return g.key === 'ginger|Peru'; })[0] || { before:0, after:0 };
+  var blocked = _gp.after === 0 && _gp.before > 0;
   if(blocked){
-    fl.push(box('warn','&#128721;','None of the ginger POs in this file exist in Orders.',
-      'Importing now would drop ginger-Peru to zero. Load these POs in the Orders tab first: '
-      + p.bpMissing.map(function(m){ return '<span style="font-family:var(--fm,monospace)">' + libEsc(m.po) + '</span>'; }).join(', ') + '.'));
+    fl.push(box('warn','&#128721;','This import would drop ginger-Peru from ' + invmF(_gp.before) + ' to zero.',
+      (p.bpMissing.length
+        ? 'None of the ginger POs in this file exist in Orders. Load them in the Orders tab first: '
+          + p.bpMissing.map(function(m){ return '<span style="font-family:var(--fm,monospace)">' + libEsc(m.po) + '</span>'; }).join(', ') + '.'
+        : 'The file contains no ginger-Peru rows at all. Re-export the Inventory Report without any '
+          + 'category filter, or check whether the ginger SKU was renamed in WholesaleWare.')
+      + ' Nothing was changed.'));
   }
   if(p.bpMissing.length && !blocked){
     fl.push(box('warn','&#9888;&#65039;','These POs are not in Orders, so they will NOT load.',

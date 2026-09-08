@@ -199,8 +199,14 @@ con el inventario de la semana pasada.
 
 ```javascript
 (function(){
+  // Lotes REALES: por PO. Un W-lot NO va acá — abajo.
   var LOTS = [
-    // {po:'2410367', cases:404}, {po:'2432242', cases:476},   ← BRUTO por PO, W-lots INCLUIDOS
+    // {po:'2523058', cases:1152}, {po:'2629655', cases:980},
+  ];
+  // W-LOTS: van aparte, con su número de lote. Su PO es de MANUFACTURA y nunca está en Orders,
+  // así que buscarlos por PO los descarta — así se perdían 1.189 de 3.213 cajas (37% del bruto).
+  var WLOTS = [
+    // {lot:'W2939A2674126', cases:700, received:'2026-09-05', costCase:35.56},
   ];
   var orders = (typeof getOrders==='function' ? getOrders() : []);
   var st = bpInvState(), rows = {}, matched = [], missing = [];
@@ -210,6 +216,13 @@ con el inventario de la semana pasada.
     rows[bpCcId(o)] = { cases: Math.max(0, parseInt(d.cases)||0) };
     matched.push(d.po+' ('+d.cases+' cs)');
   });
+  WLOTS.forEach(function(w){
+    rows['W:'+w.lot] = { cases: Math.max(0, parseInt(w.cases)||0),
+      repack: { lot:w.lot, po:String(w.lot).replace(/^W\w+?(\d{6,})$/,'$1'),
+                received:w.received||'', costCase:+w.costCase||0,
+                supplier:'JLZ Produce Manufacturing' } };
+    matched.push(w.lot+' ('+w.cases+' cs, reempaque)');
+  });
   st.rows = rows;                              // REEMPLAZO TOTAL (preserva sellLb y rates)
   bpInvSave(st);
   if(typeof renderInventory==='function') renderInventory();
@@ -218,8 +231,13 @@ con el inventario de la semana pasada.
 })();
 ```
 
-Un PO que no esté en **Orders** no se puede cargar como lot. Si aparece en `missing`, cargalo en
-Orders y volvé a correr.
+Un PO de **compra** que no esté en Orders no se puede cargar como lot. Si aparece en `missing`,
+cargalo en Orders y volvé a correr.
+
+> **Los W-lots van en `WLOTS`, nunca en `LOTS`.** Ponerlos en `LOTS` los manda a `missing` y se
+> pierden en silencio — y el committed que esos mismos W-lots sirven **sí** se resta igual. Ese
+> doble descuento dejaba el ginger libre en **1.057 cuando eran 2.246**. El importer de la app
+> hace esta separación solo; el plan B depende de que la hagas vos.
 
 ### Plan B · Snippet B — los otros cuatro
 
