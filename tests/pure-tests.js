@@ -1281,4 +1281,186 @@ check('"All" no filtra nada',
       Math.round(hybridSalesForWeek('2026-09-07', 8, _mHi, 'ginger', null, 'All')),
       Math.round(hybridSalesForWeek('2026-09-07', 8, _mHi, 'ginger')));
 
+// ═══ Inventory Report — el vendible por lote ════════════════════════════════
+// Probado el 2026-09-08 contra el Sales Desk del 09/07 y contra la serie 09/07→09/08.
+// DOS reglas, no una, porque las dos columnas mienten de maneras distintas:
+//   · lote REAL  → Received − Sold.  `Qty on Hand` está CONGELADO: el 2523058 vendió 108 cajas
+//     entre el lunes y el martes y su onHand siguió clavado en 1320.
+//   · W-lot      → Qty on Hand.      Ahí `Sold` siempre iguala a `Received` (el reempaque se
+//     factura como venta interna a JLZ Produce Manufacturing), así que R−S da 0 y borraría stock real.
+// Cargar el NETO en vez del BRUTO fue el bug que dejó el ginger en 1.165 cuando eran 2.250:
+// el committed se restaría dos veces. Ver [[inventory-one-convention]].
+group('invmIsWLot — el patrón del número de lote es la definición');
+[['W2939A2674126',true],['W2811A2596556',true],['w2931a2667673',true],
+ ['2523058-0001',false],['2639206-0001',false],['750925-8348',false],
+ ['',false],['Warehouse',false]].forEach(function(t){
+  check('"' + t[0] + '"', invmIsWLot(t[0]), t[1]);
+});
+check('null no explota', invmIsWLot(null), false);
+
+group('invmInvReportPhysical — cada regla con los números que la probaron');
+check('lote real: 2523058 el lunes (1320 recv, 168 sold)', invmInvReportPhysical(1320,168,1320,false), 1152);
+check('lote real: el martes ya vendió 276 — y onHand no se movió',
+      invmInvReportPhysical(1320,276,1320,false), 1044);
+check('lote real agotado: 2667517 (140/140)', invmInvReportPhysical(140,140,140,false), 0);
+check('lote real sobrevendido no devuelve negativo', invmInvReportPhysical(144,146,-2,false), 0);
+check('W-lot: W2939A2674126 vale 700, no 0', invmInvReportPhysical(700,700,700,true), 700);
+check('W-lot: W2811A2596556 (5 recv, 0 sold)', invmInvReportPhysical(5,0,5,true), 5);
+check('W-lot con onHand negativo se clampea', invmInvReportPhysical(64,64,-26,true), 0);
+
+group('invmParseInventoryReport — filas reales del Inventory Report 09/07');
+// Subconjunto textual del export: los 21 lotes que el Sales Desk también mostraba (así el
+// esperado no es un número mío sino el Floor Count de WholesaleWare), más filas que deben
+// descartarse. Los nombres de columna son los del XLS, no versiones limpias.
+function _invRow(sku, lot, vendor, recv, sold, onHand, po){
+  return { 'SKU':sku, 'Lot #':lot, 'Vendor':vendor, 'PO #':po || '',
+           'Qty Received (Base UOM)':recv, 'Qty Sold (Base UOM) for Lot':sold,
+           'Qty on Hand (Base UOM)':onHand, 'Product Cost Per Unit (Base UOM)':'35.5',
+           'Received Date':'09/05/2026', 'Origin':'Peru' };
+}
+var JLZM = 'JLZ Produce Manufacturing';
+var _INV07 = [
+  // ginger Perú — Sales Desk: 1152, 980, 700, 144, 72, 45, 6  = 3099
+  _invRow('OG-GIN-30Lbs-PR','2523058-0001','Interloom SAC',1320,168,1320,'2523058'),
+  _invRow('OG-GIN-30Lbs-PR','2629655-0001','Anawi USA. LLC',980,0,980,'2629655'),
+  _invRow('OG-GIN-30Lbs-PR','W2939A2674126',JLZM,700,700,700,'2674126'),
+  _invRow('OG-GIN-30Lbs-PR','W2926A2667560',JLZM,144,144,144,'2667560'),
+  _invRow('OG-GIN-30Lbs-PR','W2928A2667631',JLZM,72,72,72,'2667631'),
+  _invRow('OG-GIN-30Lbs-PR','W2930A2667670',JLZM,45,45,45,'2667670'),
+  _invRow('OG-GIN-30Lbs-PR','W2920A2667118',JLZM,6,6,6,'2667118'),
+  // agotados y sobrevendidos: NO son stock, se descartan
+  _invRow('OG-GIN-30Lbs-PR','2618235-0001','Anawi USA. LLC',790,790,485,'2618235'),
+  _invRow('OG-GIN-30Lbs-PR','1937587-3146','Anawi USA. LLC',1020,1079,-59,'1937587'),
+  // turmeric Fiji — Sales Desk: 75, 2, 6, 7, 4, 5 = 99
+  _invRow('OG-TUR-30Lbs-PR-FJ','2620621-0001','SBimal LLC',150,75,123,'2620621'),
+  _invRow('OG-TUR-30Lbs-PR-FJ','2597551-0001','SBimal LLC',150,148,20,'2597551'),
+  _invRow('OG-TUR-30Lbs-PR-FJ','2439588-0001','SBimal LLC',100,94,7,'2439588'),
+  _invRow('OG-TUR-30Lbs-PR-FJ','2260876-0001','SBimal LLC',150,143,7,'2260876'),
+  _invRow('OG-TUR-30Lbs-PR-FJ','2305337-0001','SBimal LLC',100,96,4,'2305337'),
+  _invRow('OG-TUR-30Lbs-PR-FJ','W2811A2596556',JLZM,5,0,5,'2596556'),
+  // garlic: dos líneas de 30 lb que NO se pueden mezclar (Colossal vs Super Jumbo)
+  _invRow('OG-GAR-30lbs-Colossal','W2931A2667673',JLZM,140,140,140,'2667673'),
+  _invRow('OG-GAR-30lbs-Colossal','W2938A2674095',JLZM,70,70,70,'2674095'),
+  _invRow('OG-GAR-30Lbs-SuperJumbo','2639212-0001','Christopher Ranch Vendor',64,19,45,'2639212'),
+  _invRow('OG-GAR-30Lbs-SuperJumbo','2305351-0001','Christopher Ranch Vendor',64,51,13,'2305351'),
+  _invRow('OG-GAR-30Lbs-SuperJumbo','2579010-0001','Christopher Ranch Vendor',64,53,11,'2579010'),
+  // shallots (50 lb)
+  _invRow('OG-SHA-50Lbs-LG','2667534-0001','Peri and Sons Farms',100,56,100,'2667534'),
+  _invRow('OG-SHA-50Lbs-LG','2587428-0001','Peri and Sons Farms',100,99,36,'2587428'),
+  // fuera de los SKU de compra: producto trabajado y empaque. No son la caja que se compra.
+  _invRow('OG-TUR-5Lbs-PR-FJ','W2942A2678668',JLZM,120,120,120,'2678668'),
+  _invRow('OG-GIN-5LBS-PR','W2945A2679079',JLZM,20,20,20,'2679079'),
+  _invRow('Blank 30# Cases','X-1','Someone',10,0,10,'')
+];
+var _inv = invmParseInventoryReport(_INV07);
+var _by = {};
+_inv.lots.forEach(function(l){ _by[l.sku] = (_by[l.sku] || 0) + l.cases; });
+
+check('ginger Perú = el Floor Count del Sales Desk', _by['OG-GIN-30Lbs-PR'], 3099);
+check('turmeric Fiji = Floor Count',                 _by['OG-TUR-30Lbs-PR-FJ'], 99);
+check('garlic Colossal = Floor Count',               _by['OG-GAR-30lbs-Colossal'], 210);
+check('garlic Super Jumbo = Floor Count',            _by['OG-GAR-30Lbs-SuperJumbo'], 69);
+check('shallots = Floor Count',                      _by['OG-SHA-50Lbs-LG'], 45);
+check('Colossal y Super Jumbo NO se suman entre sí',
+      _by['OG-GAR-30lbs-Colossal'] !== _by['OG-GAR-30Lbs-SuperJumbo'], true);
+check('descarta 5/10/20 lb y empaque', _inv.stats.offSku, 3);
+check('descarta agotados y sobrevendidos', _inv.stats.depleted, 2);
+ok('no cuela ningún SKU que no sea de compra',
+   _inv.lots.every(function(l){ return !!INVM_BUY_SKUS[l.sku]; }));
+
+// El origen sale del SKU, nunca de la columna Origin: ese texto es libre ('USA' vs 'California'
+// vs 'Nevada') y partiría un producto en dos grupos, que es lo que dejó el garlic disponible
+// en 0 el 2026-09-03 — el committed matchea contra un solo origen.
+var _gar = _inv.lots.filter(function(l){ return l.product === 'garlic'; });
+ok('garlic queda en un solo origen aunque la columna Origin diga otra cosa',
+   _gar.length > 0 && _gar.every(function(l){ return l.origin === 'California'; }));
+check('el origen crudo se conserva para poder auditarlo', _gar[0].originRaw, 'Peru');
+
+// Señal de control: el patrón del lote y el vendor de reempaque coinciden hoy en 299/299 filas.
+// Si algún día dejan de coincidir cambió algo en WholesaleWare — se avisa, no se adivina.
+check('sin discrepancias, no hay flags', _inv.flags.length, 0);
+var _mix = invmParseInventoryReport([
+  _invRow('OG-GIN-30Lbs-PR','2523058-0001',JLZM,100,10,100,'2523058')   // lote real, vendor de reempaque
+]);
+check('lote real con vendor de reempaque levanta flag', _mix.flags.length, 1);
+check('…y la flag dice de qué se trata', _mix.flags[0].kind, 'wlot-signal');
+check('…pero igual carga el lote, no lo descarta', _mix.lots.length, 1);
+
+// 5 de ginger + 1 de turmeric + 2 de garlic Colossal. Los W-lots de 5 lb quedaron afuera antes,
+// por SKU: el filtro de SKU corre primero que el conteo de W.
+check('marca los W-lots para que el committed no se descuente dos veces',
+      _inv.lots.filter(function(l){ return l.isW; }).length, 8);
+check('cuenta las cajas que están en W-lots',
+      _inv.stats.wcases, 700 + 144 + 72 + 45 + 6 + 5 + 140 + 70);
+check('no rompe con una lista vacía', invmParseInventoryReport([]).lots.length, 0);
+check('no rompe con null', invmParseInventoryReport(null).lots.length, 0);
+// Con cellDates:true SheetJS devuelve objetos Date, no texto. Antes caía en '' y perdía la fecha
+// de recepción, que alimenta los días de almacenamiento y el FEFO.
+var _d = invmParseInventoryReport([{ 'SKU':'OG-SHA-50Lbs-LG','Lot #':'X','Vendor':'Peri and Sons Farms',
+  'Qty Received (Base UOM)':10,'Qty Sold (Base UOM) for Lot':0,'Qty on Hand (Base UOM)':10,
+  'Received Date': new Date(2026,8,4) }]);
+check('lee una fecha que viene como objeto Date', _d.lots[0].received, '2026-09-04');
+check('una fecha ilegible queda vacía, nunca inventada',
+      invmParseInventoryReport([{ 'SKU':'OG-SHA-50Lbs-LG','Lot #':'X','Vendor':'v',
+        'Qty Received (Base UOM)':10,'Qty Sold (Base UOM) for Lot':0,'Received Date':'n/d' }]).lots[0].received, '');
+
+// ═══ Inventory Report — a qué store va cada lote ════════════════════════════
+// Escribir en el store equivocado NO da error: el producto se queda con el inventario de la
+// semana pasada y nadie se entera hasta que el plan de compra sale mal.
+group('invmInvReportPlan — el plan de escritura');
+var _ORD = [{ id:'o-2523058', jlzPo:'2523058', status:'Arrived' },
+            { id:'o-2674126', jlzPo:'2674126', status:'In Transit' }];
+var _PARSED = invmParseInventoryReport(_INV07);
+var _PREV = {
+  turmeric:{ serviceLevel:95, lots:[ { lot:'2260876-0001', cases:7, excluded:true, origin:'Fiji' },
+                                     { lot:'YA-NO-ESTA',   cases:99, excluded:true, origin:'Fiji' } ] },
+  garlic:{   serviceLevel:95, lots:[ { lot:'2639212-0001', cases:45, origin:'California' } ] },
+  shallots:{ serviceLevel:95, lots:[ { lot:'2667534-0001', cases:44, origin:'California' } ] }
+};
+var _P = invmInvReportPlan(_PARSED, _ORD, { rows:{ 'viejo':{cases:1500} }, sellLb:2.02 }, _PREV);
+var _grp = function(k){ return _P.groups.filter(function(g){ return g.key === k; })[0] || {}; };
+
+check('ginger-Perú va al store por PO, no al product-aware', _grp('ginger|Peru').store, 'bp');
+check('turmeric va al store product-aware',                  _grp('turmeric|Fiji').store, 'prod');
+check('solo carga los POs que existen en Orders', Object.keys(_P.bpRows).length, 2);
+check('…y el resto se avisa, no se pierde en silencio', _P.bpMissing.length, 5);
+check('lo que entra es la suma de los POs que sí matchearon',
+      _grp('ginger|Peru').after, 1152 + 700);
+check('muestra lo que había antes, para poder comparar', _grp('ginger|Peru').before, 1500);
+ok('ningún lote de ginger-Perú se cuela en el store product-aware',
+   !_P.prodLots.ginger || !_P.prodLots.ginger.some(function(l){ return l.origin === 'Peru'; }));
+
+// La marca "excluded" es lo único que el reemplazo total NO puede pisar: el lote sigue vivo en
+// WholesaleWare, así que vuelve en el archivo, y sin la marca vuelve a contar como stock.
+check('preserva la marca "excluded" por número de lote', _P.keptExcluded.join(','), '2260876-0001');
+ok('y la marca queda puesta en el lote que se va a guardar',
+   _P.prodLots.turmeric.some(function(l){ return l.lot === '2260876-0001' && l.excluded === true; }));
+check('avisa el excluido que el almacén ya dio de baja', _P.goneExcluded.join(','), 'YA-NO-ESTA');
+ok('un lote que no estaba excluido no queda marcado',
+   _P.prodLots.turmeric.every(function(l){ return l.lot === '2260876-0001' || !l.excluded; }));
+
+// Reemplazo total: lo que ya no está en el archivo se va. Si no, el stock vendido la semana
+// pasada sigue contando y el plan compra de menos.
+var _P2 = invmInvReportPlan(invmParseInventoryReport([]), _ORD, {rows:{}}, _PREV);
+check('un producto que desaparece del archivo queda en cero, no congelado',
+      (_P2.prodLots.garlic || []).length, 0);
+check('…y el preview lo muestra bajando', _P2.groups.filter(function(g){
+      return g.product === 'garlic'; })[0].after, 0);
+
+// El SKU tiene que llegar al lote guardado o el committed se descuenta de la línea equivocada.
+ok('cada lote guardado lleva su SKU',
+   _P.prodLots.garlic.every(function(l){ return !!l.sku; }));
+check('Colossal y Super Jumbo se muestran desglosados aunque compartan origen',
+      Object.keys(_grp('garlic|California').skus).sort().join(','),
+      'OG-GAR-30Lbs-SuperJumbo,OG-GAR-30lbs-Colossal');
+
+// Un PO ya recibido que sigue "In Transit" se cuenta dos veces: stock + en camino.
+check('detecta el PO recibido que sigue figurando en camino', _P.pipeline.length, 1);
+check('…y dice cuál es', _P.pipeline[0].po, '2674126');
+ok('no marca los que ya están en Arrived',
+   !_P.pipeline.some(function(x){ return x.po === '2523058'; }));
+
+check('no rompe sin órdenes ni stores previos',
+      invmInvReportPlan(_PARSED, null, null, null).groups.length > 0, true);
+
 summary();

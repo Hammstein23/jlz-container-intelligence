@@ -5622,7 +5622,10 @@ function authInjectLogo() {
 .ipv-formula b{color:var(--jlz)}
 </style>
 <div class="invm-wrap">
-  <div class="invm-head"><h2>Inventory Management</h2><span class="invm-sub" id="invm-subline">ginger</span></div>
+  <div class="invm-head"><h2>Inventory Management</h2><span class="invm-sub" id="invm-subline">ginger</span>
+    <button onclick="invrOpen()" title="Load physical stock from the WholesaleWare Inventory Report" style="margin-left:auto;height:30px;padding:0 14px;border:1px solid var(--jlz);border-radius:var(--r);font-size:12px;font-family:var(--fb);font-weight:600;color:var(--white);background:var(--jlz);cursor:pointer">Import Inventory Report</button>
+    <input type="file" id="invr-file" accept=".xlsx,.xls" style="display:none" onchange="invrPickFile(this)">
+  </div>
   <div class="invm-prodbar" id="invm-prodbar">
     <button class="invm-ptab on" id="invm-pt-ginger"   onclick="invmSetProduct('ginger')">Ginger</button>
     <button class="invm-ptab"    id="invm-pt-turmeric" onclick="invmSetProduct('turmeric')">Turmeric</button>
@@ -5645,6 +5648,26 @@ function authInjectLogo() {
     <div class="invm-grp" style="margin-left:auto;font-size:10px;color:var(--gray-400);font-family:var(--fm,monospace)"><span id="invm-rateLbl"></span></div>
   </div>
   <div id="invm-content"></div>
+</div>
+
+<!-- Import Inventory Report: sube el XLS de WholesaleWare, muestra exactamente que va a cambiar,
+     y recien ahi escribe. Reemplaza los snippets de consola de la rutina de los lunes. -->
+<div id="invr-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.3);z-index:400;align-items:flex-start;justify-content:center;padding:40px 20px;overflow-y:auto">
+  <div style="background:var(--white);border-radius:8px;box-shadow:0 12px 32px rgba(0,0,0,.18);width:100%;max-width:880px;font-family:var(--fb)">
+    <div style="padding:18px 22px;border-bottom:1px solid var(--gray-200);display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div style="font-size:16px;font-weight:700;color:var(--gray-800)">Import Inventory Report</div>
+        <div style="font-size:11px;color:var(--gray-500);margin-top:2px">WholesaleWare &rarr; Reports &rarr; Inventory Report, exported as Excel</div>
+      </div>
+      <button onclick="invrClose()" style="border:none;background:none;cursor:pointer;color:var(--gray-400);font-size:20px;padding:4px 10px;line-height:1">&#10005;</button>
+    </div>
+    <div id="invr-body" style="padding:20px 22px"></div>
+    <div style="padding:14px 22px;border-top:1px solid var(--gray-200);display:flex;align-items:center;gap:10px;background:var(--gray-50)">
+      <span id="invr-note" style="color:var(--gray-500);font-size:11px;margin-right:auto"></span>
+      <button onclick="invrClose()" style="height:32px;padding:0 16px;border:1px solid var(--gray-200);border-radius:var(--r);font-size:12px;font-family:var(--fb);font-weight:600;color:var(--gray-700);background:var(--white);cursor:pointer">Cancel</button>
+      <button id="invr-confirm" onclick="invrConfirm()" disabled style="height:32px;padding:0 16px;border:1px solid var(--gray-300);border-radius:var(--r);font-size:12px;font-family:var(--fb);font-weight:600;color:var(--white);background:var(--gray-300);cursor:not-allowed">Confirm import</button>
+    </div>
+  </div>
 </div>
 </div>
 
@@ -15108,6 +15131,344 @@ function prodInvSeed(){ return {
 function prodInvState(){ try{ var o=JSON.parse(localStorage.getItem(PROD_INV_LS)||'null'); if(o&&typeof o==='object') return o; }catch(e){} var s=prodInvSeed(); try{ localStorage.setItem(PROD_INV_LS, JSON.stringify(s)); }catch(e){} return s; }
 function prodInvSave(st){ try{ if(st) st._savedAt = (typeof bpTodayISO==='function')?bpTodayISO():null; localStorage.setItem(PROD_INV_LS, JSON.stringify(st)); }catch(e){} }
 function prodInvFor(p){ var st=prodInvState(); if(!st[p]) st[p]={serviceLevel:95,demandOverride:null,lots:[]}; return st[p]; }
+
+// ── Inventory Report (XLS de WholesaleWare) -> fisico por lote ────────────────────────────────
+// El fisico de un lote NO es la columna `Qty on Hand`: en unos lotes trae el bruto recibido y en
+// otros el neto, segun cuando se movio. La regla real son DOS, porque `Sold` significa dos cosas:
+//   - lote normal -> `Sold` es un despacho real (la caja se fue)  -> fisico = Received - Sold
+//   - W-lot       -> `Sold` es la venta INTERNA a JLZ Produce Manufacturing al reempacar: la caja
+//                    NO se fue, solo cambio de presentacion       -> fisico = Qty on Hand
+// Verificado el 2026-09-08 contra el Sales Desk: 21 de 21 lotes dan exacto, W-lots incluidos.
+// El total es el BRUTO que el Buy Planner espera (stockCasesGross = stockCases): incluye las cajas
+// reservadas, y el committed las netea UNA sola vez. Cargar el neto las resta dos veces — fue el
+// bug que dejo el ginger en 1.165 cuando eran 2.250.
+var INVM_BUY_SKUS = {
+  'OG-GIN-30Lbs-PR':        { product:'ginger',   origin:'Peru'       },
+  'OG-GIN-30Lbs-PR-HI':     { product:'ginger',   origin:'Hawaii'     },
+  'OG-TUR-30Lbs-PR-FJ':     { product:'turmeric', origin:'Fiji'       },
+  'OG-TUR-30Lbs-PR-HI':     { product:'turmeric', origin:'Hawaii'     },
+  'OG-GAR-30lbs-Colossal':  { product:'garlic',   origin:'California' },
+  'OG-GAR-30Lbs-SuperJumbo':{ product:'garlic',   origin:'California' },
+  'OG-SHA-50Lbs-LG':        { product:'shallots', origin:'California' }
+};
+// La definicion de W-lot es el patron del numero de lote. El vendor de reempaque es una segunda
+// senal que hoy coincide 100% (299 filas, 0 discrepancias) y se usa solo como CONTROL: si algun
+// dia dejan de coincidir, cambio algo en WholesaleWare y se avisa en el preview en vez de adivinar.
+function invmIsWLot(lot){ return /^W\d/i.test(String(lot == null ? '' : lot)); }
+function invmInvReportPhysical(recv, sold, onHand, isW){
+  return isW ? Math.max(0, onHand) : Math.max(0, recv - sold);
+}
+function invmParseInventoryReport(rows){
+  var num = function(v){ var n = parseFloat(String(v == null ? '' : v).replace(/,/g, '')); return isFinite(n) ? n : 0; };
+  var str = function(v){ return String(v == null ? '' : v).trim(); };
+  // Tres formas posibles segun como se leyo el libro: objeto Date (cellDates:true), serial de
+  // Excel, o texto MM/DD/YYYY. Nunca inventamos una fecha: si no se puede leer, va vacia.
+  var iso = function(v){
+    if(v instanceof Date && isFinite(v.getTime())){
+      return v.getFullYear() + '-' + ('0'+(v.getMonth()+1)).slice(-2) + '-' + ('0'+v.getDate()).slice(-2);
+    }
+    var s = str(v); if(!s) return '';
+    if(/^\d+(\.\d+)?$/.test(s) && typeof dmcExcelDate === 'function') s = dmcExcelDate(s);
+    return (typeof ooDateToISO === 'function') ? ooDateToISO(s) : '';
+  };
+  var out = { lots: [], flags: [], stats: { total: 0, kept: 0, offSku: 0, depleted: 0, wlots: 0, wcases: 0 } };
+  (rows || []).forEach(function(r){
+    out.stats.total++;
+    var sku = str(r['SKU']), meta = INVM_BUY_SKUS[sku];
+    if(!meta){ out.stats.offSku++; return; }              // 5/10/20 lb, empaque, vLot, otros productos
+    var lot = str(r['Lot #']), vendor = str(r['Vendor']), isW = invmIsWLot(lot);
+    if(isW !== /JLZ\s*Produce\s*Manufactur/i.test(vendor)) {
+      out.flags.push({ kind:'wlot-signal', lot: lot, detail: 'lote "' + lot + '" vs vendor "' + vendor + '"' });
+    }
+    var cases = invmInvReportPhysical(num(r['Qty Received (Base UOM)']), num(r['Qty Sold (Base UOM) for Lot']),
+                                      num(r['Qty on Hand (Base UOM)']), isW);
+    if(isW){ out.stats.wlots++; out.stats.wcases += cases; }
+    if(cases <= 0){ out.stats.depleted++; return; }        // lote agotado o ajuste negativo: no es stock
+    out.stats.kept++;
+    // El origen sale del SKU, no de la columna Origin. La columna trae texto libre que varia por lote
+    // ('USA' vs 'California', 'Nevada'...) y partiria un producto en dos grupos de origen — que es
+    // justo lo que dejo el garlic disponible en 0 el 2026-09-03: el committed matchea un origen solo.
+    out.lots.push({ product: meta.product, origin: meta.origin, sku: sku, lot: lot, po: str(r['PO #']),
+                    supplier: vendor, cases: Math.round(cases), avgCost: num(r['Product Cost Per Unit (Base UOM)']),
+                    received: iso(r['Received Date']), isW: isW, originRaw: str(r['Origin']) });
+  });
+  return out;
+}
+
+// El inventario vive en DOS stores y el importer tiene que escribir en el que corresponde:
+// ginger-Peru va por PO a `jlz_bp_inv_v2`; los otros cuatro por lote a `jlz_prod_inv_v1`.
+// Escribir en el equivocado NO da error: el producto se queda con el inventario de la semana pasada.
+function invmInvReportIsBpLot(l){ return l && l.product === 'ginger' && l.origin === 'Peru'; }
+
+// Del parseo al plan de escritura. PURA a proposito: el preview muestra este objeto y el confirmar
+// solo lo aplica, asi que lo que Juan ve es literalmente lo que se va a guardar.
+function invmInvReportPlan(parsed, orders, bpSt, prodSt){
+  var plan = { groups: [], bpRows: {}, bpMissing: [], prodLots: {}, keptExcluded: [], goneExcluded: [],
+               pipeline: [], flags: (parsed && parsed.flags) || [], stats: (parsed && parsed.stats) || {} };
+  var lots = (parsed && parsed.lots) || [];
+  orders = orders || []; bpSt = bpSt || {}; prodSt = prodSt || {};
+
+  // ── ginger-Peru: por PO, porque el lote fisico no es la llave de ese store ────────────────
+  var byPo = {};
+  lots.filter(invmInvReportIsBpLot).forEach(function(l){
+    var po = String(l.po || '');
+    if(!byPo[po]) byPo[po] = { po: po, cases: 0, lots: [] };
+    byPo[po].cases += l.cases; byPo[po].lots.push(l);          // varios lotes pueden colgar de un PO
+  });
+  var bpBefore = 0, rowsPrev = bpSt.rows || {};
+  Object.keys(rowsPrev).forEach(function(k){ bpBefore += (+((rowsPrev[k] || {}).cases) || 0); });
+  var bpAfter = 0, bpLots = 0, bpW = 0, bpWc = 0, bpSkus = {};
+  Object.keys(byPo).forEach(function(po){
+    var d = byPo[po];
+    var o = orders.filter(function(x){ return String(x.jlzPo || '') === po || String(x.id || '') === po; })[0];
+    if(!o){ plan.bpMissing.push({ po: po, cases: d.cases }); return; }   // sin orden no hay lote posible
+    plan.bpRows[bpCcId(o)] = { cases: d.cases };
+    bpAfter += d.cases; bpLots++;
+    d.lots.forEach(function(l){ if(l.isW){ bpW++; bpWc += l.cases; }
+                                if(l.sku) bpSkus[l.sku] = (bpSkus[l.sku] || 0) + l.cases; });
+  });
+  plan.groups.push({ key:'ginger|Peru', product:'ginger', origin:'Peru', store:'bp',
+                     before: Math.round(bpBefore), after: bpAfter, lots: bpLots, wlots: bpW,
+                     wcases: bpWc, skus: bpSkus });
+
+  // ── los otros cuatro: por lote, reemplazo total ───────────────────────────────────────────
+  var rest = lots.filter(function(l){ return !invmInvReportIsBpLot(l); });
+  var prods = {};
+  rest.forEach(function(l){ (prods[l.product] = prods[l.product] || []).push(l); });
+  // Un producto que ya tiene lotes cargados y NO aparece en el archivo tiene que quedar en cero,
+  // no conservar lo de la semana pasada: el reemplazo total es lo que saca lo que ya se vendio.
+  Object.keys(prodSt).forEach(function(p){
+    if(!prods[p] && prodSt[p] && (prodSt[p].lots || []).length) prods[p] = [];
+  });
+  Object.keys(prods).sort().forEach(function(p){
+    var prev = (prodSt[p] && prodSt[p].lots) || [];
+    var prevBy = {}, wasExcl = {};
+    prev.forEach(function(l){ if(!l) return; prevBy[String(l.lot)] = l; if(l.excluded) wasExcl[String(l.lot)] = 1; });
+    var out = prods[p].map(function(l){
+      var pv = prevBy[String(l.lot)] || {};
+      var row = { lot: l.lot, origin: l.origin, supplier: l.supplier, cases: l.cases,
+                  avgCost: l.avgCost || (+pv.avgCost || 0), received: l.received || pv.received || '',
+                  sku: l.sku };
+      // "excluded" = vive en WholesaleWare pero ya no esta fisicamente. El reemplazo total pisaria
+      // la marca y el lote volveria a contar como stock, que es justo lo que no queremos.
+      if(wasExcl[String(l.lot)]){ row.excluded = true; plan.keptExcluded.push(l.lot); }
+      return row;
+    });
+    Object.keys(wasExcl).forEach(function(k){
+      if(!out.some(function(l){ return String(l.lot) === k; })) plan.goneExcluded.push(k);
+    });
+    plan.prodLots[p] = out;
+    // Un mismo producto puede traer varios origenes (turmeric Fiji + Hawaii): una fila por origen.
+    var byOrig = {};
+    out.forEach(function(l){ var o = l.origin || '—';
+      if(!byOrig[o]) byOrig[o] = { after:0, lots:0, wlots:0, wcases:0, skus:{} };
+      byOrig[o].after += l.cases; byOrig[o].lots++;
+      // Desglose por SKU: Colossal y Super Jumbo comparten producto, origen y pack de 30 lb, pero
+      // son lineas distintas. Mostrarlas sumadas esconde justo el error que puso el garlic
+      // disponible en 0 el 2026-09-03 — el committed de una se descontaba del stock de la otra.
+      if(l.sku) byOrig[o].skus[l.sku] = (byOrig[o].skus[l.sku] || 0) + l.cases; });
+    prods[p].forEach(function(l){ var g = byOrig[l.origin || '—']; if(g && l.isW){ g.wlots++; g.wcases += l.cases; } });
+    var prevByOrig = {};
+    prev.forEach(function(l){ if(l) prevByOrig[l.origin || '—'] = (prevByOrig[l.origin || '—'] || 0) + (+l.cases || 0); });
+    Object.keys(prevByOrig).forEach(function(o){ if(!byOrig[o]) byOrig[o] = { after:0, lots:0, wlots:0, wcases:0 }; });
+    Object.keys(byOrig).sort().forEach(function(o){
+      plan.groups.push({ key: p+'|'+o, product: p, origin: o, store:'prod',
+                         before: Math.round(prevByOrig[o] || 0), after: byOrig[o].after,
+                         lots: byOrig[o].lots, wlots: byOrig[o].wlots, wcases: byOrig[o].wcases,
+                         skus: byOrig[o].skus || {} });
+    });
+  });
+
+  // ── reconciliacion pipeline ↔ inventario ─────────────────────────────────────────────────
+  // Un PO que ya llego (esta en el archivo con lote fisico) pero sigue "Contracted"/"In Transit"
+  // se cuenta DOS veces: como stock y como mercaderia en camino. Infla la cobertura del Buy
+  // Planner y del Simulator, igual que el doble descuento del committed pero al reves.
+  var seenPo = {};
+  lots.forEach(function(l){
+    var po = String(l.po || ''); if(!po || seenPo[po]) return; seenPo[po] = 1;
+    var o = orders.filter(function(x){ return String(x.jlzPo || '') === po || String(x.id || '') === po; })[0];
+    if(o && (o.status === 'Contracted' || o.status === 'In Transit')){
+      plan.pipeline.push({ po: po, status: o.status, product: l.product, cases: l.cases });
+    }
+  });
+  return plan;
+}
+
+// ============ IMPORT INVENTORY REPORT — UI ============
+// Reemplaza los cinco snippets de consola de la rutina de los lunes. El preview muestra el plan
+// entero ANTES de escribir: nada se guarda hasta que Juan aprieta Confirm.
+var INVR = { plan: null, fileName: '' };
+
+function invrOpen(){
+  INVR = { plan: null, fileName: '' };
+  var m = invmEl('invr-modal'); if(!m) return;
+  invrSetBody('<div style="border:1px dashed var(--gray-300);border-radius:8px;padding:26px;text-align:center;background:var(--gray-50)">'
+    + '<div style="font-size:13px;color:var(--gray-700);font-weight:600;margin-bottom:6px">Choose the Inventory Report file</div>'
+    + '<div style="font-size:11px;color:var(--gray-500);line-height:1.6;margin-bottom:14px">Physical stock for all five product lines is read from this one file.<br>'
+    + 'Nothing is saved until you review the preview and confirm.</div>'
+    + '<button onclick="invmEl(\'invr-file\').click()" style="height:32px;padding:0 18px;border:1px solid var(--jlz);border-radius:var(--r);font-size:12px;font-family:var(--fb);font-weight:600;color:var(--white);background:var(--jlz);cursor:pointer">Choose file&hellip;</button>'
+    + '</div>');
+  invrNote(''); invrEnable(false);
+  m.style.display = 'flex';
+}
+function invrClose(){ var m = invmEl('invr-modal'); if(m) m.style.display = 'none'; INVR = { plan:null, fileName:'' }; }
+function invrSetBody(h){ var b = invmEl('invr-body'); if(b) b.innerHTML = h; }
+function invrNote(t){ var n = invmEl('invr-note'); if(n) n.textContent = t; }
+function invrEnable(on){
+  var b = invmEl('invr-confirm'); if(!b) return;
+  b.disabled = !on;
+  b.style.background = on ? 'var(--jlz)' : 'var(--gray-300)';
+  b.style.borderColor = on ? 'var(--jlz)' : 'var(--gray-300)';
+  b.style.cursor = on ? 'pointer' : 'not-allowed';
+}
+
+function invrPickFile(input){
+  var f = input && input.files && input.files[0]; if(!f) return;
+  INVR.fileName = f.name;
+  input.value = '';                                        // permite re-elegir el mismo archivo
+  invrSetBody('<div style="padding:24px;text-align:center;color:var(--gray-500);font-size:12px">Reading ' + libEsc(f.name) + '&hellip;</div>');
+  var reader = new FileReader();
+  reader.onload = function(e){
+    try{
+      var wb = XLSX.read(e.target.result, { type:'array', cellDates:true });
+      var ws = wb.Sheets[wb.SheetNames[0]];
+      var rows = XLSX.utils.sheet_to_json(ws, { defval:'' });
+      if(!rows.length){ invrFail('That sheet is empty.'); return; }
+      if(!rows[0].hasOwnProperty('Qty Received (Base UOM)') || !rows[0].hasOwnProperty('Lot #')){
+        invrFail('This does not look like the Inventory Report — the columns "Lot #" and "Qty Received (Base UOM)" are missing. '
+               + 'In WholesaleWare go to Reports &rarr; Inventory Report and export to Excel.');
+        return;
+      }
+      var parsed = invmParseInventoryReport(rows);
+      if(!parsed.lots.length){ invrFail('No lots of the five purchased product lines were found in this file.'); return; }
+      INVR.plan = invmInvReportPlan(parsed, (typeof getOrders === 'function' ? getOrders() : []),
+                                    bpInvState(), prodInvState());
+      invrRenderPreview();
+    }catch(err){ invrFail('Could not read the file: ' + libEsc(err.message)); }
+  };
+  reader.onerror = function(){ invrFail('Could not read the file.'); };
+  reader.readAsArrayBuffer(f);
+}
+function invrFail(msg){
+  invrSetBody('<div style="background:#fef2f1;border:1px solid #fecaca;color:#b42318;border-radius:8px;padding:14px 16px;font-size:12.5px;line-height:1.55">' + msg + '</div>'
+    + '<div style="margin-top:12px"><button onclick="invrOpen()" style="height:30px;padding:0 14px;border:1px solid var(--gray-200);border-radius:var(--r);font-size:12px;font-family:var(--fb);font-weight:600;color:var(--gray-700);background:var(--white);cursor:pointer">Choose another file</button></div>');
+  invrNote(''); invrEnable(false);
+}
+
+function invrRenderPreview(){
+  var p = INVR.plan; if(!p) return;
+  var chip = function(t){ return '<span style="font-family:var(--fm,monospace);font-size:10.5px;background:var(--gray-100);color:var(--gray-600);padding:3px 8px;border-radius:5px">' + t + '</span>'; };
+  var h = '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px;font-size:12px;color:var(--gray-600)">'
+        + '<span style="font-family:var(--fm,monospace);color:var(--jlz);font-weight:500">' + libEsc(INVR.fileName) + '</span>'
+        + chip('real lot &rarr; received &minus; sold') + chip('W-lot &rarr; qty on hand')
+        + chip(p.stats.kept + ' lots &middot; ' + p.stats.offSku + ' rows off-SKU') + '</div>';
+
+  h += '<div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">What will be loaded &middot; gross cases on the floor</div>';
+  h += '<table style="width:100%;border-collapse:collapse;margin-bottom:4px">'
+     + '<thead><tr>'
+     + '<th style="text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-400);padding:0 8px 7px;border-bottom:1px solid var(--gray-200)">Product</th>'
+     + '<th style="text-align:right;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-400);padding:0 8px 7px;border-bottom:1px solid var(--gray-200)">Now</th>'
+     + '<th style="text-align:right;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-400);padding:0 8px 7px;border-bottom:1px solid var(--gray-200)">After</th>'
+     + '<th style="text-align:right;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-400);padding:0 8px 7px;border-bottom:1px solid var(--gray-200)">Lots</th>'
+     + '<th style="text-align:right;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-400);padding:0 8px 7px;border-bottom:1px solid var(--gray-200);white-space:nowrap">W-lots</th>'
+     + '</tr></thead><tbody>';
+  p.groups.forEach(function(g){
+    var d = g.after - g.before;
+    var dTxt = d === 0 ? '<span style="color:var(--gray-400)">no change</span>'
+             : '<span style="color:' + (d > 0 ? '#047857' : '#b45309') + '">' + (d > 0 ? '+' : '') + invmF(d) + '</span>';
+    var skus = Object.keys(g.skus || {});
+    h += '<tr>'
+       + '<td style="padding:8px;border-bottom:1px solid var(--gray-100);font-size:12.5px;font-weight:500;color:var(--gray-800)">'
+       +   libEsc((typeof PRODUCTS === 'object' && PRODUCTS[g.product] && PRODUCTS[g.product].label) || g.product)
+       +   ' <span style="color:var(--gray-400);font-weight:400;font-size:11px">&middot; ' + libEsc(g.origin) + '</span>'
+       +   (skus.length > 1 ? '<div style="font-family:var(--fm,monospace);font-size:10px;color:var(--gray-400);margin-top:3px;line-height:1.6">'
+              + skus.sort().map(function(s){ return '<span style="white-space:nowrap">' + libEsc(s) + ' ' + invmF(g.skus[s]) + '</span>'; }).join('&nbsp; &middot; ') + '</div>' : '')
+       + '</td>'
+       + '<td style="padding:8px;border-bottom:1px solid var(--gray-100);text-align:right;font-family:var(--fm,monospace);font-size:12px;color:var(--gray-400)">' + invmF(g.before) + '</td>'
+       + '<td style="padding:8px;border-bottom:1px solid var(--gray-100);text-align:right;font-family:var(--fm,monospace);font-size:14px;font-weight:600;color:var(--gray-900)">' + invmF(g.after)
+       +   '<div style="font-size:10px;font-weight:400;margin-top:2px">' + dTxt + '</div></td>'
+       + '<td style="padding:8px;border-bottom:1px solid var(--gray-100);text-align:right;font-family:var(--fm,monospace);font-size:12px;color:var(--gray-600)">' + g.lots + '</td>'
+       + '<td style="padding:8px;border-bottom:1px solid var(--gray-100);text-align:right;font-family:var(--fm,monospace);font-size:11px;color:var(--gray-500);white-space:nowrap">'
+       +   (g.wlots ? g.wlots + ' &middot; ' + invmF(g.wcases) + ' cs' : '&mdash;') + '</td>'
+       + '</tr>';
+  });
+  h += '</tbody></table>';
+
+  // ── avisos ────────────────────────────────────────────────────────────────────────────────
+  var fl = [];
+  var box = function(tone, icon, title, body){
+    var c = tone === 'warn' ? ['#fff6e6','#f2dfb8','#5c3b00'] : ['#eef5fb','#cfe0f2','#1e3a5f'];
+    return '<div style="display:flex;gap:10px;padding:11px 13px;border-radius:9px;margin-bottom:8px;font-size:12.5px;line-height:1.5;background:' + c[0] + ';border:1px solid ' + c[1] + ';color:' + c[2] + '">'
+         + '<span style="flex:none">' + icon + '</span><div><b>' + title + '</b> ' + body + '</div></div>';
+  };
+  // Si el archivo trae ginger-Peru pero NINGUN PO matchea con Orders, confirmar dejaria el ginger
+  // en cero. Eso no es un aviso, es un freno: el plan de compra entero cuelga de ese numero.
+  var blocked = p.bpMissing.length > 0 && !Object.keys(p.bpRows).length;
+  if(blocked){
+    fl.push(box('warn','&#128721;','None of the ginger POs in this file exist in Orders.',
+      'Importing now would drop ginger-Peru to zero. Load these POs in the Orders tab first: '
+      + p.bpMissing.map(function(m){ return '<span style="font-family:var(--fm,monospace)">' + libEsc(m.po) + '</span>'; }).join(', ') + '.'));
+  }
+  if(p.bpMissing.length && !blocked){
+    fl.push(box('warn','&#9888;&#65039;','These POs are not in Orders, so they will NOT load.',
+      p.bpMissing.map(function(m){ return '<span style="font-family:var(--fm,monospace)">' + libEsc(m.po) + '</span> (' + invmF(m.cases) + ' cs)'; }).join(', ')
+      + ' &mdash; add them in the Orders tab and import again, or that stock stays invisible to the buy plan.'));
+  }
+  if(p.pipeline.length){
+    fl.push(box('warn','&#8596;&#65038;','Received but still marked as on the way.',
+      p.pipeline.map(function(x){ return '<span style="font-family:var(--fm,monospace)">' + libEsc(x.po) + '</span> (' + libEsc(x.status) + ')'; }).join(', ')
+      + ' &mdash; these POs already have physical lots here, so counting them as incoming too inflates coverage in the Buy Planner and the Simulator. Set them to <b>Arrived</b> in Orders.'));
+  }
+  if(p.flags.length){
+    fl.push(box('warn','&#9888;&#65039;','Lot numbering and repack vendor disagree.',
+      p.flags.slice(0,4).map(function(f){ return libEsc(f.detail); }).join(' &middot; ')
+      + (p.flags.length > 4 ? ' &hellip; and ' + (p.flags.length - 4) + ' more' : '')
+      + ' &mdash; something changed in WholesaleWare. The lots still load; worth a look.'));
+  }
+  if(p.goneExcluded.length){
+    fl.push(box('info','&#128465;&#65039;','Excluded lots the warehouse has now written off.',
+      p.goneExcluded.map(function(l){ return '<span style="font-family:var(--fm,monospace)">' + libEsc(l) + '</span>'; }).join(', ')
+      + ' &mdash; gone from the report, so they drop out on their own.'));
+  }
+  var wTot = p.groups.reduce(function(s,g){ return s + (g.wcases || 0); }, 0);
+  if(wTot){
+    fl.push(box('info','&#128257;','W-lots are counted, not skipped.',
+      invmF(wTot) + ' cases sit in repack placeholder lots. They are real cases on the floor, so they load as gross '
+      + 'and the committed nets them off once &mdash; loading net would subtract the same reservation twice.'));
+  }
+  if(p.keptExcluded.length){
+    fl.push(box('info','&#128204;','Kept your "excluded" marks.',
+      p.keptExcluded.map(function(l){ return '<span style="font-family:var(--fm,monospace)">' + libEsc(l) + '</span>'; }).join(', ')
+      + ' &mdash; still listed in WholesaleWare, so they would otherwise come back as stock.'));
+  }
+  if(fl.length){
+    h += '<div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.05em;margin:16px 0 8px">Review before confirming</div>' + fl.join('');
+  }
+  h += '<div style="font-size:11px;color:var(--gray-400);line-height:1.6;margin-top:12px">'
+     + 'This is a full replacement: any lot not in the file is dropped. The Sales Desk is a live screen and this file is a snapshot, '
+     + 'so the two only agree when exported at the same moment &mdash; small gaps there are sales, not errors.</div>';
+
+  invrSetBody(h);
+  invrNote(blocked ? 'Blocked — fix the POs in Orders, then import again.' : 'Nothing is saved until you confirm.');
+  invrEnable(!blocked);
+}
+
+function invrConfirm(){
+  var p = INVR.plan; if(!p){ invrClose(); return; }
+  var st = bpInvState(); st.rows = p.bpRows; bpInvSave(st);          // reemplazo total, preserva sellLb/rates
+  var ps = prodInvState();
+  Object.keys(p.prodLots).forEach(function(prod){
+    if(!ps[prod]) ps[prod] = { serviceLevel:95, demandOverride:null, lots:[] };
+    ps[prod].lots = p.prodLots[prod];
+  });
+  prodInvSave(ps);
+  var tot = p.groups.reduce(function(s,g){ return s + g.after; }, 0);
+  invrClose();
+  if(typeof invmReRender === 'function') invmReRender(); else if(typeof renderInventory === 'function') renderInventory();
+  try{ if(typeof dmRebuildView === 'function') dmRebuildView(); }catch(e){}
+  alert('Inventory loaded: ' + invmF(tot) + ' cases across ' + p.groups.length + ' product lines.'
+      + (p.bpMissing.length ? '\n\n' + p.bpMissing.length + ' PO(s) did not load — they are not in Orders.' : ''));
+}
 // ── DIRECT-SHIP / MADE-TO-ORDER accounts ──────────────────────────────────────
 // An account whose PO is placed with the supplier only once the customer confirms,
 // and shipped straight from the supplier's warehouse — JLZ never holds the stock,

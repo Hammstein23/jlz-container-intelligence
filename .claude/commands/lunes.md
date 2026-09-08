@@ -112,28 +112,74 @@ resolverla, porque mueve el plan de compra entero.
 
 ## Paso 3 — Inventario físico de los 4 productos
 
-Fuente: **WholesaleWare → Sales Desk**, con la data hasta ayer (domingo).
+Fuente: el **Inventory Report** (XLS) que baja Michael, del **mismo día** que los otros dos reportes.
+El **Sales Desk** queda de cross-check: si no cuadra, se anota la discrepancia. (Así se cazó el lote
+de turmeric que faltaba el 2026-09-07 — recibido el sábado, sin digitar por el feriado.)
+
+### La fórmula — probada lote por lote
+
+El físico de un lote **no** es la columna `Qty on Hand`. Esa columna engaña: en unos lotes es bruta
+y en otros neta. Es:
+
+> **`físico = si el lote es W-lot → Qty on Hand ; si no → max(0, Qty Received − Qty Sold for Lot)`**
+
+Verificado el 2026-09-08 contra el Sales Desk: **21 de 21 lotes dan exacto**, W-lots incluidos.
+
+Son dos reglas porque `Sold` significa dos cosas: en un lote normal es un **despacho real** (la caja
+se fue), así que el físico es recibido menos vendido. En un W-lot es la **venta interna a JLZ Produce
+Manufacturing** al reempacar — la caja **no se fue**, solo cambió de presentación — así que sigue
+contando por `Qty on Hand`.
+
+### El camino normal: el importer de la app
+
+**Inventory → botón `Import Inventory Report` → elegís el XLS → Confirm.** Eso es todo: los cinco
+productos entran de una, en los dos stores que corresponden, con la fórmula de arriba aplicada por
+código. No hay que tipear cajas ni pegar snippets — que era de donde salían los errores.
+
+Antes de escribir nada muestra un preview con **antes → después** por producto y los avisos que
+importan:
+
+| Aviso | Qué significa |
+|---|---|
+| **POs que no están en Orders** | ese stock no se puede cargar (la llave de ginger-Perú es el PO). Cargalos en Orders y reimportá. |
+| **Recibido pero aún "en camino"** | el PO ya tiene lote físico y sigue `Contracted`/`In Transit`: se cuenta **dos veces** (stock + incoming) e infla la cobertura del Buy Planner y del Simulator. Pasalo a `Arrived`. |
+| **Marcas "excluded" preservadas** | el reemplazo total no las pisa; si las pisara, el lote volvería a contar como stock. |
+| **Excluidos que ya no están** | el almacén los dio de baja, se van solos. |
+| **Lote y vendor no coinciden** | cambió algo en WholesaleWare; el lote igual carga, pero miralo. |
+
+Si **ningún** PO de ginger matchea con Orders, el importer **bloquea** el Confirm en vez de avisar:
+confirmar ahí dejaría el ginger en cero y de ese número cuelga el plan de compra entero.
+
+> **El desglose por SKU no es decorativo.** Colossal y Super Jumbo comparten producto, origen y pack
+> de 30 lb, pero son líneas distintas: el preview las muestra separadas porque confundirlas puso el
+> garlic disponible en 0 el 2026-09-03.
+
+Los snippets de consola de más abajo quedan como **plan B** — si el XLS viene raro o hay que forzar
+un número a mano. El importer es el camino por defecto.
 
 ### Qué se carga y qué no
-
-**Ojo con la convención, que es distinta según el store** (ver la regla 2 arriba):
 
 **Los cinco igual: cargá las cajas BRUTAS**, todas las físicas incluidas las reservadas.
 La app resta el committed en cada caso, así que las reservadas se cuentan **una sola vez**.
 
 Cargar el libre **hunde** el stock: las reservadas se descontarían dos veces y el plan pediría
-comprar de más.
+comprar de más. *(Pasó el 2026-09-08: se cargó el neto — 2 132, sin W-lots — en una app que espera
+bruto, y el ginger libre salió **1 165 en vez de 2 250**.)*
 
 Excluir siempre:
-- **River Road Organics** (ginger) — ese producto no va al inventario.
 - **vLot** — lotes virtuales, no son producto.
-- Las presentaciones **5 y 10 lb**: son producto trabajado, no la compra. La compra real es
+- Las presentaciones **5, 10 y 20 lb**: son producto trabajado, no la compra. La compra real es
   **30 lb** (ginger, turmeric, garlic) y **50 lb** (shallots, en saco).
 
-**Los W-lots (`W2881A...`) son el caso delicado.** Son lotes fantasma que el almacén crea para no
-recibir antes de tiempo, y representan **las mismas cajas** que las órdenes committed. La regla:
-esas cajas se cuentan **una sola vez**. Como el Paso 2 ya las trae por el lado del committed, no
-las agregues además como lote. El chequeo del Paso 3b lo confirma con números.
+**Los W-lots (`W2881A...`) SÍ se cargan.** Hasta el 2026-09-08 este runbook decía lo contrario, y
+**estaba mal** — era la causa del ginger subcontado. Son las cajas que ya reempacaste (marca River
+Road, vendedor **JLZ Produce Manufacturing**): siguen **físicamente en cámara**, solo cambiaron de
+presentación. Son justamente "las reservadas" que hacen que el número sea BRUTO. El committed las
+netea **una sola vez**, que es exactamente lo que espera el Buy Planner (`stockCasesGross = stockCases`,
+línea ~16697).
+
+Identificarlos es seguro porque hay **dos señales que siempre coinciden**: el lote matchea `/^W\d/`
+**y** el Vendor es `JLZ Produce Manufacturing`. Verificado en 155 lotes de dos exports: 100%.
 
 **Fechas de recepción:** WholesaleWare → Purchase Orders (scheduled delivery date). Alimentan los
 días de almacenamiento y el FEFO. **Nunca las inventes** — una fecha inventada mueve la merma
@@ -149,12 +195,12 @@ estimada. Si no la encontrás, decilo y dejala vacía.
 Usar el snippet equivocado **no da error**: escribe en el store que no es y el producto se queda
 con el inventario de la semana pasada.
 
-### Snippet A — solo ginger-Perú (por PO, cajas BRUTAS)
+### Plan B · Snippet A — solo ginger-Perú (por PO, cajas BRUTAS)
 
 ```javascript
 (function(){
   var LOTS = [
-    // {po:'2410367', cases:404}, {po:'2432242', cases:476},   ← Sales Desk BRUTO, sin River Road
+    // {po:'2410367', cases:404}, {po:'2432242', cases:476},   ← BRUTO por PO, W-lots INCLUIDOS
   ];
   var orders = (typeof getOrders==='function' ? getOrders() : []);
   var st = bpInvState(), rows = {}, matched = [], missing = [];
@@ -175,7 +221,7 @@ con el inventario de la semana pasada.
 Un PO que no esté en **Orders** no se puede cargar como lot. Si aparece en `missing`, cargalo en
 Orders y volvé a correr.
 
-### Snippet B — los otros cuatro
+### Plan B · Snippet B — los otros cuatro
 
 ```javascript
 (function(){

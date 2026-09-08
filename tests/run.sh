@@ -45,12 +45,24 @@ echo "══ Modelo de demanda ════════════════�
 python3 "$DIR/extract.py" "$HTML" "$TMP/app.js" \
   dmWeekKey nowcastProductModel dmToggleOther renderBuildupPanel dmEffectiveRunRateLbs \
   dmISOLocal bpFutureWeeks bpWeeksOfCover mtoDetectCandidates mtoNetRows mtoByCustomer mtoCasesPerWeek dmcArrivingOrders ordBoughtForCustomers addDirectShip removeDirectShip directShipTotal getDirectShip _mutateOrderDirectShip bpInvState bpInvMigrateV1 invmProjectionHTML invmOverview _sheetSafe _sheetSafeRows _ordSanitize dmcNormalizeUnshipped dmcExcelDate cmCasesInBuyPack cmPlanEntries dmWeekPace bpSnapWeekDemand renderWeekPanel hybridSalesForWeek dsNamesFor dsLabelFor jlzSyncScope getActiveOrigin \
-  dmLineOrigins dmLineStats dmProductSeries dmProductMeta dmSeriesCompare dmBuildModel invmDirectShipCases dmFocusRows dmComboSVG dmFmt0 dmMoney2 dmRenderTrendPrice dmWireChartTip cxSpark cxRenderList cxWireSparkTip renderCustomers cxOverrideCard
+  dmLineOrigins dmLineStats dmProductSeries dmProductMeta dmSeriesCompare dmBuildModel invmDirectShipCases dmFocusRows dmComboSVG dmFmt0 dmMoney2 dmRenderTrendPrice dmWireChartTip cxSpark cxRenderList cxWireSparkTip renderCustomers cxOverrideCard \
+  invmIsWLot invmInvReportPhysical invmParseInventoryReport invmInvReportIsBpLot invmInvReportPlan bpCcId ooDateToISO
 # Constantes top-level que las funciones extraídas necesitan. extract.py solo saca funciones,
 # así que sin esto el test las leería de un stub y estaría probando el stub, no producción.
 for _c in DM_SELL_DAYS BP_INV_LS BP_INV_LS_V1; do
   grep -E "^var $_c *=" "$DIR/../JLZ_Container_Intelligence.html" >> "$TMP/app.js" \
     || { echo "  FAIL no se encontró $_c en el HTML"; FAILED=1; }
+done
+# Igual que arriba, pero para objetos que ocupan varias líneas: se extrae el bloque entero,
+# de la declaración hasta el `};` de cierre en columna 0.
+for _b in INVM_BUY_SKUS; do
+  awk -v n="$_b" 'index($0,"var " n " = {")==1{f=1} f{print} f&&/^};/{exit}' \
+    "$DIR/../JLZ_Container_Intelligence.html" > "$TMP/_blk.js"
+  if [ -s "$TMP/_blk.js" ] && tail -1 "$TMP/_blk.js" | grep -q '^};'; then
+    cat "$TMP/_blk.js" >> "$TMP/app.js"
+  else
+    echo "  FAIL no se pudo extraer el bloque $_b del HTML"; FAILED=1
+  fi
 done
 
 run_suite "demanda" "$TMP/app.js" "$DIR/pure-tests.js"
