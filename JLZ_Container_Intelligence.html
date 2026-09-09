@@ -15902,8 +15902,11 @@ function nowcastProductModel(m, p, origin){
   // Bound: the first week AFTER the reliable edge. Asking from lastReliable itself (inclusive) while the
   // week filter below is strict (> lastReliable) dropped that first week's booked orders on the floor.
   var nextAfterReliable=(function(){ try{ var d=new Date(lastReliable+'T12:00:00'); d.setDate(d.getDate()+7); return (typeof dmWeekKey==='function')?dmWeekKey(d):lastReliable; }catch(e){ return lastReliable; } })();
-  var cbw=(typeof invmCommittedByWeek==='function')?invmCommittedByWeek(p, origin, nextAfterReliable):{};
-  if(!cbw || !Object.keys(cbw).length) return m;
+  // Sin committed no hay nada que COMPLETAR, pero las semanas ya facturadas pasadas del borde
+  // igual tienen que verse. Salir acá las dejaba invisibles: garlic y shallots no mostraban W36
+  // ni W37 en el build-up porque su unico committed es de cuentas order-driven, que se descartan
+  // abajo — el `return` se comia tambien la rama `prelim`, que existe justo para recuperarlas.
+  var cbw=(typeof invmCommittedByWeek==='function')?(invmCommittedByWeek(p, origin, nextAfterReliable)||{}):{};
   var caseLb=(typeof productCaseLb==='function')?productCaseLb(p):30;
   // ORDER-DRIVEN accounts are excluded from the completion. Their orders are lumpy one-offs (e.g. Sol-ti's
   // 1,000-case ginger container): folding one into a week would smear it across every future week of the
@@ -15920,7 +15923,7 @@ function nowcastProductModel(m, p, origin){
       odByWk[c.wk]=(odByWk[c.wk]||0)+(parseFloat(c.cases)||0);
     });
     Object.keys(odByWk).forEach(function(k){ if(cbw[k]!=null){ cbw[k]=Math.max(0, cbw[k]-odByWk[k]); if(cbw[k]<=0) delete cbw[k]; } });
-    if(!Object.keys(cbw).length) return m;   // nothing left once order-driven volume is set aside
+    // Sin volumen que completar seguimos: las semanas facturadas entran igual como `prelim`.
   }
   var partial={}; m.weekly.forEach(function(w){ if(w.week>lastReliable) partial[w.week]=w.lbs||0; });   // invoiced-so-far past the reliable edge
   // Weeks to complete = those with partial invoicing OR with booked orders. A week that exists ONLY in
@@ -15960,22 +15963,32 @@ function nowcastProductModel(m, p, origin){
   // is kept for DISPLAY (partialWeek) but excluded from every average — averaging it in drags the run-rate
   // down (ginger: 851 → 759 on a week showing 88 of a normal ~850).
   var curWk=(typeof dmWeekKey==='function')?dmWeekKey(new Date()):'';
-  var avgSeries=series, curEntry=null;
-  if(curWk){
-    avgSeries=series.filter(function(w){ if(w.week===curWk){ curEntry=w; return false; } return true; });
-    if(!avgSeries.length) avgSeries=series;            // never end up with an empty basis
-  }
+  var avgSeries=series, curEntry=null, prelimOut=[];
+  // Una semana `prelim` esta facturada a medias y NO tiene ordenes que la completen: se MUESTRA
+  // pero no promedia, la misma regla que la semana en curso. `reliableWeeks` ya deja fuera la
+  // ultima semana con datos justo por esto — la facturacion sigue llegando durante dias. Garlic
+  // facturaba 73 unidades en W36 contra ~190 de una semana normal: promediarla bajaba el
+  // run-rate ~10% y empujaba a comprar de menos, que es el error caro de los dos.
+  avgSeries=series.filter(function(w){
+    if(curWk && w.week===curWk){ curEntry=w; return false; }
+    if(w.prelim){ prelimOut.push({week:w.week, lbs:w.lbs, prelim:true}); return false; }
+    return true;
+  });
+  if(!avgSeries.length) avgSeries=series;              // never end up with an empty basis
   if(curEntry) out.partialWeek={week:curEntry.week, lbs:curEntry.lbs, partial:true};
+  if(prelimOut.length) out.prelimWeeks=prelimOut;      // solo para mostrar, igual que partialWeek
   out.weeklyReliable=avgSeries;
   out.runRate13=Math.round(mean(avgSeries.slice(-13)));
   out.runRate26=Math.round(mean(avgSeries.slice(-26)));   // la UI ofrece 26 semanas; sin esto caía a 13
   out.runRate6=Math.round(mean(avgSeries.slice(-6)));
   out.runRate3=Math.round(mean(avgSeries.slice(-3)));
+  var fullSeries=series;   // con las prelim y la semana en curso: la UI las muestra igual
   series=avgSeries;   // rateWeeks below must list only the averaged weeks
   // Keep rateWeeks in step with the nowcasted series so the build-up table's ACTUAL columns show the SAME
   // weeks the run-rate averages (incl. the completed W34/W35) — otherwise the columns wouldn't average to rr.
   out.rateWeeks=series.map(function(w){ return w.week; });
-  out.nowcastWeeks={}; series.forEach(function(w){ if(w.now||w.prelim) out.nowcastWeeks[w.week]=(w.now?'now':'prelim'); });
+  // De la serie COMPLETA: las prelim ya no promedian, pero la UI tiene que seguir marcandolas.
+  out.nowcastWeeks={}; fullSeries.forEach(function(w){ if(w.now||w.prelim) out.nowcastWeeks[w.week]=(w.now?'now':'prelim'); });
   // Put the PER-CUSTOMER run-rates on the same basis as the aggregate. `customers` was built from invoiced
   // history only; the nowcast completes recent weeks with booked orders, so the aggregate rises and the rows
   // don't — and the whole gap silently lands in "Other small accounts" (turmeric Fiji: 29 of 88 cs/wk, a
@@ -26259,6 +26272,13 @@ function renderBuildupPanel(){
   var histWeeks = (Array.isArray(m.rateWeeks) ? m.rateWeeks.slice(-_win) : []);
   var partialWk = (m.partialWeek && m.partialWeek.week) ? m.partialWeek.week : null;
   if(partialWk && histWeeks.indexOf(partialWk) < 0) histWeeks = histWeeks.concat([partialWk]);
+  // Las `prelim` tampoco promedian, pero se muestran por el mismo motivo que la semana en curso:
+  // sin esto garlic y shallots no tienen columna de W36 en ningun lado. Se ordena porque caen
+  // ANTES de la semana en curso y el concat las dejaria al final.
+  (m.prelimWeeks || []).forEach(function(pw){
+    if(pw && pw.week && histWeeks.indexOf(pw.week) < 0) histWeeks = histWeeks.concat([pw.week]);
+  });
+  histWeeks = histWeeks.slice().sort();
   var wkCustH = m.wkCust || null;
   var nowMark = m.nowcastWeeks || {};        // weeks completed with booked orders (nowcast): 'now' | 'prelim'
   // Order-driven accounts are held OUT of the nowcast on purpose (a lumpy one-off would smear across every

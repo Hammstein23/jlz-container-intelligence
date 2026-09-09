@@ -17,6 +17,11 @@ var _realBpFutureWeeks = bpFutureWeeks;
 // ═══ 1. Week bucketing ══════════════════════════════════════════════════════
 // Was: a bare 'YYYY-MM-DD' parses as UTC midnight, which west of Greenwich resolves to
 // the previous day, so every MONDAY sale landed in the previous week.
+// Varios grupos de más abajo reemplazan funciones reales por stubs y NO las restauran: el que
+// las necesite después tiene que guardárselas acá arriba, antes de que las pisen.
+var _REAL_NOWCAST = nowcastProductModel, _REAL_WEEKKEY = dmWeekKey;
+var _STUB_COMMWK = invmCommittedByWeek, _STUB_GETCOMM = getCommitted;
+
 group('dmWeekKey — la semana a la que pertenece cada fecha');
 var DAY = ['dom','lun','mar','mie','jue','vie','sab'];
 [['2026-08-24','2026-08-24'],   // lunes → su propia semana
@@ -477,7 +482,7 @@ dmRowOrigin=function(r){ return r.oitem||''; };
 isDirectShipRow=function(r){ return !!(r && r.c==='Whole Foods Market' && r.prod==='garlic'); };
 invmProductStats=function(p,o){ return {onHandCases:(p==='garlic'?48:0)}; };
 bpInvState=function(){ return {rows:{A:{cases:2184}}}; };
-nowcastProductModel=function(m){ return m; };
+nowcastProductModel=function(m){ return m; };   // OJO: pisa la real para todo lo que siga (ver _REAL_NOWCAST)
 
 var _seen=null, _win=3;
 dmWindow=function(){ return _win; };
@@ -1557,5 +1562,60 @@ ok('lleva su metadata para que invmCompute lo reconozca', !!(_LR.rs && _LR.rs.re
 var _LH = bpInvLot('huerfana', _stR, null);
 check('la fila huérfana no tiene orden', _LH.o, null);
 ok('…ni metadata de reempaque, que es lo que la distingue', !(_LH.rs && _LH.rs.repack));
+
+// ═══ La semana cortada se VE pero no promedia ══════════════════════════════
+// Garlic y shallots no mostraban W36 ni W37 en el build-up. Su unico committed viene de cuentas
+// order-driven, que se descartan del completado a proposito; al quedar `cbw` vacio la funcion
+// salia ANTES de calcular `partial` y se llevaba puesta la rama `prelim`, que existe justo para
+// recuperar esas semanas. Y una vez recuperadas no pueden promediar: `reliableWeeks` ya deja
+// fuera la ultima semana con datos porque la facturacion sigue llegando (garlic marcaba 73
+// unidades en W36 contra ~190 de una semana normal). Promediarla baja el run-rate y empuja a
+// comprar de menos. Las semanas se calculan desde HOY para que el test no caduque.
+group('La semana cortada se muestra, pero nunca promedia');
+// Este grupo se hace autosuficiente a propósito: más arriba quedan pisadas `nowcastProductModel`
+// (pass-through), `dmWeekKey` (fija en '2026-08-31') e `invmCommittedByWeek` (siempre {}). Sin
+// restaurarlas, los checks de abajo miden los stubs y no el código.
+nowcastProductModel = _REAL_NOWCAST;
+dmWeekKey           = _REAL_WEEKKEY;
+invmCommittedByWeek = _STUB_COMMWK;
+getCommitted        = _STUB_GETCOMM;
+_cmProd      = function(c){ return c.prod; };
+_cmOriginFor = function(c){ return c.origin || ''; };
+_cmShipped   = function(c){ return !!(c && c.shipped); };
+productCaseLb = function(){ return 30; };
+var _wk = function(offDays){ var d = new Date(); d.setDate(d.getDate() + offDays); return dmWeekKey(d); };
+var CURW = _wk(0), PREVW = _wk(-7);
+var _rel = [];
+for (var _i = 9; _i >= 1; _i--) _rel.push({ week: _wk(-14 - (_i - 1) * 7), lbs: 3000 });
+var _mkModel = function(){
+  return { caseLb:30, wkCust:{}, weeklyReliable:_rel.slice(),
+           weekly:_rel.concat([{ week:PREVW, lbs:1200 }, { week:CURW, lbs:300 }]),
+           rateWeeks:_rel.map(function(w){ return w.week; }),
+           customers:[{ c:'LUMPY', rrCases:0, rr6Cases:0, rr3Cases:0, sporadic:true, ovr:{} }] };
+};
+
+// Escenario garlic: TODO el committed es de una cuenta order-driven.
+COMMITTED = [{ type:'inv', wk:CURW, customer:'LUMPY', cases:210, prod:'garlic', origin:'California' }];
+var G = nowcastProductModel(_mkModel(), 'garlic', 'California');
+ok('el committed order-driven ya no corta la función antes de tiempo',
+   !!G.nowcastWeeks && Object.keys(G.nowcastWeeks).length > 0);
+check('la semana cerrada a medias se marca prelim', (G.nowcastWeeks || {})[PREVW], 'prelim');
+ok('…y se expone aparte para que la UI la muestre',
+   (G.prelimWeeks || []).some(function(w){ return w.week === PREVW && w.lbs === 1200; }));
+ok('…pero NO entra al promedio', (G.rateWeeks || []).indexOf(PREVW) < 0);
+ok('la semana en curso se muestra', !!(G.partialWeek && G.partialWeek.week === CURW));
+ok('…y tampoco promedia', (G.rateWeeks || []).indexOf(CURW) < 0);
+check('el run-rate queda igual que sin las dos semanas', G.runRate3, 3000);
+check('y la ventana de 13 tampoco se mueve', G.runRate13, 3000);
+
+// Contraste: una semana COMPLETADA con órdenes reservadas sí promedia — eso es un nowcast de
+// verdad (facturado + reservado reconstruyen la semana entera), no una semana a medias.
+COMMITTED = [{ type:'inv', wk:PREVW, customer:'STEADY', cases:100, prod:'garlic', origin:'California' }];
+var G2m = _mkModel();
+G2m.customers = [{ c:'STEADY', rrCases:0, rr6Cases:0, rr3Cases:0, sporadic:false, ovr:{} }];
+var G2 = nowcastProductModel(G2m, 'garlic', 'California');
+check('una semana con órdenes se marca now, no prelim', (G2.nowcastWeeks || {})[PREVW], 'now');
+ok('…y esa SÍ promedia', (G2.rateWeeks || []).indexOf(PREVW) >= 0);
+check('se completa a facturado + reservado: (3000+3000+1200+3000)/3', G2.runRate3, 3400);
 
 summary();
