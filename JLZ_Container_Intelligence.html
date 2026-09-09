@@ -26270,7 +26270,13 @@ function renderBuildupPanel(){
   // ACTUAL columns = the run-rate window, PLUS the current in-progress week (shown for visibility, never
   // part of the average — it is only partly invoiced, so averaging it would understate the run-rate).
   var histWeeks = (Array.isArray(m.rateWeeks) ? m.rateWeeks.slice(-_win) : []);
-  var partialWk = (m.partialWeek && m.partialWeek.week) ? m.partialWeek.week : null;
+  // La semana en curso tiene que verse SIEMPRE, aunque este en cero. El modelo solo define
+  // `partialWeek` si esa semana tiene facturacion o committed no order-driven, y garlic no tiene
+  // ninguna de las dos: la columna desaparecia entera y con ella sus 210 cs reservadas, mientras
+  // ginger —que factura todas las semanas— si la mostraba. Misma tabla, dos estructuras distintas.
+  var _curWkKey = (typeof dmWeekKey === 'function') ? dmWeekKey(new Date()) : null;
+  var partialWk = (m.partialWeek && m.partialWeek.week) ? m.partialWeek.week
+                : ((_curWkKey && histWeeks.indexOf(_curWkKey) < 0) ? _curWkKey : null);
   if(partialWk && histWeeks.indexOf(partialWk) < 0) histWeeks = histWeeks.concat([partialWk]);
   // Las `prelim` tampoco promedian, pero se muestran por el mismo motivo que la semana en curso:
   // sin esto garlic y shallots no tienen columna de W36 en ningun lado. Se ordena porque caen
@@ -26430,28 +26436,39 @@ function renderBuildupPanel(){
   var usesLine = _useG ? 'The column total is what the Buy Planner uses.' : ('The column total is your weekly ' + esc(pl) + ' demand — buy to it.');
   var h = dmZoneLabel(5,'Forward build-up','next 7 weeks — run-rate + committed, per customer') + '<div class="card dbu">';
   h += '<div class="dbu-hd"><div class="dbu-t">Demand build-up by customer</div><div class="dbu-s">How the projected weekly demand is built — invoiced run-rate + allocated (committed) orders. ' + usesLine + '</div></div>';
-  h += '<div class="dbu-lg"><span><i class="sw a"></i>Allocated — real order placed</span><span><i class="sw r"></i>Run-rate — projected from history</span><span><b class="bd od">OD</b>order-driven <b class="bd st">ST</b>steady</span><span><b style="color:#b45309">not invoiced</b>&nbsp;sold, invoice not issued yet</span><span><b style="color:var(--gray-400)">N already sold</b>&nbsp;part of that week is already booked</span></div>';
+  h += '<div class="dbu-lg"><span><i class="sw a"></i>Allocated — real order placed</span><span><i class="sw r"></i>Run-rate — projected from history</span><span><b class="bd od">OD</b>order-driven <b class="bd st">ST</b>steady</span><span><b style="color:#b45309">not invoiced</b>&nbsp;sold, invoice not issued yet</span><span><b style="color:var(--gray-400)">N already sold</b>&nbsp;part of that week is already booked</span>'
+     + '<span><b style="color:#7c3aed">\u25CF</b>&nbsp;completed with orders &middot; <b style="color:#b45309">\u25CB</b>&nbsp;half-invoiced, not averaged &middot; <b style="color:#b45309">\u25D0</b>&nbsp;week in progress</span></div>';
   if(Object.keys(_mtoBy).length){
     h += '<div style="margin:-4px 0 10px;padding:7px 10px;border-radius:7px;background:#faf5ff;border:1px solid #e9d5ff;'
        + 'font-size:11px;color:#5b21b6;line-height:1.5">'
        + '<b>Bought to order</b> — some customers here are supplied by buying against their order, not from the cooler. '
        + 'That volume is named on their row and left out of the columns below, because it never needs stock.</div>';
   }
+  // El titulo decia "last N wk" contando TODAS las columnas de la izquierda, incluida la semana en
+  // curso y las `prelim` — que son justo las que no promedian. Contaba mal lo unico que promete.
+  var _avgWks = histWeeks.filter(function(w){ return w !== partialWk && nowMark[w] !== 'prelim'; }).length;
+  var _prelWks = histWeeks.filter(function(w){ return w !== partialWk && nowMark[w] === 'prelim'; }).length;
   h += '<div class="dbu-wrap"><table class="dbu-tbl"><thead>';
   if(histWeeks.length){
     h += '<tr class="dbu-grp"><th class="c"></th>'
-       + '<th class="hist-grp" colspan="' + HIST_COLS + '">ACTUAL &middot; last ' + (partialWk?(histWeeks.length-1):histWeeks.length) + ' wk (the run-rate window)' + (partialWk?' &middot; <span style="color:#b45309">◐ current week not averaged</span>':'') + '</th>'
+       + '<th class="hist-grp" colspan="' + HIST_COLS + '">ACTUAL &middot; last ' + _avgWks + ' wk (the run-rate window)'
+       + (partialWk?' &middot; <span style="color:#b45309">◐ current week not averaged</span>':'')
+       + (_prelWks?' &middot; <span style="color:#b45309">○ half-invoiced, not averaged</span>':'') + '</th>'
        + '<th class="proj-grp" colspan="' + weeks.length + '">PROJECTED</th></tr>';
   }
   h += '<tr><th class="c">Customer · run-rate</th>';
   histWeeks.forEach(function(wk, i){
     var wn = (typeof cxWeekNo === 'function' && cxWeekNo(wk)) ? ('W' + cxWeekNo(wk)) : shortD(wk);
-    var nm = nowMark[wk];              // completed with booked orders (not fully invoiced yet)
+    var nm = nowMark[wk];              // 'now' = completada con órdenes · 'prelim' = facturada a medias
+    // Las dos llevaban el MISMO punto, y significan lo contrario: la `now` está reconstruida entera
+    // y promedia; la `prelim` se muestra justamente porque NO promedia. Relleno = cuenta, hueco = no.
+    var isPrel = (nm === 'prelim');
     var isPart = (wk === partialWk);   // current week, still in progress → shown but NOT in the average
-    h += '<th class="hist' + (i === histWeeks.length - 1 && !isPart ? ' hist-last' : '') + (nm?' hist-now':'') + (isPart?' hist-part':'') + '"'
+    h += '<th class="hist' + (i === histWeeks.length - 1 && !isPart ? ' hist-last' : '') + (nm?(isPrel?' hist-prelim':' hist-now'):'') + (isPart?' hist-part':'') + '"'
        + (isPart?' colspan="4" title="Week in progress — shown for visibility, NOT included in the run-rate average"'
-               :(nm?' title="Completed with booked (unshipped) orders — this week is not fully invoiced yet"':'')) + '>'
-       + wn + (isPart?'<sup class="pc">◐</sup>':(nm?'<sup class="nc">●</sup>':'')) + '<br><span>' + (isPart?'in progress':shortD(wk)) + '</span></th>';
+               :(nm?(isPrel?' title="Only partly invoiced, with no booked orders to complete it — shown, but NOT in the run-rate average"'
+                           :' title="Completed with booked (unshipped) orders — this week is not fully invoiced yet"'):'')) + '>'
+       + wn + (isPart?'<sup class="pc">◐</sup>':(nm?(isPrel?'<sup class="hc">○</sup>':'<sup class="nc">●</sup>'):'')) + '<br><span>' + (isPart?'in progress':shortD(wk)) + '</span></th>';
   });
   weeks.forEach(function(w){ h += '<th>W' + w.weekNum + '<br><span>' + shortD(w.weekStartISO) + '</span></th>'; });
   h += '</tr>';
@@ -27051,6 +27068,8 @@ function cxStyles(){ return '<style>'
   + '.dbu-tbl td.hist-part .bkd{color:#b45309;font-weight:700;margin-left:2px}'
   + '.dbu-tbl td.hist-part{background:#FFFBEB;color:#b45309;border-left:1px dashed var(--gray-300)}'
   + '.dbu-tbl th .pc{color:#b45309;font-size:8px;margin-left:1px}'
+  + '.dbu-tbl th.hist-prelim{color:#b45309}'
+  + '.dbu-tbl th .hc{color:#b45309;font-size:8px;margin-left:1px}'
   + '.dbu-tbl tr.dbu-grp th{font-size:9px;letter-spacing:.08em;padding:5px 10px;border-bottom:none;text-align:center}'
   + '.dbu-tbl tr.dbu-grp th.hist-grp{background:var(--gray-100);color:var(--gray-500);border-right:2px solid var(--gray-300)}'
   + '.dbu-tbl tr.dbu-grp th.proj-grp{background:var(--gray-50);color:var(--jlz,#0d5026)}'

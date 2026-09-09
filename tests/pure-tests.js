@@ -259,6 +259,44 @@ check('el TOTAL proyectado sigue al plan (700), no al modelo (800)', num(G2.tot.
 check('las filas + Other suman ese TOTAL', g2rows + g2oth, num(G2.tot.cells[projIdx]));
 
 
+// ═══ 5b. Las cinco tablas se leen igual ═════════════════════════════════════
+// Garlic no mostraba la semana en curso y ginger sí, con el mismo renderer: el bloque entero
+// cuelga de `partialWeek`, que el modelo solo define si esa semana tiene facturación o committed
+// no order-driven. Garlic no tenía ninguna de las dos y perdía la columna — con sus 210 cs
+// reservadas adentro. Y las semanas `prelim` salían con el MISMO punto que las completadas,
+// que significan lo contrario: una promedia y la otra se muestra justamente porque no.
+group('Build-up · la semana en curso siempre está, y cada marca dice una cosa');
+var _bw = function(off){ var d = new Date(); d.setDate(d.getDate() + off); return dmWeekKey(d); };
+var CURB = _bw(0), PRELB = _bw(-7);
+var _AVGW = [_bw(-28), _bw(-21), _bw(-14)];          // las tres que SÍ promedian
+var _bwc = {}; _AVGW.concat([PRELB]).forEach(function(w){ _bwc[w] = { 'STEADY CO': 30*100 }; });
+COMMITTED = [{ type:'inv', wk:CURB, customer:'LUMPY LLC', cases:217, prod:'ginger', origin:'' }];
+_dmModelG = {
+  caseLb:30, rateWeeks:_AVGW, wkCust:_bwc,
+  nowcastWeeks:{}, prelimWeeks:[{ week:PRELB, lbs:30*40, prelim:true }],
+  runRate13:30*100, runRate6:30*100, runRate3:30*100,
+  customers:[
+    { c:'STEADY CO', rrCases:100, rr6Cases:100, rr3Cases:100, sporadic:false },
+    { c:'LUMPY LLC', rrCases:0,   rr6Cases:0,   rr3Cases:0,   sporadic:true  }
+  ]
+};
+_dmModelG.nowcastWeeks[PRELB] = 'prelim';
+_dmModel = _dmModelG;
+renderBuildupPanel();
+var HB = _out;
+ok('la semana en curso tiene columna aunque no facture nada', /in progress/.test(HB));
+// Anclado a la sub-columna "to ship": el número suelto también aparece en las proyectadas,
+// así que buscarlo en toda la tabla pasaba incluso sin la columna nueva.
+ok('…y ahí aparecen las cajas reservadas de la cuenta order-driven', /hp-b"[^>]*>[^<]*217/.test(HB));
+ok('la semana a medias lleva marca hueca', HB.indexOf('<sup class="hc">\u25CB</sup>') >= 0);
+ok('…y no el punto lleno de las completadas', HB.indexOf('<sup class="nc">\u25CF</sup>') < 0);
+ok('…con su propia clase, no la de las completadas',
+   HB.indexOf('hist-prelim') >= 0 && HB.indexOf('hist-now') < 0);
+var _band = /ACTUAL &middot; last (\d+) wk/.exec(HB);
+check('la banda cuenta SOLO las semanas que promedian', _band && _band[1], '3');
+ok('…y avisa de las dos que no', /current week not averaged/.test(HB) && /half-invoiced, not averaged/.test(HB));
+ok('la leyenda explica las tres marcas', /completed with orders/.test(HB) && /week in progress/.test(HB));
+
 // ═══ 6. Fechas locales serializadas a UTC ═══════════════════════════════════
 // toISOString() convierte a UTC primero, así que al oeste de Greenwich una fecha de la NOCHE
 // avanza un día. Las llaves de semana del Buy Planner salían martes después de las ~7pm, y todo
