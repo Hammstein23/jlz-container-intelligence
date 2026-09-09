@@ -94,3 +94,6 @@ Tres o cuatro líneas, no más:
 
 - `.claude/commands/lunes.md` — la rutina semanal completa
 - `tests/orders-check.js` — el chequeo que corre el Paso 2
+- `tests/orders-arrived.js` — pone en Arrived, todas juntas, las órdenes cuya mercadería ya
+  está en cámara. El pipeline solo avanza solo cuando se guarda un contenedor en History, así
+  que las que nunca pasaron por ahí se quedan clavadas y el plan las cuenta dos veces.
