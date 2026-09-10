@@ -1547,7 +1547,8 @@ group('invmBuySuggestion · cuánto comprar, cuándo ordenar, cuándo llega');
   // corrida = 3 - 2 de seguridad = 1 semana = 7 días; menos 10 de lead -> 3 días TARDE
   check('la fecha límite descuenta el lead time', g.offset, -3);
   check('y queda expresada como fecha', g.orderBy, iso(-3));
-  check('la llegada es hoy + lead time', g.arrives, iso(10));
+  // Plazo vencido -> la sugerencia dice "order now", y ahí la llegada SÍ se cuenta desde hoy.
+  check('con el plazo vencido se ordena hoy y llega hoy + lead', g.arrives, iso(10));
   check('reporta los excluidos aparte, no los suma al disponible', g.excluded, 23);
 
   // El rango entre ventanas es el punto: la misma pregunta, distinta respuesta.
@@ -1556,6 +1557,19 @@ group('invmBuySuggestion · cuánto comprar, cuándo ordenar, cuándo llega');
   ok('con ventas más flojas (6wk) la fecha se corre para adelante', w[6].orderBy > g.orderBy);
   ok('con ventas más fuertes (13wk) se adelanta', w[13].orderBy < g.orderBy);
   ok('y no ofrece una ventana sin datos', !w[26]);
+
+  // ── Ordenar en la fecha límite no llega el mismo día ─────────────────────────────────────────
+  // La llegada salía de hoy+lead pero se muestra pegada a "order by <plazo>". Con el plazo a 37 días
+  // y 37 de lead, ginger decía "order by 2026-10-17 · lands 2026-10-17". Acá el plazo cae adelante:
+  // 500+100 = 600 de oferta / 100 por semana = 6 de cobertura, menos 2 de colchon = 4 semanas = 28
+  // dias, menos 10 de lead = ordenar en 18 dias. Y eso llega a los 28, no a los 10.
+  STATS.availCases = 500;
+  var gf = invmBuySuggestion('turmeric','Fiji');
+  check('con plazo por delante, la fecha limite es en 18 dias', gf.offset, 18);
+  check('y se expresa como fecha', gf.orderBy, iso(18));
+  check('la llegada es la fecha limite MAS el lead', gf.arrives, iso(28));
+  ok('nunca llega antes de que se ordene', gf.arrives > gf.orderBy);
+  STATS.availCases = 200;
 
   // Cubierto: nada que ordenar.
   STATS.availCases = 5000;
@@ -1690,6 +1704,35 @@ group('En camino · el origen filtra, pero no puede hacer desaparecer carga');
   check('y sigue siendo de Peru cuando se pregunta por Peru', sum(invmProductArrivals('ginger','Peru')), 1320);
   check('un origen que no es de nadie NO desaparece', sum(invmProductArrivals('shallots','California')), 100);
   check('sin filtro de origen entra todo', sum(invmProductArrivals('ginger','all')), 1360);
+})();
+
+group('La linea de compra de ginger · ordenar en el plazo no llega el mismo dia');
+// "Buy 1 container · order by 2026-10-17 · in 37d · lands 2026-10-17". Las dos fechas iguales porque
+// faltaban 37 dias para el plazo y el lead de mar es de 37: `lands` salia de HOY, no del plazo.
+(function(){
+  invmWindowFit = function(){ return null; };
+  var DIA=86400000, hoy=new Date();
+  var iso=function(n){ return dmISOLocal(new Date(hoy.getTime()+n*DIA)); };
+  window._bpDigest = {
+    stockCases:2983, salesDemand:760, weeklyDemand:826, coverage:3.61,
+    seaDeadline:{ date:new Date(hoy.getTime()+37*DIA), daysLeft:37 },
+    airDeadline:{ date:new Date(hoy.getTime()+61*DIA), daysLeft:61 },
+    rec:{ containers:1, netCases:1320, netNeeded:2359, orderUpTo:6056, projAtArrival:3697,
+          coverWks:'6.1', leadWks:37/7, cadence:1, ssCases:866, perContainer:1320,
+          raw:1.787, wanted:2, cap:1, cappedBy:'shelf', shelfWks:8 }
+  };
+  var h = bpGingerSuggestionHTML();
+  ok('arma la linea', h.indexOf('Buy <b>1</b> container')>-1);
+  ok('el plazo es el del plan',  h.indexOf('order by <b>'+iso(37)+'</b>')>-1);
+  ok('y aterriza plazo + lead',  h.indexOf('lands <b>'+iso(74)+'</b>')>-1);
+  ok('NO aterriza el mismo dia que se ordena', h.indexOf('lands <b>'+iso(37)+'</b>')<0);
+
+  // Sin plazo no hay nada que esperar: la cuenta arranca hoy.
+  window._bpDigest.seaDeadline = null;
+  var h2 = bpGingerSuggestionHTML();
+  ok('sin plazo, aterriza hoy + lead', h2.indexOf('lands <b>'+iso(37)+'</b>')>-1);
+  ok('y no promete un plazo que no tiene', h2.indexOf('order by')<0);
+  window._bpDigest = null;
 })();
 
 group('mtoMismatched · la marca contra-orden tiene que calzar con lo que pidió el cliente');

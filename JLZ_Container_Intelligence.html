@@ -17067,7 +17067,10 @@ function invmBuySuggestion(p, origin, opts){
              leadDays:lead, avail:s.availCases||0, incoming:incoming, excluded:s.excludedCases||0,
              demand:now.demand, cover:now.cover, buy:now.buy, orderBy:now.orderBy, offset:now.offset,
              belowSafety:!!now.belowSafety, far:!!now.far, safetyWks:now.safetyWks,
-             arrives:addD(lead), win:win, others:others, targetWks:s.targetWks||0 };
+             // Igual que en ginger: llega = fecha límite + lead. Con el plazo vencido la sugerencia
+             // dice "order now", y ahí sí se cuenta desde hoy. Turmeric mostraba "ordenar 19-sep,
+             // llega 20-sep" con 10 días de lead: era hoy+10, no la consecuencia de esperar al plazo.
+             arrives:addD(Math.max(0,now.offset)+lead), win:win, others:others, targetWks:s.targetWks||0 };
   }catch(e){ return null; }
 }
 function invmBuySuggestionHTML(p, origin, opts){
@@ -17253,8 +17256,15 @@ function bpGingerSuggestionHTML(){
   var dias=sea&&sea.daysLeft!=null?sea.daysLeft:null;
   var urge=(dias!=null&&dias<=7);
   var tone=urge?{bg:'#FEF2F2',bd:'#FECACA',fg:'#991B1B'}:{bg:'var(--gray-50)',bd:'var(--gray-200)',fg:'var(--gray-700)'};
+  // ── "Lands" es la consecuencia de ordenar EN la fecha límite, no de ordenar hoy ────────────────
+  // Salía de hoy+lead y se mostraba pegado a "order by <plazo>": con 37 días hasta el plazo y 37 de
+  // lead de mar, la línea decía "order by 2026-10-17 · lands 2026-10-17". Ordenar el 17 no llega el 17.
+  // El propio plan lo confirma por dos caminos: plazo de mar + 37 días = 2026-11-23, que es la fecha
+  // de quiebre; y el plazo de AIRE + sus 13 días da esa misma fecha. Los dos plazos están anclados al
+  // mismo aterrizaje — es lo que los hace plazos. Sin plazo no hay nada que esperar: cuenta desde hoy.
   var lands='';
-  try{ var l=new Date(); l.setDate(l.getDate()+Math.round((R.leadWks||0)*7)); lands=iso(l); }catch(e){}
+  try{ var l=(sea&&sea.date)?new Date(sea.date):new Date();
+       l.setDate(l.getDate()+Math.round((R.leadWks||0)*7)); lands=iso(l); }catch(e){}
   var head='Buy <b>'+R.containers+'</b> container'+(R.containers>1?'s':'')+' &middot; ~<b>'+f(R.netCases)+'</b> cases'
     + (sea? (' &middot; order by <b>'+iso(sea.date)+'</b>'+(dias!=null?(' &middot; in '+dias+'d'):'')) : '')
     + (lands? (' &middot; lands <b>'+lands+'</b>') : '');
