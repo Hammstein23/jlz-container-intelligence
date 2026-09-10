@@ -21,16 +21,24 @@
      Se sirve por <meta> porque GitHub Pages no deja poner cabeceras. -->
 <meta http-equiv="Content-Security-Policy" content="
   default-src 'self';
-  script-src 'self' 'unsafe-inline' https://script.google.com https://script.googleusercontent.com https://*.googleusercontent.com;
+  script-src 'self' 'unsafe-inline' https://script.google.com/macros/s/AKfycbytVfHCl9ekx2FSoINSqeC6SuhNXQ5dECdMzm_1o7DZHLGkKBdOZB6Mgc9REuZV_GvT/exec https://script.googleusercontent.com https://*.googleusercontent.com;
   worker-src 'self' blob:;
   style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
   img-src 'self' data: blob:;
   font-src 'self' data: https://fonts.gstatic.com;
-  connect-src 'self' https://script.google.com https://script.googleusercontent.com https://*.googleusercontent.com;
+  connect-src 'self' https://script.google.com/macros/s/AKfycbytVfHCl9ekx2FSoINSqeC6SuhNXQ5dECdMzm_1o7DZHLGkKBdOZB6Mgc9REuZV_GvT/exec https://script.googleusercontent.com https://*.googleusercontent.com;
   object-src 'none';
   base-uri 'self';
   form-action 'self';
 ">
+<!-- OJO: la CSP fija el deployment EXACTO de Apps Script, no todo script.google.com. Sin eso, un XSS
+     podía mandar el token al /exec de CUALQUIERA — script.google.com es un dominio compartido y publicar
+     un web app ahí es gratis. Con el path fijo, esa salida se cierra.
+     El precio: esta URL y `JLZ_DEFAULT_GAS_URL` tienen que cambiar JUNTAS. Si algún día se crea un
+     deployment nuevo (no una versión nueva del mismo), hay que tocar los dos lugares o la app deja de
+     hablar con la hoja. Buscá el mismo AKfycby... en las dos partes del archivo.
+     La redirección a script.googleusercontent.com sigue permitida por host: la CSP descarta el path
+     después de un redirect, así que la respuesta de Apps Script llega igual. -->
 <!-- `frame-ancestors` NO va acá: el navegador lo ignora cuando la CSP llega por <meta>, y avisa por
      consola. Para impedir que alguien meta la app en un iframe y te robe clics hace falta una CABECERA
      (X-Frame-Options o CSP con frame-ancestors), y GitHub Pages no permite ponerlas. La defensa que sí
