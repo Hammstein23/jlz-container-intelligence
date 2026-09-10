@@ -4864,6 +4864,7 @@ function authInjectLogo() {
   <div class="invm-prodbar" id="sim-ginger-origin" style="display:none;gap:6px;align-items:center;margin:2px 0 12px"></div>
   <div id="sim-product-view" style="display:none"></div>
   <div id="sim-ginger-body">
+  <div id="sim-ginger-suggestion"></div>
 
   <!-- ── 1. ASSUMPTIONS BANNER (read-only from Buy Planner) ── -->
   <div class="card mb-4" style="border-left:4px solid var(--gray-300)">
@@ -16907,6 +16908,57 @@ function invmBuySuggestionHTML(p, origin){
        + '<div style="margin-top:3px;font-size:11.5px;color:var(--gray-500);font-family:var(--fm);line-height:1.5">'+why+'</div>'
        + mathRows + spread + fitLine + '</div>';
 }
+// ── Sugerencia de compra para ginger-Perú ──────────────────────────────────────────────────────
+// No usa la fórmula genérica: ginger-Perú guarda su stock en OTRO store (`bpInvState`, no
+// `prodInvState`), así que invmProductStats le da 0 disponible; y el Buy Planner ya calcula su
+// compra con aritmética propia — merma por tiempo, cadencia, order-up-to — que da distinto de la
+// genérica. Re-derivarla acá pondría dos respuestas para la misma pregunta a dos clics de distancia.
+// Así que esto MUESTRA lo que el Buy Planner ya decidió, con la cuenta a la vista.
+function bpGingerSuggestionHTML(){
+  var d=(typeof window!=='undefined')?window._bpDigest:null;
+  if(!d || !d.rec) return '';
+  var esc=(typeof libEsc==='function')?libEsc:function(x){ return String(x==null?'':x); };
+  var f=function(x){ return Math.round(x||0).toLocaleString('en-US'); };
+  var n2=function(x){ return (Math.round((x||0)*100)/100).toLocaleString('en-US'); };
+  var iso=function(v){ try{ return (typeof dmISOLocal==='function')?dmISOLocal(new Date(v)):String(v).slice(0,10); }catch(e){ return String(v).slice(0,10); } };
+  var R=d.rec, sea=d.seaDeadline, air=d.airDeadline;
+  var dias=sea&&sea.daysLeft!=null?sea.daysLeft:null;
+  var urge=(dias!=null&&dias<=7);
+  var tone=urge?{bg:'#FEF2F2',bd:'#FECACA',fg:'#991B1B'}:{bg:'var(--gray-50)',bd:'var(--gray-200)',fg:'var(--gray-700)'};
+  var lands='';
+  try{ var l=new Date(); l.setDate(l.getDate()+Math.round((R.leadWks||0)*7)); lands=iso(l); }catch(e){}
+  var head='Buy <b>'+R.containers+'</b> container'+(R.containers>1?'s':'')+' &middot; ~<b>'+f(R.netCases)+'</b> cases'
+    + (sea? (' &middot; order by <b>'+iso(sea.date)+'</b>'+(dias!=null?(' &middot; in '+dias+'d'):'')) : '')
+    + (lands? (' &middot; lands <b>'+lands+'</b>') : '');
+  var why=n2(d.coverage)+' weeks of cover from '+f(d.stockCases)+' cases on hand'
+    + ' &middot; sea takes '+n2(R.leadWks)+' weeks'
+    + (air&&air.daysLeft!=null?(' &middot; by air you have until '+iso(air.date)+' ('+air.daysLeft+'d)'):'');
+  var row=function(h,op,res){
+    return '<tr><td style="padding:2px 10px 2px 0;color:var(--gray-400);white-space:nowrap">'+(h||'')+'</td>'
+      + '<td style="padding:2px 12px 2px 0;color:var(--gray-500)">'+op+'</td>'
+      + '<td style="padding:2px 0;text-align:right;color:var(--gray-700);font-weight:600;white-space:nowrap">'+res+'</td></tr>'; };
+  var math='<table style="margin-top:9px;border-collapse:collapse;font-family:var(--fm);font-size:10.5px;line-height:1.6;width:100%">'
+    + row('Demand', f(d.salesDemand)+' cs sold/wk + shrink', '<b>'+f(d.weeklyDemand)+' cs leave/wk</b>')
+    + row('Order up to', n2(R.leadWks)+' wk lead + '+n2(R.cadence)+' wk between orders', n2((R.leadWks||0)+(R.cadence||0))+' wk')
+    + row('', '&times; '+f(d.weeklyDemand)+' cs/wk + '+f(R.ssCases)+' cs safety', '<b>'+f(R.orderUpTo)+' cs</b>')
+    + row('On hand then', 'projected stock when a sea order lands', f(R.projAtArrival)+' cs')
+    + row('Decision', f(R.orderUpTo)+' &minus; '+f(R.projAtArrival), '<b>'+f(R.netNeeded)+' cs short</b>')
+    + row('', '&divide; '+f(R.perContainer)+' net cs per container',
+          '<b style="color:var(--jlz)">'+R.containers+' container'+(R.containers>1?'s':'')+' &rarr; ~'+R.coverWks+' wks cover</b>')
+    + '</table>';
+  var fit=''; try{ var F=invmWindowFit('ginger','Peru');
+    if(F) fit='<div style="margin-top:5px;font-size:11px;font-family:var(--fm);line-height:1.5;color:var(--gray-500)">'
+      + (F.noisy?('Weekly sales swing too much for the window to settle it &mdash; every read misses by '+Math.round(F.pct)+'% or more.')
+        :(!F.clear?('No window fits clearly: '+F.best+'wk and '+F.runnerUp+'wk are within a hair ('+Math.round(F.pct)+'% vs '+Math.round(F.runnerUpPct)+'% average miss).')
+          :('Recent sales fit the <b>'+F.best+'-week</b> rate best &mdash; '+Math.round(F.pct)+'% miss against '+Math.round(F.runnerUpPct)+'% for '+F.runnerUp+'wk.')))
+      + '</div>'; }catch(e){}
+  return '<div style="margin:0 0 14px;padding:11px 13px;border-radius:var(--r);border:1px solid '+tone.bd+';background:'+tone.bg+'">'
+    + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;color:'+tone.fg+';font-family:var(--fb);margin-bottom:4px">Buy suggestion &middot; from the Buy Planner</div>'
+    + '<div style="font-size:14px;line-height:1.5;color:var(--gray-800);font-family:var(--fb)">'+head+'</div>'
+    + '<div style="margin-top:3px;font-size:11.5px;color:var(--gray-500);font-family:var(--fm);line-height:1.5">'+why+'</div>'
+    + math + fit + '</div>';
+}
+
 function simRenderProduct(p){
   var origins=invmOriginsFor(p);
   if(origins.length && origins.indexOf(SIM_ORIGIN)<0) SIM_ORIGIN=origins[0];
@@ -18325,6 +18377,15 @@ function renderBuyPlanner() {
     // Effective shrink on the order (FIFO: avg case sits to ~mid of run-out).
     const _avgDaysOrder = weeklyDemand > 0 ? Math.round(((projAtArrival + recNetCases/2) / weeklyDemand) * 7) : daysOnHandNow;
     const effShrinkOrder = bpEffectiveShrink(dailyShrinkRate, _avgDaysOrder);
+    // Publicar la recomendación para que otras pantallas la MUESTREN en vez de recalcularla. Ginger
+    // tiene su propia aritmética acá (merma por tiempo, cadencia, order-up-to) distinta de la fórmula
+    // genérica de los otros cuatro; si el Simulator la re-derivara, habría dos respuestas para la
+    // misma pregunta al lado una de otra.
+    try{ if(window._bpDigest) window._bpDigest.rec = {
+      containers:recContainers, netCases:recNetCases, netNeeded:netNeeded,
+      orderUpTo:orderUpToCases, projAtArrival:projAtArrival, coverWks:recCoverWks,
+      leadWks:ltWeeksRec, cadence:cadence, ssCases:ssCases,
+      perContainer:netCasesPerContainer }; }catch(e){}
     const recQtyStr = recContainers + ' container' + (recContainers>1?'s':'') + ' · ~' + recNetCases.toLocaleString() + ' net cs \u2192 ~' + recCoverWks + ' wks @ ' + serviceLevel + '% · ~' + Math.round(effShrinkOrder*100) + '% shrink';
     const coverWks = weeklyDemand > 0 ? (1320 / weeklyDemand).toFixed(1) : '—';
     const recHtml = '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;background:' + recBg + ';border-radius:6px;margin-bottom:8px;flex-wrap:wrap">'
@@ -22435,6 +22496,10 @@ function renderSimulator() {
       + ['Peru','Hawaii'].map(function(o){ return '<button class="invm-ptab'+(_gO===o?' on':'')+'" onclick="simSetOrigin(\''+o+'\')">'+o+'</button>'; }).join(''); }
     if(_gO==='Hawaii'){ if(_sgb) _sgb.style.display='none'; if(_spv){ _spv.style.display=''; _spv.innerHTML=simRenderProduct('ginger'); } return; }
     if(_sgb) _sgb.style.display=''; if(_spv){ _spv.style.display='none'; _spv.innerHTML=''; }
+    // El digest lo publica renderBuyPlanner, así que puede no existir si el Simulator se abre primero.
+    try{ var _gs=document.getElementById('sim-ginger-suggestion');
+         if(_gs){ if(!(window._bpDigest&&window._bpDigest.rec) && typeof renderBuyPlanner==='function') renderBuyPlanner();
+                  _gs.innerHTML=bpGingerSuggestionHTML(); } }catch(e){}
   }catch(e){ console.warn('sim product view', e); }
   const state = simGetState();
 
