@@ -1126,6 +1126,62 @@ group('invmStockableWeekly · la demanda que de verdad sale de cámara');
   check('excluye las cuentas internas', Math.round(invmStockableWeekly('turmeric','all')[0].lbs/30), 60);
 })();
 
+group('El techo de vida útil manda sobre el order-up-to');
+// La regla que faltaba, escrita como aritmética pura para poder fijarla: nunca sugerir más
+// contenedores de los que entran antes del muro de la vida útil, y no redondear una fracción chica
+// a un contenedor entero. El Buy Planner se contradecía dos líneas abajo — "comprá 3" arriba y
+// "solo cabe 1" abajo — y su propia recomendación admitía 8,7 semanas contra un techo de 8.
+(function(){
+  // Misma aritmética que aplica renderBuyPlanner.
+  var decidir = function(netNeeded, perCont, grossPerCont, shelfWks, weeklyDemand, peakStock){
+    var cap  = Math.max(0, Math.floor((shelfWks*weeklyDemand - peakStock)/Math.max(1,grossPerCont)));
+    var raw  = netNeeded / Math.max(1, perCont);
+    var frac = raw - Math.floor(raw);
+    var want = Math.max(1, (raw>=1 && frac<=0.25) ? Math.floor(raw) : Math.ceil(raw));
+    var cont = Math.max(1, Math.min(want, cap));
+    return { cap:cap, raw:raw, want:want, cont:cont,
+             cappedBy:(cont<want)?'shelf':((want<Math.ceil(raw))?'round':null) };
+  };
+
+  // El caso real de ginger: 2.549 necesarias, 1.214 netas por contenedor, techo 8 semanas.
+  var g = decidir(2549, 1214, 1320, 8, 838, 4442);
+  ok('sin arreglo habría pedido 3', Math.ceil(2549/1214) === 3);
+  check('la fracción de 0,099 no justifica un contenedor', g.want, 2);
+  check('y el techo lo baja a 1', g.cont, 1);
+  check('y dice que fue el techo', g.cappedBy, 'shelf');
+
+  // Una fracción grande sí justifica el contenedor extra.
+  var h = decidir(2000, 1214, 1320, 8, 838, 0);
+  check('1,65 contenedores redondea para arriba', h.want, 2);
+  ok('y no lo reporta como recorte', h.cappedBy !== 'round');
+
+  // Una fracción chica redondea para abajo y lo dice.
+  var i = decidir(2450, 1214, 1320, 8, 838, 0);
+  check('2,02 redondea para abajo', i.want, 2);
+  check('y lo declara', i.cappedBy, 'round');
+
+  // Con espacio de sobra el techo no interfiere: manda el redondeo.
+  var j = decidir(3700, 1214, 1320, 8, 838, 0);
+  check('3,05 contenedores redondea para abajo', j.want, 3);
+  check('y el techo (5) no lo toca', j.cont, 3);
+
+  // Una necesidad que cae justo no recorta nada.
+  var jj = decidir(3642, 1214, 1320, 8, 838, 0);
+  check('3,00 exactos son 3', jj.cont, 3);
+  check('sin recorte que reportar', jj.cappedBy, null);
+
+  // Techo tocado: nunca baja de 1, porque la respuesta es saltear un embarque y eso se dice aparte.
+  var k = decidir(3000, 1214, 1320, 8, 838, 9000);
+  check('con el techo ya pasado el cap es 0', k.cap, 0);
+  check('pero no recomienda 0', k.cont, 1);
+
+  // Nunca puede sugerir más de lo que entra bajo el techo.
+  [[2549,4442],[3700,3000],[1500,5000]].forEach(function(c){
+    var r = decidir(c[0], 1214, 1320, 8, 838, c[1]);
+    ok('nunca supera el techo (necesita '+c[0]+', pico '+c[1]+')', r.cap===0 || r.cont<=r.cap);
+  });
+})();
+
 group('invmRunway · lo que ya tenés viniendo, que es lo que frena una compra de más');
 // La pregunta que evita comprar cinco contenedores de golpe no es "cuánto me falta" sino "cuánto ya
 // tengo en el agua". El pico de cobertura es el número que decide: si ya pasa la vida útil, lo que

@@ -17180,6 +17180,13 @@ function bpGingerSuggestionHTML(){
     + row('Decision', f(R.orderUpTo)+' &minus; '+f(R.projAtArrival), '<b>'+f(R.netNeeded)+' cs short</b>')
     + row('', '&divide; '+f(R.perContainer)+' net cs per container',
           '<b style="color:var(--jlz)">'+R.containers+' container'+(R.containers>1?'s':'')+' &rarr; ~'+R.coverWks+' wks cover</b>')
+    + (R.cappedBy==='shelf'
+        ? row('Capped', 'order-up-to wanted '+R.wanted+', but only '+R.cap+' fit under the '+R.shelfWks+'-wk shelf life',
+              '<b style="color:#DC2626">held at '+R.containers+'</b>')
+        : (R.cappedBy==='round'
+            ? row('Rounded', n2(R.raw)+' containers &mdash; the extra fraction is not worth a full container',
+                  '<b>down to '+R.containers+'</b>')
+            : ''))
     + '</table>';
   var fit=''; try{ var F=invmWindowFit('ginger','Peru');
     if(F) fit='<div style="margin-top:5px;font-size:11px;font-family:var(--fm);line-height:1.5;color:var(--gray-500)">'
@@ -18669,7 +18676,28 @@ function renderBuyPlanner() {
     const _arrRow = rows.find(r => seaEtaWk != null && r.weekNum === seaEtaWk);
     const projAtArrival = _arrRow ? _arrRow.startingStock : (rows.length ? rows[rows.length-1].endingStock : stockCases);
     const netNeeded = Math.max(0, orderUpToCases - projAtArrival);
-    const recContainers = Math.max(1, Math.ceil(netNeeded / Math.max(1, netCasesPerContainer)));
+    // ── El techo de vida útil manda sobre el order-up-to ──────────────────────────────────────
+    // La app calculaba el techo ("safe to add at peak") y la recomendación lo ignoraba, así que se
+    // contradecía a sí misma dos líneas más abajo: "comprá 3 contenedores" arriba y "solo cabe 1"
+    // abajo, con la propia recomendación admitiendo 8,7 semanas de cobertura contra una vida útil
+    // de 8. Lo que se compra de más no se vende: se liquida. Ya costó $22.457 y 7.687 cajas.
+    //
+    // Y el redondeo iba SIEMPRE para arriba. 2.549 cs entre 1.214 por contenedor da 2,099 y ceil lo
+    // llevaba a 3 — un contenedor entero, 1.214 cajas, para cubrir un faltante de 120. Repetido en
+    // cada orden, eso solo ya explica una parte del sobrestock. Ahora una fracción menor a un cuarto
+    // de contenedor redondea hacia abajo y se dice; el resto sigue redondeando hacia arriba.
+    const _shelfW  = (typeof dmShelfWeeks==='function') ? dmShelfWeeks('ginger') : 8;
+    const _pkRow   = rows.reduce((m,r)=> (r.weeksOfCoverage>(m?m.weeksOfCoverage:-1)?r:m), null);
+    const _pkStock = (_pkRow && _pkRow.endingStock!=null) ? _pkRow.endingStock : stockCases;
+    const _capCont = Math.max(0, Math.floor((_shelfW*weeklyDemand - _pkStock)/Math.max(1,grossCasesPerContainer)));
+    const _recRaw  = netNeeded / Math.max(1, netCasesPerContainer);
+    const _frac    = _recRaw - Math.floor(_recRaw);
+    const _recWant = Math.max(1, (_recRaw>=1 && _frac<=0.25) ? Math.floor(_recRaw) : Math.ceil(_recRaw));
+    // Nunca baja de 1: si el techo ya está tocado la respuesta real es saltear un embarque, y eso lo
+    // dice el bloque de shelf-life. Recomendar 0 acá dejaría la pantalla sin decir qué hacer.
+    const recContainers = Math.max(1, Math.min(_recWant, _capCont));
+    const _cappedBy = (recContainers < _recWant) ? 'shelf'
+                    : ((_recWant < Math.ceil(_recRaw)) ? 'round' : null);
     const recNetCases = Math.round(recContainers * netCasesPerContainer);
     const recCoverWks = weeklyDemand > 0 ? ((projAtArrival + recNetCases) / weeklyDemand).toFixed(1) : '—';
     // Effective shrink on the order (FIFO: avg case sits to ~mid of run-out).
@@ -18683,7 +18711,8 @@ function renderBuyPlanner() {
       containers:recContainers, netCases:recNetCases, netNeeded:netNeeded,
       orderUpTo:orderUpToCases, projAtArrival:projAtArrival, coverWks:recCoverWks,
       leadWks:ltWeeksRec, cadence:cadence, ssCases:ssCases,
-      perContainer:netCasesPerContainer }; }catch(e){}
+      perContainer:netCasesPerContainer,
+      raw:_recRaw, wanted:_recWant, cap:_capCont, cappedBy:_cappedBy, shelfWks:_shelfW }; }catch(e){}
     const recQtyStr = recContainers + ' container' + (recContainers>1?'s':'') + ' · ~' + recNetCases.toLocaleString() + ' net cs \u2192 ~' + recCoverWks + ' wks @ ' + serviceLevel + '% · ~' + Math.round(effShrinkOrder*100) + '% shrink';
     const coverWks = weeklyDemand > 0 ? (1320 / weeklyDemand).toFixed(1) : '—';
     const recHtml = '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;background:' + recBg + ';border-radius:6px;margin-bottom:8px;flex-wrap:wrap">'
