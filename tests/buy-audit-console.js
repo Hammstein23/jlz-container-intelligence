@@ -74,12 +74,22 @@
   if(!d){ console.warn('  · ginger-Perú: abrí el Buy Planner una vez y volvé a correr esto'); }
   else {
     var st=bpInvState(), bruto=Object.keys(st.rows||{}).reduce(function(t,k){ return t+(+((st.rows[k]||{}).cases)||0); },0);
-    mark('ginger|Peru · bruto cargado', bruto, d.stockCasesGross!=null?d.stockCasesGross:d.stockCases, 1.01);
-    rows.push({ producto:'ginger|Peru', libre:Math.round(d.stockCases||0), camino:Math.round(d.incoming||0),
-                posicion:Math.round((d.stockCases||0)+(d.incoming||0)), 'cs/sem':f2(d.weeklyDemand),
-                ventana:(d.win||'?')+'wk', 'cobertura wk':f2(d.coverage), 'objetivo wk':f2(d.targetWks),
-                comprar:(d.rec&&d.rec.cases)!=null?d.rec.cases:'—',
-                'ordenar antes de':(d.rec&&d.rec.orderBy)||'—', llega:(d.rec&&d.rec.arrives)||'—' });
+    // El Buy Planner arranca del BRUTO (stockCasesGross = stockCases) y consume el committed semana
+    // a semana; si esto no cierra, se cargó el libre en vez de lo físico — el error del Paso 3b.
+    mark('ginger|Peru · bruto cargado = el del plan', bruto, d.stockCases, 1.01);
+    var R=d.rec||{};
+    // El objetivo de ginger NO es lead+colchón: es lead + cadencia entre órdenes (order-up-to).
+    if(R.leadWks!=null) mark('ginger|Peru · cajas a pedir = order-up-to − proyectado', 
+        Math.max(0,(R.orderUpTo||0)-(R.projAtArrival||0)), R.netNeeded||0, 1.01);
+    if(R.raw!=null && R.cap!=null)
+      console.log('  ginger|Peru · '+f2(R.raw)+' contenedores crudos → quiere '+R.wanted
+                 +' → techo de vida útil '+R.cap+' ('+(R.shelfWks||'?')+' sem) → recomienda '+R.containers
+                 +(R.cappedBy?(' · limitado por '+(R.cappedBy==='shelf'?'la vida útil':'el redondeo')):''));
+    rows.push({ producto:'ginger|Peru', libre:Math.round(d.stockCases||0), camino:'—',
+                posicion:'—', 'cs/sem':f2(d.weeklyDemand),
+                ventana:'—', 'cobertura wk':f2(d.coverage), 'objetivo wk':f2((R.leadWks||0)+(R.cadence||0)),
+                comprar:(R.netCases!=null?(R.containers+' cont · '+Math.round(R.netCases)+' cs'):'—'),
+                'ordenar antes de':(d.seaDeadline||d.airDeadline||'—'), llega:'—' });
   }
 
   console.table(rows);
