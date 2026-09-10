@@ -1126,6 +1126,40 @@ group('invmStockableWeekly · la demanda que de verdad sale de cámara');
   check('excluye las cuentas internas', Math.round(invmStockableWeekly('turmeric','all')[0].lbs/30), 60);
 })();
 
+group('Una sola base: físico contra físico, vendible contra vendible');
+// La familia de errores de esta sesión, escrita como regla. Hay DOS unidades en juego y cada cuenta
+// tiene que quedarse en una: cajas FÍSICAS (lo que sale de cámara, vendido + merma) o cajas
+// VENDIBLES (lo que se factura). Mezclarlas descuenta o infla la merma sin que nada dé error.
+(function(){
+  var stock = 2983, vendidas = 736, merma = 0.1218;      // ~12% efectiva
+  var fisicas = vendidas / (1 - merma);                   // 838 cs/sem que salen de cámara
+
+  // Cobertura: el stock físico se vacía al ritmo físico.
+  var buena = stock / fisicas, mala = stock / vendidas;
+  check('cobertura correcta (físico ÷ físico)', Math.round(buena*100)/100, 3.56);
+  check('la mezcla daba 4,05', Math.round(mala*100)/100, 4.05);
+  ok('mezclar sobreestima ~14%', Math.round((mala/buena-1)*100) === 14);
+
+  // Contenedores: la proyección suma el BRUTO, así que la necesidad se divide por el bruto.
+  var bruto = 1320, vendible = bruto*(1-merma), necesita = 2549;
+  ok('dividir por vendible pide más contenedores', (necesita/vendible) > (necesita/bruto));
+  check('1 contenedor en semanas (físico ÷ físico)', Math.round(bruto/fisicas*100)/100, 1.58);
+  check('y en vendibles ÷ vendidas da lo mismo', Math.round(vendible/vendidas*100)/100, 1.58);
+  ok('pero la mezcla da menos que las dos', (vendible/fisicas) < (bruto/fisicas) && (vendible/fisicas) < (vendible/vendidas));
+
+  // Días en cámara: misma regla, y encima realimenta la merma.
+  var dias0 = (stock/vendidas)*7, diasOk = (stock/fisicas)*7;
+  ok('los días con base vendible salen más largos', dias0 > diasOk);
+  ok('y por eso inflan la merma estimada, que infla la demanda',
+     (dias0 - diasOk) > 3);
+
+  // La regla, en una línea: numerador y denominador de la misma unidad.
+  var mismaUnidad = function(num, den){ return num.unit === den.unit; };
+  ok('físico ÷ físico', mismaUnidad({unit:'fis'},{unit:'fis'}));
+  ok('vendible ÷ vendible', mismaUnidad({unit:'ven'},{unit:'ven'}));
+  ok('físico ÷ vendible NO', !mismaUnidad({unit:'fis'},{unit:'ven'}));
+})();
+
 group('El techo de vida útil manda sobre el order-up-to');
 // La regla que faltaba, escrita como aritmética pura para poder fijarla: nunca sugerir más
 // contenedores de los que entran antes del muro de la vida útil, y no redondear una fracción chica

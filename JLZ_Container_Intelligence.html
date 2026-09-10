@@ -17929,12 +17929,6 @@ function renderBuyPlanner() {
   _setKpi('bp-demand-cs',  Math.round(salesDemand).toLocaleString());
   _setKpi('bp-demand-src', usingDemandModule ? 'Demand · Peru' : 'Manual fallback');
   if (typeof winRenderToggle === 'function') winRenderToggle('bp-winsel');
-  const coverage = salesDemand > 0 ? stockCases / salesDemand : 0;
-  const covEl = document.getElementById('bp-coverage');
-  if (covEl) {
-    covEl.textContent = coverage.toFixed(1);
-    covEl.style.color = coverage >= 3 ? 'var(--green-700)' : coverage >= 1.5 ? 'var(--amber-600)' : 'var(--red-600)';
-  }
 
   // Update sales source indicator
   const srcEl = document.getElementById('bp-sales-source');
@@ -17959,9 +17953,30 @@ function renderBuyPlanner() {
   const _bpCalDaily = (_bpCalR && _bpCalR.shrinkDay > 0 && _bpCalR.shrinkN >= 3) ? (_bpCalR.shrinkDay / 100) : null;
   const _bpShrinkCalN = (_bpCalDaily != null && _bpCalR) ? _bpCalR.shrinkN : 0;
   const dailyShrinkRate = (_bpCalDaily != null) ? _bpCalDaily : (shrinkPct / SHRINK_REF_DAYS);                          // fraction/day
-  const daysOnHandNow   = salesDemand > 0 ? Math.round((stockCases / salesDemand) * 7) : 0;
-  const effShrinkNow    = bpEffectiveShrink(dailyShrinkRate, daysOnHandNow);
-  const weeklyDemand    = salesDemand / (1 - Math.min(0.5, effShrinkNow));   // warehouse outflow, time-based calibrated shrink
+  // ── Los días en cámara se miden contra la salida FÍSICA, no contra lo vendido ────────────────
+  // `stockCases` son cajas físicas y se consumen a `weeklyDemand` (vendido + merma), no a
+  // `salesDemand`. Dividir físico entre vendible sobreestimaba los días ~14%, y de esos días sale
+  // la merma efectiva, que a su vez infla `weeklyDemand`: el error se realimentaba hacia comprar
+  // de más. Hay huevo-y-gallina (los días dependen de la merma y la merma de los días), así que se
+  // arranca con la aproximación vendible y se refina una vez — converge de sobra.
+  const _days0        = salesDemand > 0 ? (stockCases / salesDemand) * 7 : 0;
+  const _wk0          = salesDemand / (1 - Math.min(0.5, bpEffectiveShrink(dailyShrinkRate, _days0)));
+  const daysOnHandNow = _wk0 > 0 ? Math.round((stockCases / _wk0) * 7) : 0;
+  const effShrinkNow  = bpEffectiveShrink(dailyShrinkRate, daysOnHandNow);
+  const weeklyDemand  = salesDemand / (1 - Math.min(0.5, effShrinkNow));   // warehouse outflow, time-based calibrated shrink
+
+  // Cobertura = cuántas semanas hasta quedarte sin. El stock FÍSICO se vacía a la salida física, no
+  // al ritmo de facturación: dividir por `salesDemand` daba 4,05 semanas donde son 3,56 (+14%). Es
+  // el titular del Buy Planner y del Command Center, y la proyección de abajo ya usaba la base
+  // física — o sea que el encabezado y su propia tabla no coincidían.
+  const coverage = weeklyDemand > 0 ? stockCases / weeklyDemand : 0;
+  {
+    const covEl = document.getElementById('bp-coverage');
+    if (covEl) {
+      covEl.textContent = coverage.toFixed(1);
+      covEl.style.color = coverage >= 3 ? 'var(--green-700)' : coverage >= 1.5 ? 'var(--amber-600)' : 'var(--red-600)';
+    }
+  }
   { const _shr = document.getElementById('bp-shrink-rate');
     if (_shr) _shr.textContent = '\u2248' + (dailyShrinkRate*100).toFixed(2) + '%/day · ~' + daysOnHandNow + 'd on hand \u2192 eff ' + Math.round(effShrinkNow*100) + '%' + (_bpShrinkCalN ? ' \u00b7 cal ' + _bpShrinkCalN + ' cont' : ''); }
 
@@ -18552,7 +18567,7 @@ function renderBuyPlanner() {
       : 1;
     const cadenceSuggEl = document.getElementById('bp-cadence-sugg');
     if (cadenceSuggEl) {
-      cadenceSuggEl.textContent = suggestedCadence + ' wk (1 container ≈ ' + Math.round(netCasesPerContainer) + ' net cases ÷ ' + Math.round(weeklyDemand) + ' wk demand)';
+      cadenceSuggEl.textContent = suggestedCadence + ' wk (1 container = ' + Math.round(grossCasesPerContainer) + ' cases ÷ ' + Math.round(weeklyDemand) + ' wk demand)';
     }
     const cadenceInput = parseFloat(document.getElementById('bp-cadence')?.value);
     const cadence = (isFinite(cadenceInput) && cadenceInput > 0) ? cadenceInput : suggestedCadence;
