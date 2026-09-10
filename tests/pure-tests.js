@@ -1070,6 +1070,42 @@ group('El descuento se resta UNA vez: en la fila y en el total, no en ambos por 
   ok('esa doble resta llevaba el total a cero',                conCrudo === 0);
 })();
 
+group('mtoStaleShipments · el aviso del descuento que no se está aplicando');
+// El descuento contra-orden pide fecha REAL de llegada. El reverso es silencioso: mercadería que ya
+// salió al cliente con la orden todavía "en camino" cuenta como demanda de cámara y el plan compra
+// de más. El pipeline no avanza solo, así que este caso es el DEFAULT si nadie marca la orden.
+(function(){
+  var HOY = dmISOLocal(new Date());
+  var d = function(n){ var x = new Date(); x.setDate(x.getDate() + n); return dmISOLocal(x); };
+  var BASE = [
+    { jlzPo:'VENCIDA', product:'turmeric', status:'In Transit', arrivalEstimated:d(-3),
+      directShip:[{customer:'Sol-ti', cases:700}] },
+    { jlzPo:'FUTURA',  product:'turmeric', status:'In Transit', arrivalEstimated:d(+7),
+      directShip:[{customer:'Sol-ti', cases:700}] },
+    { jlzPo:'LLEGADA', product:'garlic',   status:'Arrived',    arrivalEstimated:d(-9), arrivalActual:d(-9),
+      directShip:[{customer:'Whole Foods Market', cases:140}] },
+    { jlzPo:'SINMARCA',product:'garlic',   status:'In Transit', arrivalEstimated:d(-20) },
+    { jlzPo:'CANCEL',  product:'ginger',   status:'Cancelled',  arrivalEstimated:d(-30),
+      directShip:[{customer:'Sol-ti', cases:900}] }
+  ];
+  getOrders = function(){ return BASE; };
+  var r = mtoStaleShipments();
+  check('avisa solo por la vencida y sin marcar', r.length, 1);
+  check('y dice de qué orden se trata', r[0].po, 'VENCIDA');
+  check('con las cajas que están inflando el run-rate', r[0].cases, 700);
+  check('y hace cuántos días debió llegar', r[0].dias, 3);
+  check('nombra al cliente, que es lo accionable', r[0].quien, 'Sol-ti');
+  ok('una llegada futura todavía no es un problema', !r.some(function(x){ return x.po === 'FUTURA'; }));
+  ok('una ya marcada como llegada se calla', !r.some(function(x){ return x.po === 'LLEGADA'; }));
+  ok('una orden sin marca contra-orden no le incumbe', !r.some(function(x){ return x.po === 'SINMARCA'; }));
+  ok('una cancelada tampoco', !r.some(function(x){ return x.po === 'CANCEL'; }));
+
+  // El orden importa: primero la que lleva más tiempo mal, que es la que más distorsiona.
+  BASE.push({ jlzPo:'MASVIEJA', product:'turmeric', status:'In Transit', arrivalEstimated:d(-30),
+              directShip:[{customer:'Sol-ti', cases:400}] });
+  check('ordena por antigüedad: la más vieja primero', mtoStaleShipments()[0].po, 'MASVIEJA');
+})();
+
 group('mtoCasesPerWeek · lo comprado contra orden, orden por orden');
 // El flag por cliente saca a la cuenta entera. Esto solo saca las cajas que compraste para alguien,
 // así que el mismo cliente puede tener stock y contra-orden a la vez — el caso real del ajo.

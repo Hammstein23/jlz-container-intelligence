@@ -17017,6 +17017,50 @@ function bpSnapWeekDemand(wkDemand, committedWk, infl, snapDate){
   return firm + (wkDemand - firm) * left;
 }
 
+// ── Contenedores contra-orden que ya deberían haber llegado ────────────────────────────────────
+// El descuento contra-orden solo corre cuando la orden lleva fecha REAL de llegada (arrivalActual):
+// un contenedor en tránsito no puede explicar ventas pasadas. El reverso es un error SILENCIOSO: si
+// la mercadería llegó y salió al cliente pero nadie pasó la orden a Arrived, esa venta cuenta como
+// demanda de cámara, el run-rate sube y el plan pide comprar de más — y no había nada en pantalla
+// que lo dijera. El pipeline no avanza solo (solo lo mueve guardar un contenedor en History), así
+// que este caso no es raro: es lo que pasa por defecto si nadie lo marca.
+function mtoStaleShipments(){
+  var out = [];
+  try{
+    var hoy = (typeof dmISOLocal === 'function') ? dmISOLocal(new Date()) : new Date().toISOString().slice(0,10);
+    (typeof getOrders === 'function' ? getOrders() : []).forEach(function(o){
+      if(!o || o.status === 'Cancelled' || o.arrivalActual) return;
+      if(!Array.isArray(o.directShip) || !o.directShip.length) return;
+      var eta = o.arrivalEstimated || '';
+      if(!eta || eta >= hoy) return;                       // todavía no vencía: nada que avisar
+      var cs = o.directShip.reduce(function(t, d){ return t + (+(d && d.cases) || 0); }, 0);
+      if(!(cs > 0)) return;
+      var dias = 0;
+      try{ dias = Math.max(0, Math.round((new Date(hoy + 'T00:00:00') - new Date(eta + 'T00:00:00')) / 864e5)); }catch(e){}
+      out.push({ po: o.jlzPo, cases: cs, eta: eta, dias: dias, status: o.status || '',
+                 prod: (typeof _ordProd === 'function') ? _ordProd(o) : (o.product || 'ginger'),
+                 quien: o.directShip.map(function(d){ return (d && d.customer) || '?'; }).join(', ') });
+    });
+  }catch(e){}
+  return out.sort(function(a, b){ return b.dias - a.dias; });
+}
+function mtoStaleBanner(){
+  var st = [];
+  try{ st = (typeof mtoStaleShipments === 'function') ? mtoStaleShipments() : []; }catch(e){ return ''; }
+  if(!st.length) return '';
+  return '<div style="display:flex;align-items:flex-start;gap:7px;margin:-2px 0 11px;padding:7px 9px;border-radius:6px;'
+       + 'font-size:10.5px;font-family:var(--fm);line-height:1.55;background:#FEF2F2;border:1px solid #FECACA;color:#991B1B">'
+       + '<span style="flex:none">&#9888;</span><span><b>'
+       + st.length + ' contenedor' + (st.length > 1 ? 'es comprados' : ' comprado') + ' contra orden sin marcar como llegado.</b> '
+       + 'Hasta que la orden no tenga fecha real de llegada, esas cajas cuentan como demanda de cámara: '
+       + 'el run-rate sube y el plan pide comprar de más.'
+       + st.map(function(x){
+           return '<div style="margin-top:3px">PO <b>' + x.po + '</b> &middot; ' + x.quien + ' ' + x.cases
+                + ' cs de ' + x.prod + ' &middot; llegada prevista ' + x.eta + ', hace ' + x.dias + 'd, y sigue en <b>'
+                + x.status + '</b></div>'; }).join('')
+       + '</span></div>';
+}
+
 function bpFreshnessStamp(){
   var bits = [], stale = 0;
   try{
@@ -17051,9 +17095,10 @@ function bpFreshnessStamp(){
       if(d2 > stale) stale = d2;
     } else { bits.push('stock not date-stamped yet'); }
   }catch(e){}
-  if(!bits.length) return '';
+  var _stale = mtoStaleBanner();
+  if(!bits.length) return _stale;
   var warn = stale >= 3;
-  return '<div style="display:flex;align-items:center;gap:7px;margin:-2px 0 11px;padding:6px 9px;border-radius:6px;'
+  return _stale + '<div style="display:flex;align-items:center;gap:7px;margin:-2px 0 11px;padding:6px 9px;border-radius:6px;'
        + 'font-size:10.5px;font-family:var(--fm);line-height:1.5;'
        + (warn ? 'background:#FFFBEB;border:1px solid #FDE68A;color:#92400E'
                : 'background:var(--gray-50);border:1px solid var(--gray-200);color:var(--gray-500)') + '">'
