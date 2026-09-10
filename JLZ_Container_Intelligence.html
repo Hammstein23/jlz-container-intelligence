@@ -12021,7 +12021,14 @@ function hybridSalesForWeek(wk, salesDemand, model, product, extraOrders, origin
   // y como tampoco se dibujan como fila, el volumen cae sin dueño en "Other small accounts".
   // Garlic 2026-09-03: Whole Foods es direct-ship con 140 cs committed → +82 cajas fantasma y un
   // "Buy 111" de producto que jamás pasa por cámara.
-  var _hpDS = function(cust){ try { return (typeof isDirectShipRow === 'function') && isDirectShipRow({ c: cust, prod: _hp }); } catch(e){ return false; } };
+  // Una cuenta que compra CONTRA ORDEN no debe meter su committed en el plan: esas cajas ya tienen
+  // dueño antes de llegar. Antes esto salía del flag por cliente (retirado); ahora sale de las órdenes
+  // marcadas — misma protección, sin etiquetar al cliente para siempre. Garlic 2026-09-03: Whole Foods
+  // con 140 cs committed metía +82 cajas fantasma y un "Buy 111" de producto que nunca pasa por cámara.
+  var _hpMto = (function(){ try{ return (typeof mtoByCustomer === 'function')
+                   ? (mtoByCustomer(_hp, (typeof dmWindow === 'function') ? dmWindow(_hp) : 13) || {}) : {}; }
+                 catch(e){ return {}; } })();
+  var _hpDS = function(cust){ return Object.prototype.hasOwnProperty.call(_hpMto, cust); };
   // La tasa por cliente tiene que usar la MISMA ventana que la base que mandó el caller; si no, el
   // "excedente sobre el run-rate" se mide contra otro promedio (garlic: base armada con rr6Cases=37,
   // excedente medido contra rrCases de 13 semanas=58).
@@ -12054,7 +12061,7 @@ function hybridSalesForWeek(wk, salesDemand, model, product, extraOrders, origin
   custs.forEach(function(c){
     if (!c || !c.c) return;
     seen[c.c] = 1;
-    if (_hpDS(c.c)) return;                        // direct-ship: fuera de la demanda de stock
+    if (_hpDS(c.c)) return;                        // compra contra orden: fuera de la demanda de stock
     var rr = _hpRr(c), cm = comThis[c.c] || 0, last = comLast[c.c];
     if (c.sporadic) {
       // Order-driven. WITHIN its committed horizon (week ≤ its last committed week) the committed IS the
@@ -12067,7 +12074,7 @@ function hybridSalesForWeek(wk, salesDemand, model, product, extraOrders, origin
       adj += Math.max(0, cm - rr);                 // steady: excess over run-rate only
     }
   });
-  Object.keys(comThis).forEach(function(cust){ if (!seen[cust] && !_hpDS(cust)) adj += comThis[cust]; });   // unknown accounts → full committed (direct-ship excluido)
+  Object.keys(comThis).forEach(function(cust){ if (!seen[cust] && !_hpDS(cust)) adj += comThis[cust]; });   // unknown accounts → full committed (contra-orden excluido)
   return Math.max(0, salesDemand + adj);
 }
 // ── Direct-ship (per-container, on the order object) ──
@@ -13576,7 +13583,7 @@ function renderOrderPanel() {
 // ya leen el Buy Planner, el Simulator y el Inventario, así que no hay un segundo camino de datos.
 // Los clientes que realmente le compran ESTE producto, sacados de las ventas cargadas. Tiene que ser
 // una lista y no texto libre: el nombre se compara letra por letra contra el modelo de demanda
-// (`dsIsOn`, el carril "made to order", el aviso de coherencia). Un "Whole Foods" escrito a mano no
+// (el descuento contra-orden, el carril "made to order", el aviso de coherencia). Un "Whole Foods" escrito a mano no
 // matchea "Whole Foods Market" y la marca queda huérfana, sin que nada lo diga.
 function ordBoughtForCustomers(prod){
   var p = prod || 'ginger', seen = {}, out = [];
@@ -15573,27 +15580,15 @@ function dmIsInternalAccount(cust){
 // arrangements change, so it is editable from the Demand tab (a toggle per customer) and persisted per
 // device — hard-coding it meant every change needed a code edit, and a wrong entry silently inflates or
 // deflates the buy plan for that whole product.
-var DIRECT_SHIP=[{customer:'sol-ti', product:'turmeric'}];
-var DS_LS='jlz_directship_pairs_v1';
-function dsKey(cust, prod){ return String(cust||'').trim().toLowerCase()+'|'+String(prod||'ginger'); }
-function dsState(){ try{ var o=JSON.parse(localStorage.getItem(DS_LS)||'null'); return (o&&typeof o==='object')?o:null; }catch(e){ return null; } }
-function dsSave(o){ try{ localStorage.setItem(DS_LS, JSON.stringify(o||{})); }catch(e){} }
-// true = this account's volume for this product NEVER enters inventory (ships supplier → customer).
-function dsIsOn(cust, prod){
-  var st=dsState(), k=dsKey(cust,prod);
-  if(st && st.hasOwnProperty(k)) return !!st[k];                       // explicit choice wins
-  var c=String(cust||'').trim().toLowerCase(), p=prod||'ginger';       // else fall back to the seed pairs
-  return DIRECT_SHIP.some(function(d){ return d.product===p && c.indexOf(d.customer)>-1; });
-}
-function dsToggle(cust, prod){
-  var st=dsState()||{}, k=dsKey(cust,prod);
-  st[k]=!dsIsOn(cust,prod);
-  dsSave(st);
-  // Everything downstream reads the same flag, so rebuild the model and repaint the planners.
-  try{ if(typeof dmRebuildView==='function') dmRebuildView(); }catch(e){}
-  try{ if(typeof renderBuyPlanner==='function') renderBuyPlanner(); }catch(e){}
-  try{ if(typeof invmReRender==='function') invmReRender(); }catch(e){}
-}
+// El flag por cliente se RETIRÓ. Había dos formas de decir lo mismo y una pisaba a la otra en
+// silencio: prender el flag hacía que mtoByCustomer saltee el descuento por orden ("ya excluido
+// entero por el flag"), así que marcar el contenedor dejaba de tener efecto sin que nada avisara.
+// Ahora hay un solo camino: se marca la ORDEN (`order.directShip[]`). De ahí sale todo — el
+// descuento de la demanda, la etiqueta de la UI y el volumen pass-through. Es más fino además:
+// descuenta las cajas de ese contenedor, no al cliente entero y para siempre, así que una cuenta
+// puede comprar contra orden Y de cámara en la misma semana sin que haya que tocar nada.
+
+
 // ── Detector de compras contra orden en el historial ────────────────────────────────────────────
 // Marcar 132 órdenes de memoria no es realista. Pero el patrón se ve en los datos: una compra hecha
 // PARA alguien deja dos huellas — la PO se sale del tamaño habitual del producto, y el cliente compra
@@ -15678,7 +15673,7 @@ function mtoDetectCandidates(prod, weeks){
 }
 
 // ── Cuánta demanda se cubre CONTRA ORDEN, según las POs marcadas en Orders ──────────────────────
-// El flag por cliente (`dsIsOn`) saca a la cuenta ENTERA de la demanda de stock. Esto es el bisturí:
+// Marcar al cliente entero sacaría toda su demanda de stock. Esto es el bisturí:
 // solo las cajas que efectivamente compraste para alguien, orden por orden. El mismo cliente puede
 // tener las dos cosas conviviendo — el ajo de Whole Foods son POs de ~64 que van a stock, más las de
 // 134 y 140 que son suyas; los chalotes son dos contenedores de 100, uno a stock y otro para ellos.
@@ -15758,7 +15753,6 @@ function mtoOrdersByCustomer(prod, weeks){
     if(since && wk < since) return;
     o.directShip.forEach(function(ds){
       if(!ds || !ds.customer) return;
-      if(typeof dsIsOn === 'function' && dsIsOn(ds.customer, prod)) return;
       (out[ds.customer] = out[ds.customer] || []).push({ po:o.jlzPo, cases:(+ds.cases || 0), on:String(d).slice(0,10) });
     });
   });
@@ -15791,7 +15785,6 @@ function mtoByCustomer(prod, weeks){
     if(since && wk < since) return;
     o.directShip.forEach(function(ds){
       if(!ds || !ds.customer) return;
-      if(typeof dsIsOn === 'function' && dsIsOn(ds.customer, prod)) return;   // ya excluido entero por el flag
       marked[ds.customer] = (marked[ds.customer] || 0) + (+ds.cases || 0);
     });
   });
@@ -15830,20 +15823,16 @@ function mtoCasesPerWeek(prod, weeks){
 }
 
 
-function isDirectShipRow(r){
-  if(!r) return false;
-  return dsIsOn(r.c, r.prod||'ginger');
-}
+
 // El par es cliente+PRODUCTO, así que quién despacha directo cambia según el producto: Sol-ti en
 // turmeric, Whole Foods en garlic. La UI tenía "Sol-ti" hardcodeado en tres lugares y por eso la
 // pantalla de garlic decía "Sol-ti direct-ship" cuando en realidad era Whole Foods.
 function dsNamesFor(prod, model){
-  var m = model || ((typeof _dmModel !== 'undefined') ? _dmModel : null);
-  var out = [];
-  if(m && Array.isArray(m.customers)) m.customers.forEach(function(c){
-    if(c && c.c && dsIsOn(c.c, prod)) out.push(c.c);
-  });
-  return out;
+  // Sale de las ÓRDENES marcadas, no de una etiqueta por cliente.
+  try{
+    var w = (typeof dmWindow === 'function') ? dmWindow(prod) : 13;
+    return Object.keys((typeof mtoByCustomer === 'function') ? (mtoByCustomer(prod, w) || {}) : {});
+  }catch(e){ return []; }
 }
 function dsLabelFor(prod, model){
   var n = dsNamesFor(prod, model);
@@ -15870,32 +15859,6 @@ function dsSetWindow(v){ v=parseInt(v,10); if(!(v===3||v===6||v===13||v===26)) v
 // is for stock reorder, and a made-to-order account is lumpy: some weeks zero). Divides by the
 // full window of CALENDAR weeks (incl. empty ones) so the weekly figure is honest, not overstated.
 // Shown separately; never feeds any buy math.
-function invmDirectShipCases(p,origin){
-  if(!(typeof _dmRawAll!=='undefined' && Array.isArray(_dmRawAll))) return 0;
-  var caseLb=(typeof productCaseLb==='function')?productCaseLb(p):30;
-  var wk={};
-  _dmRawAll.forEach(function(r){
-    if((r.prod||'ginger')!==p) return;
-    if(!invmOriginMatch(r,origin)) return;
-    if(!isDirectShipRow(r)) return;
-    if(r.type && r.type!=='Sale') return;                 // volume = sales only (credits/returns net out of stock, not here)
-    var k; try{ k=(typeof dmWeekKey==='function')?dmWeekKey(r.d):null; }catch(e){ k=null; }
-    if(k) wk[k]=(wk[k]||0)+(r.lbs||0);
-  });
-  if(!Object.keys(wk).length) return 0;
-  var dmax=(typeof dmGlobalDataMax==='function')?dmGlobalDataMax():'';
-  var anchor=dmax?new Date(dmax):new Date();
-  // La ventana del direct-ship es la SUYA (dsWindow, 26 por defecto), no la del stock. El comentario
-  // de arriba ya lo decía pero el código usaba dmWindow: con la ventana corta de turmeric (3 semanas)
-  // Sol-ti daba 0 cs/wk — compró en la semana del 10-ago y no en las tres últimas. Una cuenta
-  // order-driven pone pocas POs por trimestre; promediarla en 3 semanas la apaga o la dispara.
-  var N=(typeof dsWindow==='function')?dsWindow():13;
-  var weeks=[], seen={};
-  for(var i=0;i<N;i++){ var d=new Date(anchor); d.setDate(d.getDate()-7*i); var k=(typeof dmWeekKey==='function')?dmWeekKey(d):null; if(k&&!seen[k]){ seen[k]=1; weeks.push(k); } }
-  if(!weeks.length) return 0;
-  var sum=weeks.reduce(function(t,k){ return t+(wk[k]||0); },0);
-  return (sum/weeks.length)/caseLb;                        // lbs/wk averaged over 13 calendar weeks → cases/wk
-}
 // NOWCAST the trailing incomplete week (turmeric/garlic/shallots only — ginger keeps its own engine).
 // The run-rate drops the dataMax week because invoicing lags (it's only partly billed). But that week has
 // essentially happened; we complete it with its confirmed orders (committed/unshipped for that week) so the
@@ -16070,7 +16033,7 @@ function invmProductModel(p,origin){
     // Antes se restaba al agregado en invmProductStats mientras la zona 3 lo hacía por fila: dos
     // mecanismos para lo mismo daban dos números distintos (101 contra 88 en turmeric). Un solo lugar.
     try{
-      var _f = _dmRawAll.filter(function(r){ return (r.prod||'ginger')===p && invmOriginMatch(r,origin) && !isDirectShipRow(r); });
+      var _f = _dmRawAll.filter(function(r){ return (r.prod||'ginger')===p && invmOriginMatch(r,origin); });
       try{ if(typeof mtoNetRows==='function') _f = mtoNetRows(_f, p, (typeof dmWindow==='function')?dmWindow(p,origin):13); }catch(e){}
       return dmBuild(_f, false, p, origin);
     }catch(e){ return null; }
@@ -16210,8 +16173,7 @@ function invmProductStats(p,origin){
   // `mtoCasesPerWeek` devuelve 0 para un cliente que ya está flageado, así que nunca se suma dos veces.
   // Cuando el flag desaparezca del todo, este número sigue saliendo — de las órdenes, que es la fuente
   // que Juan eligió: cada compra dice si tenía destino, en vez de etiquetar al cliente para siempre.
-  var directShipCases=((typeof invmDirectShipCases==='function')?invmDirectShipCases(p,origin):0)
-                     +((typeof mtoCasesPerWeek==='function')?mtoCasesPerWeek(p,(typeof dsWindow==='function')?dsWindow():26):0);
+  var directShipCases=((typeof mtoCasesPerWeek==='function')?mtoCasesPerWeek(p,(typeof dsWindow==='function')?dsWindow():26):0);
   var coverWks=(weeklyLbsBuy>0)?availLbs/weeklyLbsBuy:(availLbs>0?Infinity:0);
   var orderCases=Math.ceil(Math.max(0,(targetWks*weeklyLbsBuy)-availLbs)/caseLb);
   var status='ok';
@@ -24968,10 +24930,10 @@ function renderDmRunRate(){
   var m = mTotal, dsCases = 0;
   var _hpProd = (typeof getActiveProduct==='function') ? getActiveProduct() : ((typeof productFocus==='function')?productFocus():'ginger');
   try{
-    if(typeof dmFilteredRows==='function' && typeof isDirectShipRow==='function' && typeof dmBuildModel==='function'){
+    if(typeof dmFilteredRows==='function' && typeof dmBuildModel==='function'){
       var _rows = dmFilteredRows();
       // ── La compuerta tiene que mirar los DOS mecanismos ───────────────────────────────────────
-      // Decía solo `_rows.some(isDirectShipRow)`, porque cuando se escribió el único mecanismo era el
+      // Decía solo `_rows.some(<flag por cliente>)`, porque cuando se escribió el único mecanismo era el
       // flag por cliente. Al retirarlo, ninguna fila queda marcada, la condición da falso y todo este
       // bloque —incluido el descuento por orden— deja de correr en silencio. El panel seguía
       // mostrando a Sol-ti con 233 cs/wk y un titular de 321 mientras el plan usaba 88.
@@ -24979,11 +24941,11 @@ function renderDmRunRate(){
       var _hasMto = false;
       try{ _hasMto = (typeof mtoByCustomer === 'function')
                      && Object.keys(mtoByCustomer(_hpProd, _hpWin) || {}).length > 0; }catch(e){}
-      if(_rows.some(isDirectShipRow) || _hasMto){
+      if(_hasMto){
         // Y también lo comprado contra orden: este panel dice "STOCKABLE demand", así que una compra
         // con destino no va acá. Antes lo hacía el flag por cliente (retirado); ahora sale de las
         // órdenes marcadas, que es más fino: descuenta las cajas de Sol-ti, no a Sol-ti entero.
-        var _base = _rows.filter(function(r){ return !isDirectShipRow(r); });
+        var _base = _rows;
         try{ if(typeof mtoNetRows === 'function') _base = mtoNetRows(_base, _hpProd, _hpWin); }catch(e){}
         var _ms = dmBuildModel(_base, false, cl, (typeof productFocus==='function')?productFocus():null);
         if(_ms && _ms.runRate13>0 && Array.isArray(_ms.weeklyReliable)) m = _ms;
@@ -25471,12 +25433,13 @@ function dmWeekStatus(){
   // Base de run-rate en cajas, sin direct-ship — la misma cuenta que hace el build-up.
   var _win = (typeof dmWindow === 'function') ? dmWindow(prod) : 13;
   var _k = (_win === 3) ? 'rr3Cases' : (_win === 6) ? 'rr6Cases' : (_win === 26) ? 'rr26Cases' : 'rrCases';
-  var _isDS = function(c){ try{ return (typeof isDirectShipRow === 'function') && isDirectShipRow({ c: c, prod: prod }); }catch(e){ return false; } };
-  var _ds = (m.customers || []).reduce(function(a, c){
-    return a + ((c && c.c && _isDS(c.c)) ? ((c[_k] != null ? c[_k] : c.rrCases) || 0) : 0); }, 0);
+  // Quién compra CONTRA ORDEN sale de los contenedores marcados, no de una etiqueta por cliente:
+  // una cuenta puede comprar contra orden y de cámara en la misma semana.
+  var _mtoSet = (function(){ try{ return (typeof mtoByCustomer === 'function') ? (mtoByCustomer(prod, _win) || {}) : {}; }catch(e){ return {}; } })();
+  var _isDS = function(c){ return Object.prototype.hasOwnProperty.call(_mtoSet, c); };
   var _rrW = (_win === 3 ? (m.runRate3 || m.runRate13) : _win === 6 ? (m.runRate6 || m.runRate13)
             : _win === 26 ? (m.runRate26 || m.runRate13) : m.runRate13) || 0;
-  var salesBase = Math.max(0, _rrW / caseLb - _ds);
+  var salesBase = Math.max(0, _rrW / caseLb);          // m ya viene neteado por mtoNetModel
   var est = (typeof hybridSalesForWeek === 'function') ? hybridSalesForWeek(wk, salesBase, m, prod, null, _org) : null;
   est = Math.round((est == null ? salesBase : est) || 0);
 
@@ -25720,7 +25683,7 @@ function dmLineStats(p, o){
   var rows = (_dmRawAll||[]).filter(function(r){
     return (r.prod||'ginger')===p && (!o || dmRowOrigin(r)===o);
   });
-  var stockRows = rows.filter(function(r){ try{ return !isDirectShipRow(r); }catch(e){ return true; } });
+  var stockRows = rows;
   // Estas tarjetas son el resumen de PLANIFICACIÓN: run-rate y cobertura por producto+origen. Lo
   // comprado contra orden no se cubre con stock, así que sale acá también — por fila, el mismo
   // mecanismo que usan la zona 3 y el modelo de los cuatro productos. Sin esto la tarjeta decía un
@@ -25739,7 +25702,7 @@ function dmLineStats(p, o){
   var mean = function(a){ return a.length ? a.reduce(function(t,x){ return t+(x.lbs||0); },0)/a.length/cl : 0; };
   var prior = mean(ser.slice(Math.max(0, ser.length-2*win), Math.max(0, ser.length-win)));
   var ds = 0;
-  try{ if(typeof invmDirectShipCases === 'function') ds = invmDirectShipCases(p, o || 'all') || 0; }catch(e){}
+  try{ if(typeof mtoCasesPerWeek === 'function') ds = mtoCasesPerWeek(p, (typeof dsWindow==='function')?dsWindow():26) || 0; }catch(e){}
   var onHand = 0;
   if(p === 'ginger' && o === 'Peru'){
     try{ var st = bpInvState();
@@ -26189,17 +26152,11 @@ function renderBuildupPanel(){
   var weeks = bpFutureWeeks(8).slice(1, 8);   // next ~7 weeks, skip the current still-open week
   if(!weeks.length){ host.innerHTML = ''; return; }
   var _win = (typeof dmWindow === 'function') ? dmWindow(prod) : 13;
-  // Direct-ship accounts (Sol-ti's turmeric) ship port → customer and never enter the warehouse, so they
-  // are not stock demand. Declared here because BOTH the column total and the rows must exclude them —
-  // dropping them from the rows alone just pushed their volume into "Other small accounts".
-  var _isDS = function(cust){
-    try{ return (typeof isDirectShipRow === 'function') && isDirectShipRow({ c: cust, prod: prod }); }
-    catch(e){ return false; }
-  };
   var _rrKeyBase = (_win === 3) ? 'rr3Cases' : (_win === 6) ? 'rr6Cases' : (_win === 26) ? 'rr26Cases' : 'rrCases';
-  var _dsCases = (m.customers || []).reduce(function(s, c){
-    return s + ((c && c.c && _isDS(c.c)) ? ((c[_rrKeyBase] != null ? c[_rrKeyBase] : c.rrCases) || 0) : 0);
-  }, 0);
+  // Quién compra CONTRA ORDEN sale de los contenedores marcados, no de una etiqueta por cliente:
+  // una cuenta puede comprar contra orden y de cámara en la misma semana.
+  var _mtoSet = (function(){ try{ return (typeof mtoByCustomer === 'function') ? (mtoByCustomer(prod, _win) || {}) : {}; }catch(e){ return {}; } })();
+  var _isDS = function(c){ return Object.prototype.hasOwnProperty.call(_mtoSet, c); };
   var salesBase;
   if (isG) {
     salesBase = (typeof dmEffectiveRunRateLbs === 'function' && dmEffectiveRunRateLbs() != null)
@@ -26208,7 +26165,6 @@ function renderBuildupPanel(){
     var _rrW = (_win === 3 ? (m.runRate3 || m.runRate13) : _win === 6 ? (m.runRate6 || m.runRate13) : _win === 26 ? (m.runRate26 || m.runRate13) : m.runRate13);
     salesBase = _rrW / caseLb;
   }
-  salesBase = Math.max(0, salesBase - _dsCases);     // the plan buys stock, not pass-through volume
   // Y lo comprado contra orden tampoco: esas cajas ya tienen dueño antes de llegar.
   try{ if(typeof mtoCasesPerWeek === 'function') salesBase = Math.max(0, salesBase - mtoCasesPerWeek(prod, _win)); }catch(e){}
   // Buy-inflation. Ginger uses the Buy Planner's OWN time-based shrink so the "Buy" row
@@ -26645,9 +26601,11 @@ function cxKpis(m){
         var _agg = (_w===3 ? (m.runRate3||m.runRate13) : _w===6 ? (m.runRate6||m.runRate13)
                   : _w===26 ? (m.runRate26||m.runRate13) : m.runRate13) || 0;
         var _k = (_w===3)?'rr3Cases':(_w===6)?'rr6Cases':(_w===26)?'rr26Cases':'rrCases';
+        // Este panel lee el modelo de origen 'all', que NO pasa por mtoNetRows, así que el
+        // descuento contra-orden hay que restarlo acá — con la misma ventana que el run-rate.
         var _ds = 0;
-        (m.customers||[]).forEach(function(c){ if(c && c.c && (typeof dsIsOn==='function') && dsIsOn(c.c,_p))
-          _ds += (c[_k]!=null?c[_k]:c.rrCases)||0; });
+        try{ var _mto = (typeof mtoByCustomer==='function') ? (mtoByCustomer(_p,_w)||{}) : {};
+             Object.keys(_mto).forEach(function(c){ _ds += (+_mto[c]||0); }); }catch(e){ _ds = 0; }
         var _stock = Math.max(0, _agg/_cl - _ds);
         var _dsNote = (_ds >= 1)
           ? (' \u00b7 <span style="color:#7c3aed">+'+cxFmtN(_ds)+' cs/wk '+((typeof dsLabelFor==='function')?dsLabelFor(_p,m):'direct-ship')+'</span>')
@@ -26745,7 +26703,8 @@ function cxRenderList(){
   const _cxWin=(typeof dmWindow==='function')?dmWindow(_cxProd):13;
   const _cxKey=(_cxWin===3)?'rr3Cases':(_cxWin===6)?'rr6Cases':(_cxWin===26)?'rr26Cases':'rrCases';
   const _cxRr=function(c){ return (c[_cxKey]!=null?c[_cxKey]:c.rrCases)||0; };
-  const _cxDS=function(n){ try{ return (typeof dsIsOn==='function') && dsIsOn(n,_cxProd); }catch(e){ return false; } };
+  const _cxMto=(function(){ try{ return (typeof mtoByCustomer==='function') ? (mtoByCustomer(_cxProd,_cxWin)||{}) : {}; }catch(e){ return {}; } })();
+  const _cxDS=function(n){ return Object.prototype.hasOwnProperty.call(_cxMto, n); };
   lh.innerHTML = '<th class="l" style="width:26px">#</th><th class="l">Customer</th><th class="l" style="width:96px">Trend</th><th>Run-rate <span style="color:var(--gray-400);font-weight:400">'+_cxWin+'w</span>'+cxInfo('Cases per week over the last '+_cxWin+' weeks \u2014 the same window the run-rate, the build-up and the buy plan use for this product. Change it in Demand \u2192 Run-rate.')+'</th><th>Cadence</th><th>Last order</th>'
     + (rich?'<th>Margin <span style="color:var(--gray-400);font-weight:400">13w</span>'+cxInfo('Gross margin over the last 13 weeks (FOB minus full cost). Open a customer \u2192 Profitability to change the window.')+'</th><th>Gross profit <span style="color:var(--gray-400);font-weight:400">13w</span>'+cxInfo('Gross profit over the last 13 weeks, with the change vs the 13 weeks before (\u2191 growing, \u2193 shrinking).')+'</th>':'') + '<th>% vol'+cxInfo('Share of your total volume over all loaded history (lifetime) \u2014 how big this account is structurally.')+'</th>';
   const r=cxFilteredSorted();

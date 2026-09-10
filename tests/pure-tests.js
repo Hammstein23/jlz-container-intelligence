@@ -29,8 +29,7 @@ var _PRISTINO_NOMBRES = [
   'committedInvForWeek','invmCommittedByWeek','getCommitted','getOrders','saveOrders',
   'ooClassifySku','productCaseLb','productLabel','cxWeekNo','cxEsc','_cmProd','_cmShipped',
   '_cmOriginFor','_ordProd','bpInvState','bpFutureWeeks','bpTodayISO','invmProductStats',
-  'invmProductArrivals','invmDirectShipCases','invmF','invmMoney','dmWindow','dsIsOn',
-  'isDirectShipRow','productFocus','dmRowOrigin','dmNormalizeOrigin','dmGlobalDataMax',
+  'invmProductArrivals','invmF','invmMoney','dmWindow','productFocus','dmRowOrigin','dmNormalizeOrigin','dmGlobalDataMax',
   'dmIsInternalAcct','dmWeekStatus','findOrderForPo','prodInvState','whatifArrivals','DM_ACCENT',
   'CASE_LB'
 ];
@@ -135,7 +134,8 @@ CASE_LB = 30;
 var productFocus = function(){ return 'turmeric'; };
 var dmWindow = function(){ return 6; };
 var _dmOrigin = 'Fiji';
-var isDirectShipRow = function(r){ return r.c === 'SOL-TI'; };
+var _mtoSave0 = (typeof mtoByCustomer === 'function') ? mtoByCustomer : null;
+mtoByCustomer = function(){ return { 'SOL-TI': 1 }; };
 // (dmEffectiveRunRateLbs NO se stubea: turmeric no la llama, y ginger la necesita de verdad)
 var PRODUCTS = { turmeric: { shrinkPct: 5 } };
 var BWK = ['2026-07-20','2026-07-27','2026-08-03','2026-08-10','2026-08-17','2026-08-24'];
@@ -220,7 +220,7 @@ CASE_LB = 30;
 productFocus = function(){ return 'ginger'; };
 dmWindow = function(){ return 6; };
 _dmOrigin = 'All';
-isDirectShipRow = function(){ return false; };
+
 PRODUCTS = { ginger: { shrinkPct: 14 } };
 COMMITTED = [];
 var GWK = ['2026-07-13','2026-07-20','2026-07-27','2026-08-03','2026-08-10','2026-08-17'];
@@ -395,7 +395,7 @@ group('Build-up · respeta el origen elegido');
 
 productFocus = function(){ return 'ginger'; };
 dmWindow = function(){ return 13; };
-isDirectShipRow = function(){ return false; };
+
 dmEffectiveRunRateLbs = function(){ return 892 * 30; };
 PRODUCTS = { ginger: { shrinkPct: 14 } };
 var _mk = function(custs, wkCust, rr){ return { caseLb:30, runRate13:rr*30, runRate6:rr*30, runRate3:rr*30,
@@ -436,12 +436,14 @@ COMMITTED = [{prod:'garlic', wk:'2026-09-07', customer:'Whole Foods Market', cas
 _cmProd = function(c){ return c.prod; };
 dmWindow = function(){ return 6; };
 
-isDirectShipRow = function(r){ return r && r.c === 'Whole Foods Market'; };
-check('direct-ship: su committed NO infla el plan', Math.round(hybridSalesForWeek('2026-09-07', 23, _mdl, 'garlic')), 23);
-isDirectShipRow = function(){ return false; };
-check('sin direct-ship, la misma orden sí entra', Math.round(hybridSalesForWeek('2026-09-07', 23, _mdl, 'garlic')), 23 + (140 - 37));
+// La marca sale de las ÓRDENES (mtoByCustomer), ya no de un flag por cliente.
+mtoByCustomer = function(){ return { 'Whole Foods Market': 1 }; };
+check('compra contra orden: su committed NO infla el plan', Math.round(hybridSalesForWeek('2026-09-07', 23, _mdl, 'garlic')), 23);
+mtoByCustomer = function(){ return {}; };
+check('sin contenedor marcado, la misma orden sí entra', Math.round(hybridSalesForWeek('2026-09-07', 23, _mdl, 'garlic')), 23 + (140 - 37));
 ok('y usa la ventana activa (rr6=37), no rrCases de 13 semanas (58)',
    Math.round(hybridSalesForWeek('2026-09-07', 23, _mdl, 'garlic')) !== 23 + (140 - 58));
+if(_mtoSave0) mtoByCustomer = _mtoSave0;
 
 // ════ El nowcast tiene que respetar la ventana ══════════════════════════════
 // `rrCases` se recalculaba con avgCust(c, _rw) sobre TODAS las semanas (184, desde 2023), no las 13
@@ -487,8 +489,8 @@ group('made to order · la etiqueta nombra a la cuenta real, no a Sol-ti');
 // entra a la cámara (el ajo de Whole Foods). Lo que define al concepto para el plan es que se compra
 // CONTRA una orden confirmada, no la ruta física.
 
-var _PAIRS = { 'sol-ti|turmeric':true, 'whole foods market|garlic':true };
-dsIsOn = function(cust, prod){ return !!_PAIRS[String(cust||'').trim().toLowerCase()+'|'+prod]; };
+var _PAIRS = { turmeric:{ 'Sol-ti':1 }, garlic:{ 'Whole Foods Market':1 } };
+mtoByCustomer = function(prod){ return _PAIRS[prod] || {}; };
 var _MDL = { customers:[ {c:'Whole Foods Market'}, {c:'Sol-ti'}, {c:"Albert's Organics"} ] };
 
 check('garlic nombra a Whole Foods', dsLabelFor('garlic', _MDL), 'Whole Foods Market made to order');
@@ -496,10 +498,11 @@ check('turmeric nombra a Sol-ti',    dsLabelFor('turmeric', _MDL), 'Sol-ti made 
 check('un producto sin direct-ship no inventa un nombre', dsLabelFor('shallots', _MDL), 'made to order');
 check('solo devuelve las cuentas del producto pedido', dsNamesFor('garlic', _MDL).join(','), 'Whole Foods Market');
 
-_PAIRS['sol-ti|garlic'] = true;
+_PAIRS.garlic['Sol-ti'] = 1;
 check('con dos cuentas las nombra a las dos', dsLabelFor('garlic', _MDL), 'Whole Foods Market + Sol-ti made to order');
-_PAIRS["albert's organics|garlic"] = true;
+_PAIRS.garlic["Albert's Organics"] = 1;
 check('con tres o más, cuenta en vez de enumerar', dsLabelFor('garlic', _MDL), '3 accounts direct-ship');
+if(_mtoSave0) mtoByCustomer = _mtoSave0;
 
 // ════ Un solo alcance para toda la app ══════════════════════════════════════
 // Había cuatro orígenes independientes con tres centinelas para "sin filtro" ('All','all','') y tres
@@ -540,7 +543,9 @@ DM_ACCENT={ginger:'#0d5026',garlic:'#b45309',shallots:'#7c3aed',turmeric:'#b4231
 productLabel=function(p){ return p; };
 productCaseLb=function(p){ return p==='shallots'?50:30; };
 dmRowOrigin=function(r){ return r.oitem||''; };
-isDirectShipRow=function(r){ return !!(r && r.c==='Whole Foods Market' && r.prod==='garlic'); };
+var _netSave = (typeof mtoNetRows === 'function') ? mtoNetRows : null;
+var _cpwSave = (typeof mtoCasesPerWeek === 'function') ? mtoCasesPerWeek : null;
+mtoNetRows=function(rows){ return rows.filter(function(r){ return !(r && r.c==='Whole Foods Market' && r.prod==='garlic'); }); };
 invmProductStats=function(p,o){ return {onHandCases:(p==='garlic'?48:0)}; };
 bpInvState=function(){ return {rows:{A:{cases:2184}}}; };
 nowcastProductModel=function(m){ return m; };   // solo para este grupo: group() la restaura en el siguiente
@@ -553,7 +558,7 @@ dmBuildModel=function(rows,_a,cl,p){
   return { runRate3:30*cl, runRate6:60*cl, runRate13:130*cl, runRate26:260*cl,
            weeklyReliable:[{lbs:10*cl},{lbs:10*cl},{lbs:10*cl},{lbs:20*cl},{lbs:20*cl},{lbs:20*cl}] };
 };
-invmDirectShipCases=function(p,o){ return p==='garlic' ? 74 : 0; };
+mtoCasesPerWeek=function(p,w){ return p==='garlic' ? 74 : 0; };
 
 _dmRawAll=[];
 for(var _w=0;_w<6;_w++){
@@ -569,11 +574,14 @@ var _g=dmLineStats('garlic','California');
 ok('al modelo solo le llegan las filas de stock — Whole Foods queda fuera',
    _seen.custs.length===1 && _seen.custs[0]==="Albert's Organics");
 check('con ventana 3 toma runRate3', Math.round(_g.rr), 30);
-check('el direct-ship viene de invmDirectShipCases (dsWindow), no de la ventana del stock', _g.ds, 74);
+check('el pass-through viene de mtoCasesPerWeek (dsWindow), no de la ventana del stock', _g.ds, 74);
 check('cobertura = on hand / run-rate de stock', Math.round(_g.cover*10)/10, 1.6);
 
 _win=6;  check('con ventana 6 toma runRate6',  Math.round(dmLineStats('garlic','California').rr), 60);
 _win=26; check('con ventana 26 toma runRate26', Math.round(dmLineStats('garlic','California').rr), 260);
+if(_mtoSave0) mtoByCustomer = _mtoSave0;
+if(_netSave) mtoNetRows = _netSave;
+if(_cpwSave) mtoCasesPerWeek = _cpwSave;
 _win=3;
 
 var _gp=dmLineStats('ginger','Peru');
@@ -886,7 +894,7 @@ _cmShipped = function(c){ return !!(c && c.shipped); };
 _cmProd    = function(c){ return c.prod; };
 _cmOriginFor = function(){ return ''; };
 dmWindow   = function(){ return 3; };
-isDirectShipRow = function(){ return false; };
+
 var _mE = { customers:[{ c:"Earl's", rrCases:11, rr3Cases:11 }] };
 COMMITTED = [{ type:'inv', wk:'2026-08-31', customer:"Earl's", cases:21,
                prod:'turmeric', sku:'OG-TUR-10Lbs-PR-FJ' }];
@@ -917,7 +925,7 @@ hybridSalesForWeek = HYBRID_REAL;
 _cmShipped = function(c){ return !!(c && c.shipped); };
 _cmProd = function(c){ return c.prod; };
 dmWindow = function(){ return 6; };
-isDirectShipRow = function(){ return false; };
+
 var _md = { customers:[{c:'Sol-ti', rrCases:233, rr6Cases:233, rr3Cases:233, sporadic:true}] };
 
 COMMITTED = [{type:'inv', wk:'2026-08-31', customer:'Sol-ti', cases:1000, prod:'ginger'}];
@@ -989,7 +997,7 @@ group('mtoNetRows · descontar en las FILAS, para que la aritmética de pantalla
       directShip:[{ customer:'Sol-ti', cases:700 }] }
   ]; };
   _ordProd = function(o){ return o.product; };
-  dsIsOn = function(){ return false; };
+  
   productCaseLb = function(){ return 30; };
   dmWeekKey = function(d){ var x=new Date(d); var g=(x.getDay()+6)%7; x.setDate(x.getDate()-g);
     return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); };
@@ -1029,7 +1037,7 @@ group('El descuento se resta UNA vez: en la fila y en el total, no en ambos por 
   _cmProd    = function(c){ return c.prod; };
   _cmOriginFor = function(){ return ''; };
   dmWindow   = function(){ return 3; };
-  isDirectShipRow = function(){ return false; };
+  
   COMMITTED  = [];
   // Con una orden reservada en su horizonte, hybridSalesForWeek entra en la rama order-driven y
   // reemplaza el promedio del cliente por su committed — restando su run-rate. Ahí es donde el modelo
@@ -1083,7 +1091,7 @@ group('mtoCasesPerWeek · lo comprado contra orden, orden por orden');
   ];
   getOrders = function(){ return ORD; };
   _ordProd  = function(o){ return o.product || 'ginger'; };
-  dsIsOn    = function(){ return false; };
+  
   productCaseLb = function(){ return 30; };
   dmWeekKey = function(d){ var x=new Date(d); var g=(x.getDay()+6)%7; x.setDate(x.getDate()-g);
     return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); };
@@ -1120,11 +1128,6 @@ group('mtoCasesPerWeek · lo comprado contra orden, orden por orden');
   _dmRawAll = [ { prod:'garlic', c:'Otro Cliente', d:W(2), lbs:500*30 } ];
   check('y el techo es POR cliente, no del producto entero', mtoCasesPerWeek('garlic', 26), 0);
 
-  _dmRawAll = [ { prod:'garlic', c:'Whole Foods Market', d:W(2), lbs:400*30 } ];
-  dsIsOn = function(c, p){ return c === 'Whole Foods Market' && p === 'garlic'; };
-  check('si el cliente YA está excluido por el flag, no se resta dos veces',
-        mtoCasesPerWeek('garlic', 26), 0);
-  dsIsOn = function(){ return false; };
 })();
 
 group('dmcArrivingOrders · el picker sigue al producto, ya no es solo ginger');
@@ -1150,7 +1153,7 @@ group('dmcArrivingOrders · el picker sigue al producto, ya no es solo ginger');
 
 group('ordBoughtForCustomers · el nombre tiene que matchear las ventas');
 // El campo era texto libre. Un "Whole Foods" escrito a mano no matchea "Whole Foods Market", y la
-// marca quedaba huérfana sin que nada lo dijera: dsIsOn no la reconoce, el carril "made to order" no
+// marca quedaba huérfana sin que nada lo dijera: el descuento no la reconoce, el carril "made to order" no
 // la suma y el aviso de coherencia dispara al pedo. Por eso es una lista, no un input.
 (function(){
   _dmRawAll = [

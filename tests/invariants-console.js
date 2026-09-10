@@ -74,7 +74,7 @@
 
     // Recálculo independiente de las filas crudas, espejando EXACTAMENTE el filtro que usa
     // invmProductModel: producto, origen (con invmOriginMatch, que es el resolvedor que usa
-    // ese camino), sin direct-ship. Más dmBuildModel: solo ventas, sin cuentas internas.
+    // ese camino). Más dmBuildModel: solo ventas, sin cuentas internas.
     // El volumen direct-ship se cuenta aparte y se muestra: no es demanda de stock, pero
     // tampoco tiene que desaparecer sin dejar rastro.
     // El modelo descuenta lo comprado CONTRA ORDEN (made-to-order) en las mismas filas, vía
@@ -82,17 +82,17 @@
     // volumen que el run-rate no usa y el chequeo falla todos los lunes sin que haya nada roto:
     // Whole Foods compra garlic y shallots contra pedido, así que sus cajas no mueven la compra
     // de stock. Se refleja acá por la misma razón que ya se llama a invmOriginMatch y a
-    // isDirectShipRow: el filtro tiene que ser el del modelo, no uno parecido.
+    // el filtro tiene que ser el del modelo, no uno parecido.
     var mtoOut = null;
     if (origin !== 'all' && typeof mtoNetRows === 'function'){
       try {
         var base = _dmRawAll.filter(function(r){
-          return (r.prod || 'ginger') === p && invmOriginMatch(r, origin) && !isDirectShipRow(r); });
+          return (r.prod || 'ginger') === p && invmOriginMatch(r, origin); });
         var kept = mtoNetRows(base, p, win);
         mtoOut = base.filter(function(r){ return kept.indexOf(r) < 0; });
       } catch(e){ mtoOut = null; }
     }
-    var mine = {}, dsByWk = {};
+    var mine = {};
     _dmRawAll.forEach(function(r){
       if (mtoOut && mtoOut.indexOf(r) > -1) return;   // comprado contra orden: no es demanda de stock
       if ((r.prod || 'ginger') !== p) return;
@@ -104,11 +104,7 @@
         catch(e){ match = false; }
         if (!match) return;
       }
-      var isDs = false;
-      // origin 'all' cae en otro camino del modelo (qaModelG/_dmModel) que NO saca direct-ship.
-      if (origin !== 'all'){ try { isDs = isDirectShipRow(r); } catch(e){} }
       var w = wkOf(r.d);
-      if (isDs){ dsByWk[w] = (dsByWk[w] || 0) + (r.lbs || 0); return; }
       mine[w] = (mine[w] || 0) + (r.lbs || 0);
     });
 
@@ -132,13 +128,11 @@
     wks.forEach(function(w){ var wc = (m.wkCust||{})[w] || {}; Object.keys(wc).forEach(function(c){ sumWin += wc[c]; }); });
     var rr = (win === 3 ? m.runRate3 : win === 6 ? m.runRate6 : m.runRate13) / cl;
     // Las filas tienen que explicar el agregado.
-    var sumRows = 0, internal = 0, ds = 0;
+    var sumRows = 0, internal = 0;
     m.customers.forEach(function(c){
       if (!c || !c.c) return;
       var v = (c[key] != null ? c[key] : c.rrCases) || 0;
       if (isInternal(c.c)){ internal += v; return; }
-      var isDs = false; try { isDs = isDirectShipRow({ c:c.c, prod:p }); } catch(e){}
-      if (isDs) ds += v;
       sumRows += v;
     });
     var curWk = wkOf(new Date().toISOString().slice(0,10));
@@ -146,7 +140,7 @@
     var row = {
       prod:p, origen:(p==='ginger'&&origin==='all')?'TODOS (Buy Planner)':origin, vent:win,
       dif_vs_crudo: r1(worst),
-      directship_cs: (function(){ var t=0; wks.forEach(function(w){ t += (dsByWk[w]||0); }); return Math.round(t/cl); })(),  // en la ventana, no en toda la historia
+      contraorden_cs: (function(){ var t=0; (mtoOut||[]).forEach(function(r){ if(wks.indexOf(wkOf(r.d))>-1) t += (r.lbs||0); }); return Math.round(t/cl); })(),  // neteado por orden, dentro de la ventana
       saltos: skips,
       rr: Math.round(rr),
       filas: Math.round(sumRows),
