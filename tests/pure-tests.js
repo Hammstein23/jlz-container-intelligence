@@ -17,10 +17,33 @@ var _realBpFutureWeeks = bpFutureWeeks;
 // ═══ 1. Week bucketing ══════════════════════════════════════════════════════
 // Was: a bare 'YYYY-MM-DD' parses as UTC midnight, which west of Greenwich resolves to
 // the previous day, so every MONDAY sale landed in the previous week.
-// Varios grupos de más abajo reemplazan funciones reales por stubs y NO las restauran: el que
-// las necesite después tiene que guardárselas acá arriba, antes de que las pisen.
-var _REAL_NOWCAST = nowcastProductModel, _REAL_WEEKKEY = dmWeekKey;
-var _STUB_COMMWK = invmCommittedByWeek, _STUB_GETCOMM = getCommitted;
+// ── Entorno limpio al empezar cada grupo ──────────────────────────────────────────────────────
+// Los grupos reemplazan funciones reales por stubs para armar su escenario, y ninguno las
+// restauraba. El resultado: el grupo N heredaba los stubs del N-1 sin enterarse. Ya mordió una vez
+// — un `dmWeekKey` clavado en '2026-08-31' y un `invmCommittedByWeek` que devolvía {} hacían que un
+// grupo nuevo midiera los stubs en vez del código, y los checks pasaban o fallaban por la razón
+// equivocada. En vez de pedirle a cada autor que se acuerde de restaurar, `group()` lo hace solo:
+// cada grupo arranca con las funciones REALES y se stubea lo que necesite justo después de llamarlo.
+var _PRISTINO_NOMBRES = [
+  'nowcastProductModel','dmWeekKey','dmBuildModel','dmEffectiveRunRateLbs','hybridSalesForWeek',
+  'committedInvForWeek','invmCommittedByWeek','getCommitted','getOrders','saveOrders',
+  'ooClassifySku','productCaseLb','productLabel','cxWeekNo','cxEsc','_cmProd','_cmShipped',
+  '_cmOriginFor','_ordProd','bpInvState','bpFutureWeeks','bpTodayISO','invmProductStats',
+  'invmProductArrivals','invmDirectShipCases','invmF','invmMoney','dmWindow','dsIsOn',
+  'isDirectShipRow','productFocus','dmRowOrigin','dmNormalizeOrigin','dmGlobalDataMax',
+  'dmIsInternalAcct','dmWeekStatus','findOrderForPo','prodInvState','whatifArrivals','DM_ACCENT',
+  'CASE_LB'
+];
+var _PRISTINO = {};
+_PRISTINO_NOMBRES.forEach(function(n){ try { _PRISTINO[n] = eval(n); } catch (e) {} });
+var _grupoSinLimpiar = group;
+group = function(nombre){
+  _PRISTINO_NOMBRES.forEach(function(n){
+    if (!(n in _PRISTINO)) return;
+    try { eval(n + ' = _PRISTINO[' + JSON.stringify(n) + ']'); } catch (e) {}
+  });
+  return _grupoSinLimpiar(nombre);
+};
 
 group('dmWeekKey — la semana a la que pertenece cada fecha');
 var DAY = ['dom','lun','mar','mie','jue','vie','sab'];
@@ -520,7 +543,7 @@ dmRowOrigin=function(r){ return r.oitem||''; };
 isDirectShipRow=function(r){ return !!(r && r.c==='Whole Foods Market' && r.prod==='garlic'); };
 invmProductStats=function(p,o){ return {onHandCases:(p==='garlic'?48:0)}; };
 bpInvState=function(){ return {rows:{A:{cases:2184}}}; };
-nowcastProductModel=function(m){ return m; };   // OJO: pisa la real para todo lo que siga (ver _REAL_NOWCAST)
+nowcastProductModel=function(m){ return m; };   // solo para este grupo: group() la restaura en el siguiente
 
 var _seen=null, _win=3;
 dmWindow=function(){ return _win; };
@@ -1610,17 +1633,6 @@ ok('…ni metadata de reempaque, que es lo que la distingue', !(_LH.rs && _LH.rs
 // unidades en W36 contra ~190 de una semana normal). Promediarla baja el run-rate y empuja a
 // comprar de menos. Las semanas se calculan desde HOY para que el test no caduque.
 group('La semana cortada se muestra, pero nunca promedia');
-// Este grupo se hace autosuficiente a propósito: más arriba quedan pisadas `nowcastProductModel`
-// (pass-through), `dmWeekKey` (fija en '2026-08-31') e `invmCommittedByWeek` (siempre {}). Sin
-// restaurarlas, los checks de abajo miden los stubs y no el código.
-nowcastProductModel = _REAL_NOWCAST;
-dmWeekKey           = _REAL_WEEKKEY;
-invmCommittedByWeek = _STUB_COMMWK;
-getCommitted        = _STUB_GETCOMM;
-_cmProd      = function(c){ return c.prod; };
-_cmOriginFor = function(c){ return c.origin || ''; };
-_cmShipped   = function(c){ return !!(c && c.shipped); };
-productCaseLb = function(){ return 30; };
 var _wk = function(offDays){ var d = new Date(); d.setDate(d.getDate() + offDays); return dmWeekKey(d); };
 var CURW = _wk(0), PREVW = _wk(-7);
 var _rel = [];
@@ -1655,5 +1667,18 @@ var G2 = nowcastProductModel(G2m, 'garlic', 'California');
 check('una semana con órdenes se marca now, no prelim', (G2.nowcastWeeks || {})[PREVW], 'now');
 ok('…y esa SÍ promedia', (G2.rateWeeks || []).indexOf(PREVW) >= 0);
 check('se completa a facturado + reservado: (3000+3000+1200+3000)/3', G2.runRate3, 3400);
+
+// ═══ El entorno se limpia entre grupos ══════════════════════════════════════
+// Guardián del arreglo de arriba. Si alguien saca la restauración de `group()`, esto falla y
+// dice por qué — en vez de que un test futuro mida un stub ajeno y nadie se entere.
+group('Un stub NO sobrevive al grupo que lo puso');
+dmWeekKey = function(){ return 'PISADA-A-PROPOSITO'; };
+getCommitted = function(){ return [{ pisado:true }]; };
+check('dentro del grupo, el stub manda', dmWeekKey(new Date()), 'PISADA-A-PROPOSITO');
+
+group('…y el grupo siguiente arranca con las reales');
+check('dmWeekKey volvió a la de producción', dmWeekKey(new Date('2026-09-09T12:00:00')), '2026-09-07');
+ok('…y no es la pisada', dmWeekKey(new Date()) !== 'PISADA-A-PROPOSITO');
+ok('getCommitted también volvió', !((getCommitted() || [])[0] || {}).pisado);
 
 summary();
