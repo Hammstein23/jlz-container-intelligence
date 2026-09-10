@@ -16724,6 +16724,62 @@ function invmStockableWeekly(p, origin){
   }catch(e){ return []; }
 }
 
+// ── Hacia dónde va la demanda, y qué costó no verlo ────────────────────────────────────────────
+// Deliberadamente NO rankea ventanas por costo. Ese ranking se da vuelta con el régimen — en una
+// caída ganan las cortas porque se adaptan, en una subida ganan las largas — así que puesto en
+// pantalla se lee como regla y engaña en cuanto la tendencia cambia.
+//
+// Lo que sí es un hecho estable es la tendencia. Y es la que importa, porque mientras la demanda
+// baje CUALQUIER promedio hacia atrás va a pedir de más: arrastra un nivel que ya no existe. Ginger
+// cayó 42% en el año (1.540 -> 896 cs/sem) y se liquidaron 7.687 cajas, el 18% del volumen, por
+// $22.457. Ese número explica el problema; el ranking de ventanas solo lo esconde.
+//
+// Se calla cuando no hay tendencia material (<20% entre semestres): no todo movimiento es señal.
+function invmDemandTrend(p, origin){
+  try{
+    var S=invmStockableWeekly(p, origin).map(function(x){ return x.lbs; });
+    if(S.length<40) return null;
+    var cl=(typeof productCaseLb==='function')?productCaseLb(p):30;
+    var last=S.slice(-52), half=Math.floor(last.length/2);
+    var mean=function(a){ return a.length? a.reduce(function(x,y){return x+y;},0)/a.length/cl : 0; };
+    var a=mean(last.slice(0,half)), b=mean(last.slice(half));
+    if(!(a>0)) return null;
+    var pct=(b-a)/a*100;
+    var q=[], step=Math.floor(last.length/4);
+    for(var i=0;i<4;i++) q.push(mean(last.slice(i*step, (i===3)?last.length:(i+1)*step)));
+    var clear=null;
+    try{ var sc=dmClearanceScan(p);
+         if(sc && sc.casesDumped>0) clear={ weeks:sc.liqWeeks, cases:sc.casesDumped, loss:Math.abs(sc.liqLoss),
+                                            pctVol:(sc.cleanRunRate>0)? sc.casesDumped/(sc.cleanRunRate*52)*100 : null }; }catch(e){}
+    // ── Contra el MISMO período del año pasado ────────────────────────────────────────────────
+    // Partir el año al medio confunde tendencia con estacionalidad: si el producto vende más en
+    // invierno, el primer semestre siempre le va a ganar al segundo y la app declararía una caída
+    // que no existe. Comparar las mismas semanas del calendario elimina eso. Es la comparación que
+    // manda cuando hay historia para hacerla; la de semestres queda como respaldo.
+    var yoy=null;
+    try{
+      var full=invmStockableWeekly(p, origin);
+      var idx={}; full.forEach(function(x){ idx[x.wk]=x.lbs; });
+      var recientes=full.slice(-13).map(function(x){ return x.wk; });
+      var nowSum=0, nowN=0, agoSum=0, agoN=0;
+      recientes.forEach(function(w){
+        var d=new Date(w+'T12:00:00'); if(isNaN(d)) return;
+        nowSum+=idx[w]||0; nowN++;
+        var prev=new Date(d.getTime()-364*86400000);
+        var pk; try{ pk=dmWeekKey(prev); }catch(e){ return; }
+        if(idx[pk]!=null){ agoSum+=idx[pk]; agoN++; }
+      });
+      if(nowN>=8 && agoN>=8){
+        var nowAvg=nowSum/nowN/cl, agoAvg=agoSum/agoN/cl;
+        if(agoAvg>0) yoy={ now:nowAvg, ago:agoAvg, pct:(nowAvg-agoAvg)/agoAvg*100, weeks:agoN };
+      }
+    }catch(e){}
+    var usar=(yoy!=null)? yoy.pct : pct;
+    return { first:a, second:b, pct:pct, quarters:q, weeks:last.length, clearance:clear, yoy:yoy,
+             basis:(yoy!=null?'yoy':'halves'), shownPct:usar,
+             dir:(usar<=-20?'down':(usar>=20?'up':'flat')), material:(Math.abs(usar)>=20) };
+  }catch(e){ return null; }
+}
 // ── Qué ventana explica mejor el comportamiento reciente ───────────────────────────────────────
 // No es opinión: se hace backtest. Para cada ventana, se recorre semana a semana y se compara lo que
 // ESA ventana habría predicho contra lo que realmente se vendió. Gana el menor error medio.
@@ -16905,6 +16961,26 @@ function invmBuySuggestionHTML(p, origin){
             '<b style="color:'+(falta>0?'var(--jlz)':'var(--gray-700)')+'">'+(falta>0?('short '+n2(falta)+' &rarr; buy '+g.buy):('over by '+n2(-falta)+' &rarr; buy nothing'))+'</b>')
       + '</table>';
   }
+  // La tendencia del año, cuando es material: explica por qué el plan pide de más (o de menos).
+  var trendLine='';
+  try{
+    var T=invmDemandTrend(g.p, g.origin);
+    if(T && T.material){
+      var fn=function(x){ return Math.round(x||0).toLocaleString('en-US'); };
+      var baja=(T.dir==='down');
+      trendLine='<div style="margin-top:6px;padding:6px 8px;border-radius:5px;font-size:11px;font-family:var(--fm);line-height:1.55;'
+        + 'background:'+(baja?'#FFFBEB':'var(--gray-50)')+';border:1px solid '+(baja?'#FDE68A':'var(--gray-200)')+';color:'+(baja?'#92400E':'var(--gray-600)')+'">'
+        + '<b>Demand is '+(baja?'down':'up')+' '+Math.abs(Math.round(T.shownPct))+'% '
+        + (T.basis==='yoy' ? 'against the same weeks last year</b> (' + fn(T.yoy.ago)+' &rarr; '+fn(T.yoy.now)+' cs/wk). '
+                           : 'over the year</b> ('+fn(T.first)+' &rarr; '+fn(T.second)+' cs/wk). ')
+        + (baja ? 'Any backward-looking average carries the old level forward, so it will ask you to buy more than you sell.'
+                : 'Any backward-looking average lags a rising market, so it will ask you to buy less than you sell.')
+        + (T.clearance ? (' Last 52 weeks you cleared <b>'+fn(T.clearance.cases)+'</b> cases'
+            + (T.clearance.pctVol!=null?(' ('+Math.round(T.clearance.pctVol)+'% of volume)'):'')
+            + ' below cost, a <b>$'+fn(T.clearance.loss)+'</b> hit.') : '')
+        + '</div>';
+    }
+  }catch(e){}
   // Una línea sobre qué ventana viene explicando mejor la venta — y cuándo ninguna lo hace.
   var fitLine='';
   if(g.fit){
@@ -16928,7 +17004,7 @@ function invmBuySuggestionHTML(p, origin){
        + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;color:'+tone.fg+';font-family:var(--fb);margin-bottom:4px">Buy suggestion</div>'
        + '<div style="font-size:14px;line-height:1.5;color:var(--gray-800);font-family:var(--fb)">'+head+'</div>'
        + '<div style="margin-top:3px;font-size:11.5px;color:var(--gray-500);font-family:var(--fm);line-height:1.5">'+why+'</div>'
-       + mathRows + spread + fitLine + '</div>';
+       + mathRows + spread + fitLine + trendLine + '</div>';
 }
 // ── Sugerencia de compra para ginger-Perú ──────────────────────────────────────────────────────
 // No usa la fórmula genérica: ginger-Perú guarda su stock en OTRO store (`bpInvState`, no

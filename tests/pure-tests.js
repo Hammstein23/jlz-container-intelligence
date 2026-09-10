@@ -1126,6 +1126,85 @@ group('invmStockableWeekly · la demanda que de verdad sale de cámara');
   check('excluye las cuentas internas', Math.round(invmStockableWeekly('turmeric','all')[0].lbs/30), 60);
 })();
 
+group('invmDemandTrend · hacia dónde va la demanda, y qué costó no verlo');
+// A propósito NO rankea ventanas por costo: ese ranking se da vuelta con el régimen (en caída ganan
+// las cortas, en subida las largas), así que en pantalla se leería como regla y engañaría en cuanto
+// la tendencia cambie. La tendencia sí es estable, y es la que explica el problema: mientras la
+// demanda baje, CUALQUIER promedio hacia atrás pide de más. Ginger cayó 42% y se liquidó el 18%
+// del volumen por $22.457.
+(function(){
+  var lunes = function(n){ var d=new Date(); d.setDate(d.getDate()-n*7); return dmWeekKey(d); };
+  var serie = function(vals){                   // vals[0] = la semana más vieja
+    return vals.map(function(cs,i){
+      return { prod:'ginger', c:'Acme', d:lunes(vals.length-i), lbs:cs*30, type:'Sale' }; });
+  };
+  var poner = function(vals){
+    localStorage.getItem = function(k){ return k==='jlz_demand_raw' ? JSON.stringify(serie(vals)) : null; };
+    getOrders = function(){ return []; };
+  };
+  productCaseLb = function(){ return 30; };
+  dmIsInternalAccount = function(){ return false; };
+  invmOriginMatch = function(){ return true; };
+  dmClearanceScan = function(){ return { liqWeeks:4, casesDumped:7687, liqLoss:-22457, cleanRunRate:810 }; };
+
+  // Caída sostenida: el caso ginger.
+  var baja = []; for(var i=0;i<26;i++) baja.push(1540);
+  for(var j=0;j<26;j++) baja.push(896);
+  poner(baja);
+  var T = invmDemandTrend('ginger','all');
+  ok('detecta la caída', T && T.dir === 'down');
+  ok('y la declara material', T.material === true);
+  check('con los dos niveles', Math.round(T.first), 1540);
+  check('y el más reciente', Math.round(T.second), 896);
+  ok('el porcentaje es el que se ve en pantalla', Math.round(T.pct) === -42);
+  ok('parte el año en cuatro para mostrar la forma', T.quarters.length === 4);
+  ok('trae el costo realizado de liquidar', T.clearance && T.clearance.cases === 7687);
+  ok('y qué parte del volumen fue', Math.round(T.clearance.pctVol) === 18);
+
+  // Subida: el mismo criterio al revés.
+  var sube = []; for(var k=0;k<26;k++) sube.push(500);
+  for(var l=0;l<26;l++) sube.push(900);
+  poner(sube);
+  var T2 = invmDemandTrend('ginger','all');
+  ok('detecta la subida', T2.dir === 'up' && T2.material === true);
+
+  // Un movimiento chico no es señal: se calla.
+  var plano = []; for(var m=0;m<26;m++) plano.push(500);
+  for(var q=0;q<26;q++) plano.push(545);            // +9%
+  poner(plano);
+  var T3 = invmDemandTrend('ginger','all');
+  ok('un 9% no lo declara tendencia', T3 && T3.material === false && T3.dir === 'flat');
+
+  // ── La estacionalidad no puede leerse como tendencia ─────────────────────────────────────────
+  // Partir el año al medio es una trampa: un producto que vende más en invierno mostraría una caída
+  // todos los años sin que nada haya cambiado. Con dos años de historia se compara contra las MISMAS
+  // semanas del año pasado, que es lo que de verdad aísla el cambio.
+  var estacional = [];
+  for(var y=0; y<2; y++){                        // dos años idénticos: alto medio año, bajo el otro
+    for(var w1=0; w1<26; w1++) estacional.push(1000);
+    for(var w2=0; w2<26; w2++) estacional.push(400);
+  }
+  poner(estacional);
+  var TS = invmDemandTrend('ginger','all');
+  check('compara contra el año pasado cuando puede', TS.basis, 'yoy');
+  ok('y no confunde la estación con una caída', TS.material === false);
+
+  // Una caída real sí se ve, aun con el mismo patrón estacional debajo.
+  var realCaida = [];
+  for(var a1=0; a1<26; a1++) realCaida.push(1000);
+  for(var a2=0; a2<26; a2++) realCaida.push(400);
+  for(var b1=0; b1<26; b1++) realCaida.push(500);
+  for(var b2=0; b2<26; b2++) realCaida.push(200);
+  poner(realCaida);
+  var TR = invmDemandTrend('ginger','all');
+  check('una caída real sigue saliendo', TR.dir, 'down');
+  ok('medida contra el año pasado, no contra el semestre', TR.basis === 'yoy' && Math.round(TR.yoy.pct) === -50);
+
+  // Sin historia no opina.
+  poner([100,100,100,100]);
+  check('con poca historia no dice nada', invmDemandTrend('ginger','all'), null);
+})();
+
 group('invmWindowFit · qué ventana viene explicando mejor la venta');
 // No es opinión: backtest. Cada ventana predice semana a semana y gana el menor error. Lo que hace
 // válido el test es que la serie sea LIBRE DE VENTANA — si se puntea contra la serie que el modelo
