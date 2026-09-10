@@ -1525,8 +1525,10 @@ group('invmBuySuggestion · cuánto comprar, cuándo ordenar, cuándo llega');
     { name:'Sbimal LLC', origin:'Fiji',   mode:'air', leadDays:10 },
     { name:'Kailani',    origin:'Hawaii', mode:'air', leadDays:14 } ] } };
 
+  // `incomingCases` viene de invmProductStats: la sugerencia ya no llama a invmProductArrivals por
+  // su cuenta (con el origen crudo daba un "en camino" distinto al del panel, para la misma tarjeta).
   var STATS = { p:'turmeric', label:'Turmeric', caseLb:30, shrinkPct:0, origin:'Fiji',
-                availCases:200, excludedCases:23, leadWks:10/7, safetyWks:2, targetWks:10/7+2, win:3 };
+                availCases:200, incomingCases:100, excludedCases:23, leadWks:10/7, safetyWks:2, targetWks:10/7+2, win:3 };
   invmProductStats  = function(){ return STATS; };
   invmProductModel  = function(){ return { caseLb:30, runRate3:100*30, runRate6:50*30, runRate13:200*30, runRate26:null }; };
   invmProductArrivals = function(){ return { 'w1':100 }; };
@@ -1578,6 +1580,77 @@ group('invmBuySuggestion · cuánto comprar, cuándo ordenar, cuándo llega');
   // Sin demanda no hay sugerencia que dar.
   invmProductModel = function(){ return { caseLb:30, runRate3:0, runRate6:0, runRate13:0, runRate26:0 }; };
   check('sin demanda no inventa una recomendación', invmBuySuggestion('turmeric','Fiji'), null);
+})();
+
+group('El numero de compra es UNO solo · el panel y la sugerencia no pueden discrepar');
+// Auditoria de los numeros de compra. Habia dos caminos hasta "cuantas cajas comprar" —el KPI
+// "Suggested order" del panel de Inventory (s.orderCases) y la tarjeta "Buy N cases" del Simulator
+// (invmBuySuggestion)— y no coincidian: uno ignoraba lo que ya venia navegando, y leian el run-rate
+// por vias distintas. Aca corre invmProductStats DE VERDAD; lo unico stubbeado son los datos de
+// entrada, que es lo que en produccion sale del store y del modelo.
+(function(){
+  var STORE = { turmeric:{ serviceLevel:95, demandOverride:null, shrinkPct:0, lots:[
+      { lot:'A', origin:'Fiji', supplier:'Sbimal LLC', cases:200, avgCost:70, received:'2026-08-20', sku:'OG-TUR-30LBS-PR-FJ' } ] } };
+  PRODUCTS = { turmeric:{ label:'Turmeric', caseLb:30, shrinkPct:0, suppliers:[
+      { name:'Sbimal LLC', origin:'Fiji', mode:'air', leadDays:10 } ] } };
+  prodInvFor          = function(p){ return STORE[p]; };
+  dmWindow            = function(){ return 3; };
+  prodCommittedTotal  = function(){ return 40; };
+  mtoCasesPerWeek     = function(){ return 0; };
+  dsWindow            = function(){ return 26; };
+  stockSnapRecord     = function(){};
+  invmProductArrivals = function(){ return { 'w1':100 }; };
+  // Serie pareja: desviacion 0 -> cv 0 -> safety 0 -> target = lead. Deja la cuenta a la vista.
+  invmStockableWeekly = function(){ return [{wk:'a',lbs:9000},{wk:'b',lbs:9000},{wk:'c',lbs:9000}]; };
+  // runRateN a proposito MUY distinto del promedio de weeklyReliable: es la unica forma de ver si
+  // alguien vuelve a leer la serie cruda, que no lleva el delta de los clientes pineados a mano.
+  invmProductModel    = function(){ return { caseLb:30, runRate3:300*30, runRate6:200*30,
+      runRate13:100*30, runRate26:100*30, weeklyReliable:[{lbs:30},{lbs:30},{lbs:30}] }; };
+
+  var s = invmProductStats('turmeric','Fiji');
+  check('disponible = fisico menos committed', s.availCases, 160);
+  check('y lo que ya viene navegando se cuenta aparte', s.incomingCases, 100);
+  check('posicion = libre + en camino', s.posCases, 260);
+  check('el run-rate es el de la ventana activa, con los pins puestos', s.weeklyLbs, 300*30);
+  check('sin merma, lo que sale de camara es lo vendido', s.weeklyCasesBuy, 300);
+  check('serie pareja -> sin variabilidad -> sin colchon', Math.round(s.safetyWks*1000)/1000, 0);
+  check('objetivo = lead time', Math.round(s.targetWks*10000)/10000, Math.round(10/7*10000)/10000);
+
+  // ── Lo que se compra se descuenta de lo que ya se compro ──────────────────────────────────────
+  var esperado = Math.ceil(((10/7)*9000 - 260*30)/30);
+  check('la orden sugerida netea lo que ya viene', s.orderCases, esperado);
+  invmProductArrivals = function(){ return {}; };
+  var sin = invmProductStats('turmeric','Fiji');
+  check('sin nada en camino hay que comprar exactamente 100 cajas mas', sin.orderCases - s.orderCases, 100);
+  invmProductArrivals = function(){ return { 'w1':100 }; };
+
+  // ── Y el otro camino tiene que dar el MISMO numero ────────────────────────────────────────────
+  var g = invmBuySuggestion('turmeric','Fiji');
+  check('la sugerencia compra lo mismo que el panel', g.buy, s.orderCases);
+  check('y sobre la misma demanda semanal', Math.round(g.demand*1000)/1000, Math.round(s.weeklyCasesBuy*1000)/1000);
+  check('sobre la misma oferta', g.avail + g.incoming, s.posCases);
+  check('y el mismo objetivo', Math.round(g.targetWks*10000)/10000, Math.round(s.targetWks*10000)/10000);
+
+  // ── El numero escrito a mano manda, y manda en los dos lados ──────────────────────────────────
+  // Antes el panel decia "manual" y la tarjeta de compra seguia calculando con el historial crudo.
+  STORE.turmeric.demandOverride = 50;
+  var so = invmProductStats('turmeric','Fiji');
+  var go = invmBuySuggestion('turmeric','Fiji');
+  check('el panel toma el numero escrito a mano', so.weeklyCasesBuy, 50);
+  check('la sugerencia tambien', Math.round(go.demand*1000)/1000, 50);
+  check('y siguen dando la misma compra', go.buy, so.orderCases);
+  // Un numero escrito a mano no depende de la ventana: las cuatro lecturas dicen lo mismo.
+  var distintas = go.others.filter(function(o){ return o.buy !== go.buy; });
+  check('escrito a mano, las cuatro ventanas coinciden', distintas.length, 0);
+  STORE.turmeric.demandOverride = null;
+
+  // ── El semaforo mira la posicion, no la camara ────────────────────────────────────────────────
+  // Con un contenedor entrando esta semana, "Urgent" es falso aunque la camara este corta.
+  STORE.turmeric.lots[0].cases = 60;                 // 60 - 40 committed = 20 libres, 0.07 wk
+  var flojo = invmProductStats('turmeric','Fiji');
+  check('la cobertura de camara sigue siendo la de camara', Math.round(flojo.coverWks*100)/100, Math.round(20/300*100)/100);
+  check('pero la posicion cuenta lo que llega', Math.round(flojo.coverPosWks*100)/100, Math.round(120/300*100)/100);
+  STORE.turmeric.lots[0].cases = 200;
 })();
 
 group('mtoMismatched · la marca contra-orden tiene que calzar con lo que pidió el cliente');

@@ -16092,6 +16092,24 @@ function prodCommittedTotal(p,origin){
   return 0;   // entries exist but none carry origin → can't split; do NOT fall back to a stale seed
 }
 function invmProdSetCommitted(p,origin,v){ var st=prodCommittedState(); st[p+'|'+origin]=Math.max(0,parseFloat(v)||0); prodCommittedSave(st); invmReRender(); }
+// ── El run-rate de una ventana se decide en UN solo lugar ────────────────────────────────────────
+// Había dos caminos para la misma pregunta y daban números distintos. `m.runRateN` sale de la serie
+// nowcasteada Y le vuelve a sumar el delta de los clientes pineados a mano (`ovr.rr`); el promedio
+// crudo de `weeklyReliable` no lo tiene, porque el bloque de overrides ajusta runRateN y no la serie.
+// Resultado: el panel de Inventory ignoraba los pins que la pestaña Demand sí respeta, y la tarjeta
+// de compra de al lado usaba la otra base. La serie queda de reserva para una ventana que el modelo
+// no precalcule.
+function invmRunRateLbs(m, win){
+  if(!m) return 0;
+  win=+win||13;
+  var pre={3:m.runRate3, 6:m.runRate6, 13:m.runRate13, 26:m.runRate26};
+  var v=pre[win];
+  if(v!=null && isFinite(v)) return v;
+  var wr=Array.isArray(m.weeklyReliable)?m.weeklyReliable:[];
+  var sl=wr.slice(-win);
+  if(sl.length) return sl.reduce(function(t,w){ return t+((w&&w.lbs)||0); },0)/sl.length;
+  return m.runRate13||0;
+}
 function invmProductStats(p,origin){
   var meta=(typeof PRODUCTS==='object'&&PRODUCTS[p])||{};
   var caseLb=(typeof productCaseLb==='function')?productCaseLb(p):30;
@@ -16120,10 +16138,7 @@ function invmProductStats(p,origin){
   var win=(typeof dmWindow==='function')?dmWindow(p,origin):13;
   // Windowed run-rate = mean of the last `win` reliable weeks (generalizes to 3/6/13/26; the model only
   // pre-computes 3/6/13, so compute from the series — also picks up the nowcasted weeks).
-  var rrWin=0;
-  if(m){ var _wr=Array.isArray(m.weeklyReliable)?m.weeklyReliable:[]; var _sl=_wr.slice(-win);
-    rrWin=_sl.length ? _sl.reduce(function(s,w){ return s+(w.lbs||0); },0)/_sl.length
-                     : ((win===3?(m.runRate3||m.runRate13):win===6?(m.runRate6||m.runRate13):win===26?(m.runRate26||m.runRate13):m.runRate13)||0); }
+  var rrWin=invmRunRateLbs(m, win);
   var ovr=(store.demandOverride!=null&&store.demandOverride!=='')?parseFloat(store.demandOverride):null;
   // ── Lo comprado CONTRA ORDEN sale del run-rate ────────────────────────────────────────────────
   // El run-rate existe para una sola cosa: saber cuánto comprar para el inventario. Lo que se compra
@@ -16188,15 +16203,28 @@ function invmProductStats(p,origin){
   // que Juan eligió: cada compra dice si tenía destino, en vez de etiquetar al cliente para siempre.
   var directShipCases=((typeof mtoCasesPerWeek==='function')?mtoCasesPerWeek(p,(typeof dsWindow==='function')?dsWindow():26):0);
   var coverWks=(weeklyLbsBuy>0)?availLbs/weeklyLbsBuy:(availLbs>0?Infinity:0);
-  var orderCases=Math.ceil(Math.max(0,(targetWks*weeklyLbsBuy)-availLbs)/caseLb);
+  // ── Comprar se decide sobre la POSICIÓN, no sobre lo que hay en la cámara ─────────────────────
+  // `orderCases` salía de `available` sola: ignoraba lo que ya está comprado y navegando, así que el
+  // KPI "Suggested order" mandaba a comprar de nuevo lo que ya venía en camino. Y la tabla de 12
+  // semanas que va justo abajo SÍ dibuja esas llegadas — el veredicto contradecía a su propia tabla.
+  // El status va por el mismo camino: con un contenedor entrando el jueves, "Urgent" es falso.
+  // `coverWks` no se toca: es la cobertura de la cámara, que es la otra pregunta y la que se cruza
+  // contra el Sales Desk los lunes.
+  var incomingCases=0;
+  try{ var _ai=invmProductArrivals(p,origin)||{};
+       incomingCases=Object.keys(_ai).reduce(function(t,k){ return t+(_ai[k]||0); },0); }catch(e){}
+  var posCases=availCases+incomingCases, posLbs=posCases*caseLb;
+  var coverPosWks=(weeklyLbsBuy>0)?posLbs/weeklyLbsBuy:(posLbs>0?Infinity:0);
+  var orderCases=Math.ceil(Math.max(0,(targetWks*weeklyLbsBuy)-posLbs)/caseLb);
   var status='ok';
-  if(weeklyLbs>0){ if(coverWks<leadWks) status='ur'; else if(coverWks<targetWks) status='re'; }
+  if(weeklyLbs>0){ if(coverPosWks<leadWks) status='ur'; else if(coverPosWks<targetWks) status='re'; }
   return {p:p,meta:meta,label:meta.label||p,caseLb:caseLb,lots:lots,allLots:allLots,onHandCases:onHandCases,onHandLbs:onHandLbs,costVal:costVal,excludedCases:excludedCases,excludedLbs:excludedLbs,
     origin:origin,origins:origins,supList:supList,
     shrinkPct:shrinkPct,effOnHandCases:effOnHandCases,effOnHandLbs:effOnHandLbs,committedCases:committedCases,availCases:availCases,availLbs:availLbs,directShipCases:directShipCases,
     hasModel:!!m,rr13:rr13,win:win,presMix:(m&&m.presMix)||[],weeklyLbs:weeklyLbs,weeklyCases:weeklyCases,
     weeklyLbsBuy:weeklyLbsBuy,weeklyCasesBuy:weeklyCasesBuy,mtoCases:_mto,demandOverride:ovr,cv:cv,nWeeks:vals.length,
-    lead:lead,leadWks:leadWks,z:z,serviceLevel:svc,safetyWks:safetyWks,targetWks:targetWks,coverWks:coverWks,orderCases:orderCases,status:status};
+    lead:lead,leadWks:leadWks,z:z,serviceLevel:svc,safetyWks:safetyWks,targetWks:targetWks,coverWks:coverWks,
+    incomingCases:incomingCases,posCases:posCases,coverPosWks:coverPosWks,orderCases:orderCases,status:status};
 }
 function invmProdSetService(p,v){ var st=prodInvState(); if(!st[p]) st[p]={lots:[]}; st[p].serviceLevel=Math.max(50,Math.min(99.5,parseFloat(v)||95)); prodInvSave(st); invmReRender(); }
 function invmProdSetShrink(p,v){ var st=prodInvState(); if(!st[p]) st[p]={lots:[]}; st[p].shrinkPct=Math.max(0,Math.min(60,parseFloat(v)||0)); prodInvSave(st); invmReRender(); }
@@ -16635,7 +16663,7 @@ function invmAnalysisHTML(s){
       + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Available to sell<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Available · free to sell</span><span class="jlz-td">What\'s truly free to sell now: physical lots on hand, minus expected shrink, minus orders already sold but not yet shipped (committed, current week).</span><span class="jlz-tf">= on-hand × (1 − shrink%) − committed</span></span></span></div><div class="big">'+f(s.availCases)+' <small>cs</small></div><div class="note">'+availNote+'</div></div>'
       + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Current cover<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Current cover</span><span class="jlz-td">How many weeks your free stock lasts at the current sales pace.</span><span class="jlz-tf">= Available ÷ weekly demand</span></span></span></div><div class="big">'+covTxt+'</div><div class="note">available ÷ demand/wk</div></div>'
       + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Target cover<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Target cover</span><span class="jlz-td">Weeks of stock you want to hold before reordering: supplier lead time plus a safety buffer for demand swings.</span><span class="jlz-tf">= lead + safety (z × CV × √lead)</span></span></span></div><div class="big">'+tgtTxt+'</div><div class="note">lead '+f1(s.leadWks)+' + safety '+f1(s.safetyWks)+'</div></div>'
-      + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Suggested order<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Suggested order</span><span class="jlz-td">Cases to buy now to reach target cover. Zero if you are already above target.</span><span class="jlz-tf">= (target cover × wk demand) − available</span></span></span></div><div class="big" style="color:'+(s.orderCases>0?'var(--jlz)':'var(--gray-400)')+'">'+ordTxt+'</div><div><span class="ipv-st '+stCls+'">'+stTxt+'</span></div></div>'
+      + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Suggested order<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Suggested order</span><span class="jlz-td">Cases to buy now to reach target cover, counting what is already bought and on the way. Zero if you are already above target.</span><span class="jlz-tf">= (target cover × wk demand) − (available + incoming)</span></span></span></div><div class="big" style="color:'+(s.orderCases>0?'var(--jlz)':'var(--gray-400)')+'">'+ordTxt+'</div><div><span class="ipv-st '+stCls+'">'+stTxt+'</span></div></div>'
     + '</div>';
   if(s.weeklyLbs>0 && s.leadWks>0){
     html += '<div class="ipv-formula">'
@@ -16643,7 +16671,10 @@ function invmAnalysisHTML(s){
       + (s.shrinkPct>0 ? ('<b>weekly draw</b> = '+f(s.weeklyCases)+' sold &divide; (1&minus;'+f1(s.shrinkPct)+'% shrink) = <b>'+f(s.weeklyCasesBuy)+' cs/wk</b> <span style="color:var(--gray-400)">&middot; what you actually pull from the cooler</span><br>') : '')      + '<b>current cover</b> = '+f(s.availLbs)+' lb ÷ '+f(s.weeklyLbsBuy)+' lb/wk = <b>'+f1(s.coverWks)+' wk</b><br>'
       + '<b>variability</b> (CV of your sales) = '+cvTxt+' · <b>safety</b> = z('+s.z.toFixed(2)+' @'+s.serviceLevel+'%) × CV × √lead = <b>'+f1(s.safetyWks)+' wk</b><br>'
       + '<b>target cover</b> = lead '+f1(s.leadWks)+' + safety '+f1(s.safetyWks)+' = <b>'+f1(s.targetWks)+' wk</b><br>'
-      + '<b>order</b> = max(0, target×demand − available) ÷ '+f(s.caseLb)+' lb = <b>'+f(s.orderCases)+' cs</b>'
+      + (s.incomingCases>0
+          ? ('<b>position</b> = '+f(s.availCases)+' free + '+f(s.incomingCases)+' already on the way = <b>'+f(s.posCases)+' cs</b> &middot; <b>'+f1(s.coverPosWks)+' wk</b> of cover<br>')
+          : '')
+      + '<b>order</b> = max(0, target×demand &minus; position) &divide; '+f(s.caseLb)+' lb = <b>'+f(s.orderCases)+' cs</b>'
       + '</div>';
   } else if(!s.hasModel){
     html += '<div class="ipv-formula" style="color:var(--amber-700);border-color:var(--amber-200);background:var(--amber-50)">No sales loaded to compute demand / target. Load the sales report (Demand tab) or set weekly demand manually above.</div>';
@@ -16973,8 +17004,10 @@ function invmBuySuggestion(p, origin, opts){
     // objetivo y la fecha saldrían de leads distintos, así que la cuenta mostrada no cerraría.
     var best=sup.reduce(function(a,b){ return ((+b.leadDays||0)>(+a.leadDays||0))?b:a; });
     var lead=+best.leadDays||14;
-    var arr=invmProductArrivals(p, origin||'all')||{};
-    var incoming=Object.keys(arr).reduce(function(t,k){ return t+(arr[k]||0); },0);
+    // Lo que ya viene navegando sale de `s`, no de una segunda llamada: `invmProductStats` resuelve
+    // el origen (un 'all' cae al primero con lotes) y contar por separado con el origen crudo daba
+    // dos "incoming" distintos para la misma tarjeta.
+    var incoming=s.incomingCases||0;
     var hypoIn=0, hypoOut=0;
     if(_wi){
       try{ var wa=whatifArrivals(p, origin||'all')||{};
@@ -16996,7 +17029,13 @@ function invmBuySuggestion(p, origin, opts){
                belowSafety:(cover<(s.safetyWks||0)), far:(offset>180),
                buy:Math.max(0, Math.ceil((s.targetWks||0)*d-supply)) };
     };
-    var byWin={ 3:one(m.runRate3), 6:one(m.runRate6), 13:one(m.runRate13), 26:one(m.runRate26) };
+    // Misma base que el KPI de Inventory (invmRunRateLbs), y el override manual manda sobre las
+    // cuatro: si Juan escribió la demanda a mano, ese número NO depende de la ventana. Antes esta
+    // tarjeta leía `m.runRateN` directo y el override no llegaba nunca — el panel de arriba decía
+    // "manual" y la sugerencia de abajo seguía calculando con el historial crudo.
+    var ovrLbs=(s.demandOverride!=null && s.demandOverride>0) ? s.demandOverride*cl : null;
+    var rateFor=function(w){ return (ovrLbs!=null)?ovrLbs:invmRunRateLbs(m,w); };
+    var byWin={ 3:one(rateFor(3)), 6:one(rateFor(6)), 13:one(rateFor(13)), 26:one(rateFor(26)) };
     var win=s.win||13;
     var now=byWin[win]||byWin[13]||byWin[3]; if(!now) return null;
     now.safetyWks=s.safetyWks||0;
@@ -17006,7 +17045,7 @@ function invmBuySuggestion(p, origin, opts){
                      .sort(function(a,b){ return a.win-b.win; });
     var fit=null; try{ fit=invmWindowFit(p, origin); }catch(e){}
     // Cada eslabón de la cuenta, para que la pantalla pueda mostrarla entera y sea auditable.
-    var rrLbs=(win===3?m.runRate3:win===6?m.runRate6:win===26?m.runRate26:m.runRate13)||0;
+    var rrLbs=rateFor(win)||0;
     var steps={ rrLbs:rrLbs, rrCases:rrLbs/cl, infl:infl,
                 onHand:s.onHandCases||0, committed:s.committedCases||0,
                 leadWks:s.leadWks||0, safetyWks:s.safetyWks||0, targetWks:s.targetWks||0,
