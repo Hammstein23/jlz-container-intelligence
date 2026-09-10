@@ -17978,8 +17978,21 @@ function renderBuyPlanner() {
   const _z = BP_Z[serviceLevel] || 1.6449;
   const _ltDaysSea = (typeof bpGetLeadTimes === 'function') ? (bpGetLeadTimes().sea_total || 37) : 37;
   const _ltWeeks = _ltDaysSea / 7;
-  const _weeklyLbsSeries = (usingDemandModule && Array.isArray(_dmModel.weekly))
-    ? _dmModel.weekly.slice(-13).map(w => w.lbs).filter(x => x > 0) : [];
+  // La misma base que el run-rate: `weeklyReliable` deja fuera la semana en curso y las prelim, que
+  // es justo lo que ya se hace para promediar. Hoy las dos series de ginger son idénticas (13 de 13
+  // semanas, ninguna en cero), así que esto no mueve el número — pero deja de depender de que lo
+  // sean. Y sin `filter(x>0)`: una semana sin venta ES variabilidad, y es lo que dimensiona el
+  // colchón. Ginger vende todas las semanas; los otros productos no, y ese filtro ya costó una vez.
+  const _wkSrc = (usingDemandModule && _dmModel)
+    ? (Array.isArray(_dmModel.weeklyReliable) && _dmModel.weeklyReliable.length ? _dmModel.weeklyReliable
+       : (Array.isArray(_dmModel.weekly) ? _dmModel.weekly : []))
+    : [];
+  const _weeklyLbsSeries = _wkSrc.slice(-13).map(w => (w && w.lbs) || 0);
+  // Con el módulo de demanda vivo pero sin serie, sigma queda en 0 y el colchón se derrumba al término
+  // de variabilidad del lead time — sin que nada lo diga. Se vio una vez, en el render de arranque:
+  // 134 cajas de colchón en vez de 866, y el plan pedía 1,23 contenedores en vez de 1,79. Que no
+  // vuelva a pasar callado.
+  const _ssDegradado = usingDemandModule && _weeklyLbsSeries.length < 2;
   const _ltSig = bpLeadTimeSigmaWeeks();
   const _ssCalc = bpSafetyStockLbs(_weeklyLbsSeries, demandLbsWk, _ltWeeks, _ltSig.sigmaWeeks, _z);
   const ssLbs = _ssCalc.ssLbs;
@@ -17991,7 +18004,7 @@ function renderBuyPlanner() {
   const _setKpi = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
   _setKpi('bp-demand-lbs', Math.round(demandLbsWk).toLocaleString());
   _setKpi('bp-demand-cs',  Math.round(salesDemand).toLocaleString());
-  _setKpi('bp-demand-src', usingDemandModule ? 'Demand · Peru' : 'Manual fallback');
+  _setKpi('bp-demand-src', usingDemandModule ? (_ssDegradado ? 'Demand · Peru \u00b7 \u26a0 sin serie semanal' : 'Demand · Peru') : 'Manual fallback');
   if (typeof winRenderToggle === 'function') winRenderToggle('bp-winsel');
 
   // Update sales source indicator
@@ -18826,7 +18839,8 @@ function renderBuyPlanner() {
       orderUpTo:orderUpToCases, projAtArrival:projAtArrival, coverWks:recCoverWks,
       leadWks:ltWeeksRec, cadence:cadence, ssCases:ssCases,
       perContainer:grossCasesPerContainer,
-      raw:_recRaw, wanted:_recWant, cap:_capCont, cappedBy:_cappedBy, shelfWks:_shelfW }; }catch(e){}
+      raw:_recRaw, wanted:_recWant, cap:_capCont, cappedBy:_cappedBy, shelfWks:_shelfW,
+      ssDegraded:_ssDegradado, ssWeeks:_weeklyLbsSeries.length }; }catch(e){}
     const recQtyStr = recContainers + ' container' + (recContainers>1?'s':'') + ' · ~' + recNetCases.toLocaleString() + ' cs \u2192 ~' + recCoverWks + ' wks @ ' + serviceLevel + '% · ~' + Math.round(effShrinkOrder*100) + '% shrink';
     const coverWks = weeklyDemand > 0 ? (1320 / weeklyDemand).toFixed(1) : '—';
     const recHtml = '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;background:' + recBg + ';border-radius:6px;margin-bottom:8px;flex-wrap:wrap">'

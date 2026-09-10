@@ -6,7 +6,7 @@
 // Cada eslabón se recalcula por un camino propio —los lotes, las órdenes, el modelo— y se compara
 // contra lo que la app reporta. Un ✗ es una discrepancia real; no hay tolerancia salvo el redondeo.
 (function(){
-  var V='buy-audit v1 · 2026-09-10';
+  var V='buy-audit v2 · 2026-09-10';
   console.log('%c '+V+' ','background:#0d5026;color:#fff;padding:2px 6px;font-weight:700');
   var fails=0, rows=[];
   var near=function(a,b,tol){ return Math.abs((a||0)-(b||0)) <= (tol==null?0.51:tol); };
@@ -16,6 +16,15 @@
     return ok;
   };
   var f2=function(x){ return Math.round((x||0)*100)/100; };
+  // Mismo criterio que _invmKnownOrigin en la app, escrito acá aparte a propósito: si el día de
+  // mañana alguien lo cambia de un solo lado, este chequeo lo tiene que gritar.
+  var conocido=function(p,o){
+    if(!o) return false;
+    try{ if((invmOriginsFor(p)||[]).indexOf(o)>-1) return true; }catch(e){}
+    try{ var sup=(((typeof PRODUCTS==='object'&&PRODUCTS[p])||{}).suppliers)||[];
+         for(var i=0;i<sup.length;i++) if(String((sup[i]||{}).origin||'')===o) return true; }catch(e){}
+    return false;
+  };
 
   // ── Los cuatro del store product-aware ───────────────────────────────────────────────────────
   ['turmeric','garlic','shallots','ginger'].forEach(function(p){
@@ -39,7 +48,9 @@
         if(!(x.status==='Contracted'||x.status==='In Transit')) return;
         if(!(x.arrivalActual||x.arrivalEstimated||x.etaActual||x.etaEstimated)) return;
         var oo=(typeof _ordOrigin==='function')?_ordOrigin(x):(x.origin||'');
-        if(o&&o!=='all'&&oo&&oo!==o&&(invmOriginsFor(p)||[]).indexOf(oo)>-1) return;
+        // Los orígenes conocidos son los lotes MÁS los proveedores: ginger-Perú no tiene lote en este
+        // store y sin los proveedores sus contenedores se contaban como Hawaii.
+        if(o&&o!=='all'&&oo&&oo!==o&&conocido(p,oo)) return;
         var ds=0; try{ ds=directShipTotal(x.jlzPo)||0; }catch(e){}
         inc+=Math.max(0,(parseFloat(x.cases)||0)-ds);
       });
