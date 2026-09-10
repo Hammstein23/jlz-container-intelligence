@@ -1213,6 +1213,36 @@ group('invmRunway · lo que ya tenés viniendo, que es lo que frena una compra d
   var conLlegada = R2.rows.filter(function(r){ return r.arrived > 0; });
   check('marca las semanas con llegada', conLlegada.length, 3);
 
+  // ── El Buy Planner estima con historial; el Simulator simula ──────────────────────────────────
+  // Cada uno muestra lo que sabe. Sin el flag, la sugerencia vivía DENTRO del Simulator ignorando
+  // sus propios datos: había una venta de 700 cs a Sol-ti cargada para la semana 39 y ninguna
+  // pantalla de compra la veía. Los hipotéticos se SUMAN a lo que el modelo ya espera.
+  invmProductArrivals = function(){ return {}; };
+  whatifArrivals = function(){ var o={}; o[wk(3)]=1320; return o; };
+  simActiveHypoSales = function(){ return [{ customer:'Sol-ti', wk:wk(2), cases:700 }]; };
+
+  var sinEsc = invmRunway('ginger','all',12);
+  check('sin escenarios ignora los hipotéticos', sinEsc.incoming, 0);
+  ok('y no los marca', sinEsc.whatif === false);
+
+  var conEsc = invmRunway('ginger','all',12,{whatif:true});
+  check('con escenarios suma la llegada hipotética', conEsc.incoming, 1320);
+  check('y la reporta aparte', conEsc.hypoIn, 1320);
+  check('la venta hipotética también', conEsc.hypoOut, 700);
+  ok('la venta hipotética consume stock en SU semana',
+     conEsc.rows[2].hypoSale === 700 && conEsc.rows[1].hypoSale === 0);
+  ok('y deja menos stock que sin escenarios en esa semana',
+     conEsc.rows[2].stock < sinEsc.rows[2].stock);
+  ok('la llegada hipotética entra en su semana', conEsc.rows[3].arrived === 1320);
+
+  // Las ventas hipotéticas son del Simulator de ginger: no se cuelan en otro producto.
+  invmProductStats = function(){ return { caseLb:30, availCases:1000, weeklyCasesBuy:100 }; };
+  var otro = invmRunway('turmeric','all',12,{whatif:true});
+  check('no aplica las ventas hipotéticas de ginger a otro producto', otro.hypoOut, 0);
+
+  whatifArrivals = function(){ return {}; };
+  simActiveHypoSales = function(){ return []; };
+
   // Sin demanda no hay pista que calcular.
   invmProductStats = function(){ return { caseLb:30, availCases:1000, weeklyCasesBuy:0 }; };
   check('sin demanda no proyecta', invmRunway('ginger','all',12), null);
