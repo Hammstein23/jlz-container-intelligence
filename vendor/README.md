@@ -6,23 +6,46 @@ que está en esta carpeta se sirve desde el mismo origen.
 
 ## Qué hay
 
-| Archivo | Versión | Origen | SHA-512 |
-|---|---|---|---|
-| `xlsx.full.min.js` | **0.20.3** | `https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js` | `017ade0e6f…95a2ad00` |
-| `chart.umd.min.js` | — | Chart.js | (sin registrar todavía) |
-| `pdf.min.js`, `pdf.worker.min.js` | — | PDF.js | (sin registrar todavía) |
+Verificado el **2026-09-10**. La columna "cómo se verificó" es la que importa: dice contra
+**qué hash publicado por la fuente** se comparó cada archivo, no simplemente qué hash tiene.
 
-SHA-512 completo de `xlsx.full.min.js` (0.20.3):
+| Archivo | Versión | Cómo se verificó |
+|---|---|---|
+| `chart.umd.min.js` | Chart.js **4.4.1** | SRI **publicado por cdnjs** para `Chart.js/4.4.1/chart.umd.min.js` — coincide exacto |
+| `pdf.min.js` | PDF.js **3.11.174** | byte a byte contra `package/build/pdf.min.js` del tarball de npm, cuyo `integrity` coincide con el que publica el registro |
+| `pdf.worker.min.js` | PDF.js **3.11.174** | ídem, contra `package/build/pdf.worker.min.js` |
+| `xlsx.full.min.js` | SheetJS **0.20.3** | **solo TLS** contra `cdn.sheetjs.com` — no publican hash. Ver la excepción más abajo |
+
+SHA-512 de cada uno, como línea de base para detectar un cambio no intencional:
 
 ```
-017ade0e6fe6690b7df7e04a7ae57955463cc74c410193d7e8e61e9c74654701bf0b7e4f29c67b1905c84d347c65fddc2c77937f05432c430104f7fb95a2ad00
+chart.umd.min.js   0900569787c91d66ebc8613e3dced403158c50c34c5b35b1178490a3d0a090920dd64c7a7630d066387763c499d5dfba23ed73cdee99ee41d73bbab75326405b
+pdf.min.js         abee25885c1d3c2fdb35d854a59c7a6970f1fe1efbc8442d9f8235b251f275c6d92b7e272da477700798489b21a3120eab79a311fef1244f18588507327fa809
+pdf.worker.min.js  05bad9efa50d66ae41847ecb2fba67f40e13290a5078d0873a8eb9fda91f7a570805b715bd858e15028f5c8af2904dea6716239835f9ef7a1ae18c2c73bae94f
+xlsx.full.min.js   017ade0e6fe6690b7df7e04a7ae57955463cc74c410193d7e8e61e9c74654701bf0b7e4f29c67b1905c84d347c65fddc2c77937f05432c430104f7fb95a2ad00
 ```
 
-El de la versión anterior (0.18.5), por si hay que volver atrás:
+El de xlsx 0.18.5, por si hay que volver atrás:
 
 ```
 af6da00a10e71af072964f74fb67bfc9caf7455ac38bc0c83a420636126529fbb240ce2d211008d3ad8c695f2c7e340a6151a338169904e03cef3f8885913d0c
 ```
+
+### Dos trampas que costaron tiempo, para no repetirlas
+
+- **`chart.umd.min.js` NO viene en el paquete de npm.** El tarball de `chart.js@4.4.1` trae solo
+  `dist/chart.umd.js`, sin minificar. El minificado lo generan los CDN, y **cada uno el suyo**: el
+  de jsDelivr son 205.399 bytes y el nuestro 200.807. Buscarlo en npm o compararlo contra jsDelivr
+  da "no coincide" y no significa nada malo. El que corresponde es **cdnjs**, que sí publica SRI.
+- **`pdfjs-dist` trae DOS builds con el mismo nombre**: `build/` y `legacy/build/`. Los nuestros son
+  los de `build/`. Comparar contra `legacy/` da distinto — y también es una falsa alarma.
+
+### Cómo re-verificar (el procedimiento, no el resultado)
+
+Para los que están en npm, la cadena es: pedirle al registro el `integrity` de la versión, bajar el
+tarball, comprobar que su SHA-512 en base64 coincide, y recién entonces comparar el archivo de
+adentro contra el de `vendor/`. Un hash calculado sobre lo que uno mismo bajó, sin ese primer paso,
+no prueba nada.
 
 ## La excepción a la regla del CLAUDE.md — leer antes de actualizar
 
@@ -43,8 +66,7 @@ El SHA-512 de arriba no certifica nada por sí solo: sirve como **línea de base
 próxima vez que se toque este archivo, si el hash cambió sin que nadie lo haya actualizado
 a propósito, eso sí es una señal.
 
-Para las otras tres librerías la regla original sigue valiendo: Chart.js y PDF.js siguen
-en npm y publican integridad, así que ahí sí hay contra qué comparar.
+Para las otras tres la regla original sí se pudo cumplir, y está cumplida: ver la tabla de arriba.
 
 ## Por qué se actualizó xlsx (2026-09-10)
 
