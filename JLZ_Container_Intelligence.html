@@ -16240,6 +16240,20 @@ function invmProdAddLot(p){ var st=prodInvState(); if(!st[p]) st[p]={serviceLeve
 // FEFO order: oldest received first (soonest-expiring, since a product's lots share one shelf life). Undated lots go last.
 function invmFefoSort(lots){ return lots.slice().sort(function(a,b){ var ra=(a&&a.received)||'', rb=(b&&b.received)||''; if(ra&&rb) return ra<rb?-1:(ra>rb?1:0); if(ra&&!rb) return -1; if(!ra&&rb) return 1; return 0; }); }
 // Incoming supply per product+origin from the Fase 1 Orders pipeline (Contracted / In Transit), by arrival week.
+// ── Los orígenes que el producto PUEDE tener, no solo los que hoy tienen lote ────────────────────
+// `invmOriginsFor` sale del inventario, y ginger-Perú no vive en ese store (vive en jlz_bp_inv_v2).
+// Sus 6.540 cajas en camino no encontraban bucket y se contaban como HAWAII: 737 semanas de
+// cobertura y fecha límite en 2040 sobre 2 cajas de stock. Los proveedores sí dicen de dónde viene
+// cada producto — ginger tiene cuatro en Perú. Y el caso que esto no puede romper sigue igual: la
+// orden de Peri & Sons dice "Nevada", que no es ni lote ni proveedor de shallots, así que cuenta
+// en vez de desaparecer. Comparación exacta a propósito: aflojarla se come justo ese caso.
+function _invmKnownOrigin(p, o){
+  if(!o) return false;
+  try{ if((invmOriginsFor(p)||[]).indexOf(o)>-1) return true; }catch(e){}
+  try{ var sup=(((typeof PRODUCTS==='object'&&PRODUCTS[p])||{}).suppliers)||[];
+       for(var i=0;i<sup.length;i++) if(String((sup[i]||{}).origin||'')===o) return true; }catch(e){}
+  return false;
+}
 function invmProductArrivals(p, origin){
   var out={};
   var orders=(typeof getOrders==='function')?getOrders():[];
@@ -16252,10 +16266,7 @@ function invmProductArrivals(p, origin){
     // Descartar solo cuando el origen coincide con OTRO bucket real; si no encaja en ninguno, cuenta.
     if(origin && origin!=='all'){
       var _oo=(typeof _ordOrigin==='function')?_ordOrigin(o):(o.origin||'');
-      if(_oo && _oo!==origin){
-        var _buckets=[]; try{ _buckets=(typeof invmOriginsFor==='function')?(invmOriginsFor(p)||[]):[]; }catch(e){}
-        if(_buckets.indexOf(_oo)>-1) return;                 // es de otro origen conocido: no es de acá
-      }
+      if(_oo && _oo!==origin && _invmKnownOrigin(p,_oo)) return;   // otro origen conocido: no es de acá
     }
     if(!(o.status==='Contracted'||o.status==='In Transit')) return;
     var eta=o.arrivalActual||o.arrivalEstimated||o.etaActual||o.etaEstimated; if(!eta) return;

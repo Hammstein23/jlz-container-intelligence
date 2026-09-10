@@ -35,7 +35,7 @@ var _PRISTINO_NOMBRES = [
   // Los insumos del numero de compra. Sin esto el stub de un grupo se filtraba al siguiente:
   // `mtoCasesPerWeek` clavado en 0 hacia fallar seis checks de su propio grupo, tres grupos despues.
   'PRODUCTS','invmProductModel','invmRunRateLbs','invmStockableWeekly','prodInvFor',
-  'prodCommittedTotal','mtoCasesPerWeek','dsWindow'
+  'prodCommittedTotal','mtoCasesPerWeek','dsWindow','_ordOrigin','directShipTotal','invmOriginsFor'
 ];
 var _PRISTINO = {};
 _PRISTINO_NOMBRES.forEach(function(n){ try { _PRISTINO[n] = eval(n); } catch (e) {} });
@@ -1655,6 +1655,41 @@ group('El numero de compra es UNO solo · el panel y la sugerencia no pueden dis
   check('la cobertura de camara sigue siendo la de camara', Math.round(flojo.coverWks*100)/100, Math.round(20/300*100)/100);
   check('pero la posicion cuenta lo que llega', Math.round(flojo.coverPosWks*100)/100, Math.round(120/300*100)/100);
   STORE.turmeric.lots[0].cases = 200;
+})();
+
+group('En camino · el origen filtra, pero no puede hacer desaparecer carga');
+// El bucket de origenes salia SOLO del inventario. ginger-Peru no vive en ese store, asi que sus
+// 6.540 cajas en camino no encontraban bucket y se contaban como HAWAII: 737 semanas de cobertura
+// sobre 2 cajas de stock, y fecha limite en 2040. Los proveedores si dicen de donde viene cada
+// producto. Lo que NO puede pasar es el error opuesto: que una orden con un origen que nadie
+// registro se caiga en silencio.
+(function(){
+  PRODUCTS = {
+    ginger:   { suppliers:[ {name:'Anawi', origin:'Peru', leadDays:32}, {name:'Crown Pacific', origin:'Hawaii', leadDays:10} ] },
+    shallots: { suppliers:[ {name:'Peri & Sons', origin:'AZ / CA', leadDays:7} ] }
+  };
+  invmOriginsFor = function(p){ return p==='ginger' ? ['Hawaii'] : ['California']; };   // lo que hay HOY con lote
+
+  check('un origen con lote es conocido',            _invmKnownOrigin('ginger','Hawaii'), true);
+  check('un origen que solo esta en el proveedor tambien', _invmKnownOrigin('ginger','Peru'), true);
+  check('el de otro producto no cuenta',             _invmKnownOrigin('shallots','Peru'), false);
+  check('y uno que nadie registro sigue sin serlo',  _invmKnownOrigin('shallots','Nevada'), false);
+  check('sin origen no se decide nada',              _invmKnownOrigin('ginger',''), false);
+
+  _ordProd  = function(o){ return o.product; };
+  _ordOrigin= function(o){ return o.origin; };
+  directShipTotal = function(){ return 0; };
+  getOrders = function(){ return [
+    { product:'ginger',   origin:'Peru',    status:'In Transit', cases:1320, jlzPo:'P1', arrivalEstimated:'2026-09-20' },
+    { product:'ginger',   origin:'Hawaii',  status:'In Transit', cases:40,   jlzPo:'P2', arrivalEstimated:'2026-09-20' },
+    { product:'shallots', origin:'Nevada',  status:'In Transit', cases:100,  jlzPo:'P3', arrivalEstimated:'2026-09-15' }
+  ]; };
+  var sum=function(o){ return Object.keys(o||{}).reduce(function(t,k){ return t+(o[k]||0); },0); };
+
+  check('Peru ya no se cuenta como Hawaii', sum(invmProductArrivals('ginger','Hawaii')), 40);
+  check('y sigue siendo de Peru cuando se pregunta por Peru', sum(invmProductArrivals('ginger','Peru')), 1320);
+  check('un origen que no es de nadie NO desaparece', sum(invmProductArrivals('shallots','California')), 100);
+  check('sin filtro de origen entra todo', sum(invmProductArrivals('ginger','all')), 1360);
 })();
 
 group('mtoMismatched · la marca contra-orden tiene que calzar con lo que pidió el cliente');
