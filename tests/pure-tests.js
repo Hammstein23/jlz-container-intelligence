@@ -31,7 +31,11 @@ var _PRISTINO_NOMBRES = [
   '_cmOriginFor','_ordProd','bpInvState','bpFutureWeeks','bpTodayISO','invmProductStats',
   'invmProductArrivals','invmF','invmMoney','dmWindow','productFocus','dmRowOrigin','dmNormalizeOrigin','dmGlobalDataMax',
   'dmIsInternalAcct','dmWeekStatus','findOrderForPo','prodInvState','whatifArrivals','DM_ACCENT',
-  'CASE_LB'
+  'CASE_LB',
+  // Los insumos del numero de compra. Sin esto el stub de un grupo se filtraba al siguiente:
+  // `mtoCasesPerWeek` clavado en 0 hacia fallar seis checks de su propio grupo, tres grupos despues.
+  'PRODUCTS','invmProductModel','invmRunRateLbs','invmStockableWeekly','prodInvFor',
+  'prodCommittedTotal','mtoCasesPerWeek','dsWindow'
 ];
 var _PRISTINO = {};
 _PRISTINO_NOMBRES.forEach(function(n){ try { _PRISTINO[n] = eval(n); } catch (e) {} });

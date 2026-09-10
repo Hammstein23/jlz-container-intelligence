@@ -16108,8 +16108,8 @@ function invmRunRateLbs(m, win){
   var wr=Array.isArray(m.weeklyReliable)?m.weeklyReliable:[];
   var sl=wr.slice(-win);
   if(sl.length) return sl.reduce(function(t,w){ return t+((w&&w.lbs)||0); },0)/sl.length;
-  return m.runRate13||0;
-}
+  return 0;   // sin dato para ESA ventana se devuelve 0, nunca el de otra: una lectura de 26 semanas
+}             // que por dentro es la de 13 se lee igual de firme y no lo es.
 function invmProductStats(p,origin){
   var meta=(typeof PRODUCTS==='object'&&PRODUCTS[p])||{};
   var caseLb=(typeof productCaseLb==='function')?productCaseLb(p):30;
