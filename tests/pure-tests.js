@@ -1070,6 +1070,62 @@ group('El descuento se resta UNA vez: en la fila y en el total, no en ambos por 
   ok('esa doble resta llevaba el total a cero',                conCrudo === 0);
 })();
 
+group('invmStockableWeekly · la demanda que de verdad sale de cámara');
+// De acá salen la variabilidad (cv -> safety -> cuánto comprar) y el backtest de ventanas. Tiene que
+// ser LIBRE DE VENTANA: el neteo del modelo mira los contenedores llegados dentro de la ventana
+// activa, así que la misma semana salía netada o cruda según la ventana elegida. Turmeric: 744 cs
+// con ventana 6 y 44 con ventana 13, siendo el mismo hecho. Eso inflaba el cv a 1,748 y hacía pedir
+// 175 cajas de un producto cubierto.
+(function(){
+  var semana = function(n){ var d=new Date(); d.setDate(d.getDate()-n*7); return dmWeekKey(d); };
+  var poner = function(rows, orders){
+    localStorage.getItem = function(k){ return k==='jlz_demand_raw' ? JSON.stringify(rows) : null; };
+    getOrders = function(){ return orders||[]; };
+  };
+  productCaseLb = function(){ return 30; };
+  dmIsInternalAccount = function(c){ return String(c||'').toLowerCase()==='jlz'; };
+  invmOriginMatch = function(){ return true; };
+
+  var ROWS = [
+    { prod:'turmeric', c:'Acme',   d:semana(3), lbs:50*30, type:'Sale' },
+    { prod:'turmeric', c:'Sol-ti', d:semana(2), lbs:700*30, type:'Sale' },   // el bulto contra orden
+    { prod:'turmeric', c:'Acme',   d:semana(2), lbs:44*30, type:'Sale' },
+    { prod:'turmeric', c:'Acme',   d:semana(1), lbs:60*30, type:'Sale' }
+  ];
+  var ORD = [{ jlzPo:'C1', product:'turmeric', status:'Arrived', arrivalActual:semana(2),
+               directShip:[{customer:'Sol-ti', cases:700}] }];
+
+  var S = invmStockableWeekly('turmeric','all');
+  var byWk = {}; S.forEach(function(x){ byWk[x.wk] = x.lbs/30; });
+  poner(ROWS, ORD);
+  S = invmStockableWeekly('turmeric','all'); byWk = {}; S.forEach(function(x){ byWk[x.wk]=x.lbs/30; });
+
+  check('la semana del bulto queda solo con la venta de cámara', Math.round(byWk[semana(2)]), 44);
+  check('las otras semanas no se tocan', Math.round(byWk[semana(3)]), 50);
+  check('ni la más reciente', Math.round(byWk[semana(1)]), 60);
+
+  // Sin la marca en la orden, el bulto ensucia la serie — que es el síntoma de no haberla marcado.
+  poner(ROWS, []);
+  var sinMarca = {}; invmStockableWeekly('turmeric','all').forEach(function(x){ sinMarca[x.wk]=x.lbs/30; });
+  check('sin contenedor marcado el bulto entra entero', Math.round(sinMarca[semana(2)]), 744);
+
+  // El tope es por cliente: nunca resta más de lo que ese cliente compró esa semana.
+  poner([{ prod:'turmeric', c:'Sol-ti', d:semana(2), lbs:100*30, type:'Sale' }], ORD);
+  var tope = invmStockableWeekly('turmeric','all');
+  check('no deja libras negativas', tope.length?Math.round(tope[0].lbs):0, 0);
+
+  // La semana en curso está incompleta: no puede medir comportamiento.
+  poner([{ prod:'turmeric', c:'Acme', d:dmWeekKey(new Date()), lbs:10*30, type:'Sale' },
+         { prod:'turmeric', c:'Acme', d:semana(1), lbs:60*30, type:'Sale' }], []);
+  var sinHoy = invmStockableWeekly('turmeric','all');
+  check('deja afuera la semana en curso', sinHoy.length, 1);
+
+  // Las cuentas internas no son demanda de clientes.
+  poner([{ prod:'turmeric', c:'JLZ',  d:semana(1), lbs:99*30, type:'Sale' },
+         { prod:'turmeric', c:'Acme', d:semana(1), lbs:60*30, type:'Sale' }], []);
+  check('excluye las cuentas internas', Math.round(invmStockableWeekly('turmeric','all')[0].lbs/30), 60);
+})();
+
 group('invmWindowFit · qué ventana viene explicando mejor la venta');
 // No es opinión: backtest. Cada ventana predice semana a semana y gana el menor error. Lo que hace
 // válido el test es que la serie sea LIBRE DE VENTANA — si se puntea contra la serie que el modelo

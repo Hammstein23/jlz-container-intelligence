@@ -16135,8 +16135,18 @@ function invmProductStats(p,origin){
   var _mto=(typeof mtoCasesPerWeek==='function')?mtoCasesPerWeek(p, win):0;
   var weeklyLbs=(ovr!=null&&ovr>0)?ovr*caseLb:rrWin;
   var weeklyCases=weeklyLbs>0?weeklyLbs/caseLb:0;
-  var series=(m&&Array.isArray(m.weeklyReliable)&&m.weeklyReliable.length)?m.weeklyReliable:((m&&Array.isArray(m.weekly))?m.weekly:[]);
-  var vals=series.map(function(w){ return (w&&w.lbs)||0; }).filter(function(x){ return x>0; }).slice(-13);
+  // ── La variabilidad se mide sobre demanda de STOCK, no sobre lo que pasó de largo ─────────────
+  // `cv` alimenta safetyWks y por ahí targetWks, orderCases y el status. Medido sobre la serie del
+  // modelo quedaba a merced de la ventana elegida: turmeric daba cv 1,748 porque la semana del
+  // 06-jul entraba con las 700 cajas de Sol-ti sin netear (el neteo llegaba 6 semanas atrás, el cv
+  // miraba 13). Eso inflaba el colchón a 4,9 semanas para un producto que llega en 10 días, y hacía
+  // pedir 175 cajas de un producto que estaba cubierto. Con la serie libre de ventana: cv 0,475.
+  var _swk=invmStockableWeekly(p, origin);
+  var vals=_swk.map(function(w){ return (w&&w.lbs)||0; }).filter(function(x){ return x>0; }).slice(-13);
+  if(vals.length<2){                                        // sin historia propia, el camino viejo
+    var series=(m&&Array.isArray(m.weeklyReliable)&&m.weeklyReliable.length)?m.weeklyReliable:((m&&Array.isArray(m.weekly))?m.weekly:[]);
+    vals=series.map(function(w){ return (w&&w.lbs)||0; }).filter(function(x){ return x>0; }).slice(-13);
+  }
   var mean=vals.length?vals.reduce(function(a,b){return a+b;},0)/vals.length:0;
   var sd=(vals.length>1)?invmStdev(vals):0;
   var cv=(mean>0)?sd/mean:0;
@@ -16672,24 +16682,20 @@ function bpRenderProduct(p){
 var SIM_PRODUCT='ginger', SIM_ORIGIN='';
 function simSetProduct(p){ var og=invmOriginsFor(p); jlzSyncScope(p, (p==='ginger')?'Peru':((og&&og[0])||'')); if(typeof renderSimulator==='function') renderSimulator(); jlzRepaintScope('renderSimulator'); try{ dmRebuildView(); }catch(e){} }
 function simSetOrigin(o){ jlzSyncScope(null, o); if(typeof renderSimulator==='function') renderSimulator(); jlzRepaintScope('renderSimulator'); try{ dmRebuildView(); }catch(e){} }
-// ── Qué ventana explica mejor el comportamiento reciente ───────────────────────────────────────
-// No es opinión: se hace backtest. Para cada ventana, se recorre semana a semana y se compara lo que
-// ESA ventana habría predicho contra lo que realmente se vendió. Gana el menor error medio.
+// ── Serie semanal de demanda de STOCK, libre de ventana ────────────────────────────────────────
+// Ventas por semana menos lo comprado contra orden, neteado en la semana en que el contenedor
+// LLEGÓ — no dentro de una ventana móvil. Esa distinción importa: el neteo del modelo mira los
+// contenedores llegados dentro de la ventana ACTIVA, así que la misma semana sale netada o cruda
+// según qué ventana esté elegida. Turmeric lo mostraba crudo: la semana del 06-jul valía 744 cs
+// (700 de Sol-ti que van de puerto a cliente) con ventana 6, y 44 con ventana 13.
 //
-// La serie contra la que se puntea tiene que ser LIBRE DE VENTANA, o el test es circular: el neteo
-// contra-orden que usa el modelo mira los contenedores llegados dentro de la ventana activa, así que
-// la "verdad" cambiaría según la ventana que se está evaluando. Acá cada semana se netea por el
-// contenedor que llegó ESA semana — que es el hecho real y no depende de ninguna ventana.
-//
-// Dos honestidades que el número por sí solo no da:
-//   · si la segunda ventana queda a menos de 12%, no hay ganadora y se dice.
-//   · si el error medio supera el 60% de la venta típica, ninguna ventana explica nada (shallots:
-//     117%). Elegir ahí es tirar una moneda, y conviene que la pantalla lo admita.
-function invmWindowFit(p, origin, testWeeks){
+// Cualquier cosa que mida el COMPORTAMIENTO del producto —su variabilidad, qué ventana lo predice
+// mejor— tiene que leer de acá, o mide el efecto de una decisión de configuración.
+// Devuelve libras por semana, sin la semana en curso (incompleta).
+function invmStockableWeekly(p, origin){
   try{
-    var TEST=testWeeks||8, WINS=[3,6,13,26];
     var cl=(typeof productCaseLb==='function')?productCaseLb(p):30;
-    var raw=[]; try{ raw=JSON.parse(localStorage.getItem('jlz_demand_raw')||'[]')||[]; }catch(e){ return null; }
+    var raw=[]; try{ raw=JSON.parse(localStorage.getItem('jlz_demand_raw')||'[]')||[]; }catch(e){ return []; }
     var byw={};
     raw.forEach(function(r){
       if(!r || (r.prod||'ginger')!==p) return;
@@ -16709,11 +16715,32 @@ function invmWindowFit(p, origin, testWeeks){
         (ds[w]=ds[w]||{})[d.customer]=((ds[w]||{})[d.customer]||0)+((+d.cases||0)*cl); });
     });
     var nowWk=dmWeekKey(new Date());
-    var S=Object.keys(byw).sort().filter(function(w){ return w<nowWk; }).map(function(w){
+    return Object.keys(byw).sort().filter(function(w){ return w<nowWk; }).map(function(w){
       var o=byw[w], t=0;
       Object.keys(o).forEach(function(c){ t+=Math.max(0, o[c]-((((ds[w]||{})[c])||0))); });
-      return t/cl;
+      return { wk:w, lbs:t };
     });
+  }catch(e){ return []; }
+}
+
+// ── Qué ventana explica mejor el comportamiento reciente ───────────────────────────────────────
+// No es opinión: se hace backtest. Para cada ventana, se recorre semana a semana y se compara lo que
+// ESA ventana habría predicho contra lo que realmente se vendió. Gana el menor error medio.
+//
+// La serie contra la que se puntea tiene que ser LIBRE DE VENTANA, o el test es circular: el neteo
+// contra-orden que usa el modelo mira los contenedores llegados dentro de la ventana activa, así que
+// la "verdad" cambiaría según la ventana que se está evaluando. Acá cada semana se netea por el
+// contenedor que llegó ESA semana — que es el hecho real y no depende de ninguna ventana.
+//
+// Dos honestidades que el número por sí solo no da:
+//   · si la segunda ventana queda a menos de 12%, no hay ganadora y se dice.
+//   · si el error medio supera el 60% de la venta típica, ninguna ventana explica nada (shallots:
+//     117%). Elegir ahí es tirar una moneda, y conviene que la pantalla lo admita.
+function invmWindowFit(p, origin, testWeeks){
+  try{
+    var TEST=testWeeks||8, WINS=[3,6,13,26];
+    var cl=(typeof productCaseLb==='function')?productCaseLb(p):30;
+    var S=invmStockableWeekly(p, origin).map(function(x){ return x.lbs/cl; });
     if(S.length < TEST+3) return null;
     var rows=[];
     WINS.forEach(function(W){
