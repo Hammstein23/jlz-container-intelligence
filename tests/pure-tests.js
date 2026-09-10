@@ -1210,7 +1210,7 @@ group('invmBuySuggestion · cuánto comprar, cuándo ordenar, cuándo llega');
     { name:'Kailani',    origin:'Hawaii', mode:'air', leadDays:14 } ] } };
 
   var STATS = { p:'turmeric', label:'Turmeric', caseLb:30, shrinkPct:0, origin:'Fiji',
-                availCases:200, excludedCases:23, safetyWks:2, targetWks:6, win:3 };
+                availCases:200, excludedCases:23, leadWks:10/7, safetyWks:2, targetWks:10/7+2, win:3 };
   invmProductStats  = function(){ return STATS; };
   invmProductModel  = function(){ return { caseLb:30, runRate3:100*30, runRate6:50*30, runRate13:200*30, runRate26:null }; };
   invmProductArrivals = function(){ return { 'w1':100 }; };
@@ -1221,7 +1221,7 @@ group('invmBuySuggestion · cuánto comprar, cuándo ordenar, cuándo llega');
   check('y lo nombra, que es la justificación', g.supplier, 'Sbimal LLC');
   // oferta 200 disponibles + 100 en camino = 300 · demanda 100/sem -> 3 semanas de cobertura
   check('cobertura = (disponible + en camino) / demanda', Math.round(g.cover*10)/10, 3);
-  check('comprar = lo que falta para el target', g.buy, 6*100 - 300);
+  check('comprar = lo que falta para el target', g.buy, Math.ceil((10/7+2)*100 - 300));
   // corrida = 3 - 2 de seguridad = 1 semana = 7 días; menos 10 de lead -> 3 días TARDE
   check('la fecha límite descuenta el lead time', g.offset, -3);
   check('y queda expresada como fecha', g.orderBy, iso(-3));
@@ -1238,6 +1238,25 @@ group('invmBuySuggestion · cuánto comprar, cuándo ordenar, cuándo llega');
   // Cubierto: nada que ordenar.
   STATS.availCases = 5000;
   check('con stock de sobra no manda comprar nada', invmBuySuggestion('turmeric','Fiji').buy, 0);
+  STATS.availCases = 200;
+
+  // ── El sustento tiene que CERRAR con la decisión ─────────────────────────────────────────────
+  // La pantalla muestra la cuenta paso a paso. Si esos pasos no reconstruyen el número de cajas,
+  // el desglose es decorativo y peor que no tenerlo: da confianza sin respaldarla.
+  var gs = invmBuySuggestion('turmeric','Fiji'), S = gs.steps;
+  ok('expone cada eslabón de la cuenta', !!S);
+  check('lo vendido por semana sale del run-rate y el peso de caja', Math.round(S.rrCases*100)/100, Math.round(S.rrLbs/30*100)/100);
+  check('lo que sale de cámara es lo vendido más la merma', Math.round(S.rrCases*S.infl*1000)/1000, Math.round(gs.demand*1000)/1000);
+  check('la oferta es lo libre más lo que ya viene', S.supply, gs.avail + gs.incoming);
+  check('el objetivo es lead más seguridad', Math.round(S.targetWks*1000)/1000, Math.round((S.leadWks+S.safetyWks)*1000)/1000);
+  check('lo necesario es objetivo por demanda', Math.round(S.needed*100)/100, Math.round(S.targetWks*gs.demand*100)/100);
+  check('y la compra es exactamente lo que falta', gs.buy, Math.max(0, Math.ceil(S.needed - S.supply)));
+
+  // El mismo cierre cuando la respuesta es NO comprar: el desglose tiene que mostrar el sobrante.
+  STATS.availCases = 5000;
+  var gc = invmBuySuggestion('turmeric','Fiji');
+  check('con stock de sobra la compra es 0', gc.buy, 0);
+  ok('y el desglose muestra que sobra, no que falta', gc.steps.supply > gc.steps.needed);
   STATS.availCases = 200;
 
   // Sin demanda no hay sugerencia que dar.
