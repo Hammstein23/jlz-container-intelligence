@@ -16758,7 +16758,24 @@ function invmWindowFit(p, origin, testWeeks){
     if(rows.length<2) return null;
     rows.sort(function(a,b){ return a.mae-b.mae; });
     var best=rows[0], second=rows[1];
-    return { best:best.win, mae:best.mae, pct:best.pct, rows:rows, weeks:TEST,
+    // ── Por qué gana esa ventana ──────────────────────────────────────────────────────────────
+    // El puntaje dice CUÁL, no POR QUÉ. La razón está en la forma de la serie: si las últimas
+    // semanas se despegaron del nivel anterior, la ventana corta lo sigue y la larga arrastra el
+    // nivel viejo; si la venta oscila alrededor de un mismo nivel, la larga cancela el ruido.
+    // El "antes" es el nivel de largo plazo (las 26 semanas previas), no otra ventana del mismo
+    // largo: comparar 3 contra 3 no ve un escalón que ocurrió hace más de 3 semanas.
+    var rec=S.slice(-best.win), pri=S.slice(-(best.win+26), -best.win);
+    var mRec=rec.length? rec.reduce(function(a,b){return a+b;},0)/rec.length : 0;
+    var mPri=pri.length? pri.reduce(function(a,b){return a+b;},0)/pri.length : 0;
+    var chg=(mPri>0)? (mRec-mPri)/mPri*100 : null;
+    var why=null;
+    if(chg!=null && Math.abs(chg)>=25){
+      why={ kind:(chg>0?'up':'down'), pct:chg, recent:mRec, prior:mPri, wks:best.win };
+    } else if(best.win>=13){
+      why={ kind:'steady', pct:chg, recent:mRec, prior:mPri, wks:best.win };
+    }
+    return { why:why,
+             best:best.win, mae:best.mae, pct:best.pct, rows:rows, weeks:TEST,
              clear:((second.mae-best.mae)/(best.mae||1) > 0.12),
              noisy:(best.pct!=null && best.pct>60), runnerUp:second.win, runnerUpPct:second.pct };
   }catch(e){ return null; }
@@ -16897,7 +16914,12 @@ function invmBuySuggestionHTML(p, origin){
       : (!F.clear
           ? ('No window fits clearly: '+F.best+'wk and '+F.runnerUp+'wk are within a hair ('+pc(F.pct)+' vs '+pc(F.runnerUpPct)+' average miss).')
           : ('Recent sales fit the <b>'+F.best+'-week</b> rate best &mdash; it would have missed by '+pc(F.pct)
-             +' over the last '+F.weeks+' weeks, against '+pc(F.runnerUpPct)+' for '+F.runnerUp+'wk.'));
+             +' over the last '+F.weeks+' weeks, against '+pc(F.runnerUpPct)+' for '+F.runnerUp+'wk.'
+             + (F.why ? (' '+(F.why.kind==='steady'
+                 ? ('Sales hold around '+f(F.why.recent)+' cs/wk, so a longer average cancels the week-to-week noise.')
+                 : ('The last '+F.why.wks+' weeks run '+f(F.why.recent)+' cs/wk against '+f(F.why.prior)+' before &mdash; '
+                    +(F.why.kind==='up'?'a short window follows a step up; a longer one would still be pricing in the old level.'
+                                       :'a short window follows the drop; a longer one would keep buying for the old level.'))) ) : '')));
     var off = (F.clear && !F.noisy && F.best!==g.win);
     fitLine='<div style="margin-top:5px;font-size:11px;line-height:1.5;font-family:var(--fm);color:'
       +(off?'var(--jlz)':'var(--gray-500)')+'">'+txt+(off?(' You are on '+g.win+'wk.'):'')+'</div>';

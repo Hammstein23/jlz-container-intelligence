@@ -1162,6 +1162,15 @@ group('invmWindowFit · qué ventana viene explicando mejor la venta');
   check('con un escalón reciente gana la ventana más corta', f.best, 3);
   ok('y lo declara claro', f.clear === true);
   ok('reporta el error como % de la venta típica', f.pct != null);
+  // El puntaje dice CUÁL; esto dice POR QUÉ, que es lo que se puede discutir.
+  ok('explica que la venta subió de escalón', f.why && f.why.kind === 'up');
+  ok('y lo respalda con los dos niveles', f.why.recent > f.why.prior);
+
+  // Un escalón hacia abajo se explica al revés.
+  var caida = []; for(var c=0;c<40;c++) caida.push(300);
+  poner(filas(caida.concat([100,100,100,100,100,100,100,100])));
+  var fd = invmWindowFit('garlic','all');
+  ok('y una caída también, con el mismo criterio', fd.why && fd.why.kind === 'down' && fd.why.recent < fd.why.prior);
 
   // ── Serie estable: la ventana larga promedia mejor el ruido ──
   var estable = []; for(var j=0;j<48;j++) estable.push(100 + ((j%2)?6:-6));
@@ -1169,6 +1178,8 @@ group('invmWindowFit · qué ventana viene explicando mejor la venta');
   var f2 = invmWindowFit('garlic','all');
   ok('en una serie estable no elige la más corta', f2.best !== 3);
   ok('y el error es chico contra la venta', f2.pct < 20);
+  ok('y la razón es que promedia el ruido, no que siga un cambio',
+     !f2.why || f2.why.kind === 'steady');
 
   // ── Demasiado errático: ninguna ventana explica nada, y hay que admitirlo ──
   var loco = []; for(var k=0;k<48;k++) loco.push(k%3===0 ? 400 : 5);
