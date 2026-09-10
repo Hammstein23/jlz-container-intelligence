@@ -1114,6 +1114,28 @@ group('invmStockableWeekly · la demanda que de verdad sale de cámara');
   var tope = invmStockableWeekly('turmeric','all');
   check('no deja libras negativas', tope.length?Math.round(tope[0].lbs):0, 0);
 
+  // ── Una semana SIN ventas también es demanda ─────────────────────────────────────────────────
+  // Devolver solo las semanas con filas saltea los ceros y la serie deja de ser calendario: las
+  // "últimas 26" abarcaban 54 semanas reales en shallots, y el cv salía la mitad del verdadero —
+  // justo el número que dimensiona el safety.
+  poner([{ prod:'turmeric', c:'Acme', d:semana(5), lbs:50*30, type:'Sale' },
+         { prod:'turmeric', c:'Acme', d:semana(1), lbs:70*30, type:'Sale' }], []);
+  var hueco = invmStockableWeekly('turmeric','all');
+  check('rellena las semanas sin ventas', hueco.length, 5);
+  check('la primera es la más vieja con ventas', Math.round(hueco[0].lbs/30), 50);
+  check('las del medio quedan en cero', hueco[1].lbs + hueco[2].lbs + hueco[3].lbs, 0);
+  check('y la última es la que tuvo ventas', Math.round(hueco[4].lbs/30), 70);
+  ok('las semanas son consecutivas', (function(){
+    for (var i = 1; i < hueco.length; i++) {
+      var a = new Date(hueco[i-1].wk + 'T12:00:00'), b = new Date(hueco[i].wk + 'T12:00:00');
+      if (Math.round((b - a) / 86400000) !== 7) return false;
+    }
+    return true;
+  })());
+
+  // No inventa semanas ANTES de la primera venta: la historia arranca cuando arranca el producto.
+  ok('no rellena hacia atrás', hueco[0].wk === semana(5));
+
   // La semana en curso está incompleta: no puede medir comportamiento.
   poner([{ prod:'turmeric', c:'Acme', d:dmWeekKey(new Date()), lbs:10*30, type:'Sale' },
          { prod:'turmeric', c:'Acme', d:semana(1), lbs:60*30, type:'Sale' }], []);

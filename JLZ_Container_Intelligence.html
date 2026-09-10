@@ -16143,8 +16143,10 @@ function invmProductStats(p,origin){
   // miraba 13). Eso inflaba el colchón a 4,9 semanas para un producto que llega en 10 días, y hacía
   // pedir 175 cajas de un producto que estaba cubierto. Con la serie libre de ventana: cv 0,475.
   var _swk=invmStockableWeekly(p, origin);
-  var vals=_swk.map(function(w){ return (w&&w.lbs)||0; }).filter(function(x){ return x>0; }).slice(-13);
-  if(vals.length<2){                                        // sin historia propia, el camino viejo
+  // Ya viene completa de calendario: filtrar los ceros volvería a borrar la variabilidad que
+  // justamente dimensiona el safety (shallots vende en 5 de cada 8 semanas).
+  var vals=_swk.map(function(w){ return (w&&w.lbs)||0; }).slice(-13);
+  if(vals.filter(function(x){ return x>0; }).length<2){      // sin historia propia, el camino viejo
     var series=(m&&Array.isArray(m.weeklyReliable)&&m.weeklyReliable.length)?m.weeklyReliable:((m&&Array.isArray(m.weekly))?m.weekly:[]);
     vals=series.map(function(w){ return (w&&w.lbs)||0; }).filter(function(x){ return x>0; }).slice(-13);
   }
@@ -16715,12 +16717,24 @@ function invmStockableWeekly(p, origin){
       o.directShip.forEach(function(d){ if(d&&d.customer)
         (ds[w]=ds[w]||{})[d.customer]=((ds[w]||{})[d.customer]||0)+((+d.cases||0)*cl); });
     });
+    // ── Las semanas SIN ventas también son demanda ────────────────────────────────────────────
+    // `byw` solo tiene semanas con alguna fila, así que devolver sus llaves saltea los ceros y la
+    // serie deja de ser calendario. En shallots faltaban 69 de 183 (38%): sus "últimas 26 semanas"
+    // abarcaban 54 de calendario, y el cv salía 1,18 cuando con los ceros es 2,19 — la mitad de la
+    // variabilidad real, que es justo lo que dimensiona el safety. Se rellena desde la primera
+    // semana con ventas hasta la última cerrada.
     var nowWk=dmWeekKey(new Date());
-    return Object.keys(byw).sort().filter(function(w){ return w<nowWk; }).map(function(w){
-      var o=byw[w], t=0;
-      Object.keys(o).forEach(function(c){ t+=Math.max(0, o[c]-((((ds[w]||{})[c])||0))); });
-      return { wk:w, lbs:t };
-    });
+    var conVenta=Object.keys(byw).sort().filter(function(w){ return w<nowWk; });
+    if(!conVenta.length) return [];
+    var out=[], cur=new Date(conVenta[0]+'T12:00:00'), fin=new Date(conVenta[conVenta.length-1]+'T12:00:00');
+    var guard=0;
+    while(cur<=fin && guard++<5000){
+      var w=dmWeekKey(cur), o=byw[w], t=0;
+      if(o) Object.keys(o).forEach(function(c){ t+=Math.max(0, o[c]-((((ds[w]||{})[c])||0))); });
+      out.push({ wk:w, lbs:t });
+      cur=new Date(cur.getTime()+7*86400000);
+    }
+    return out;
   }catch(e){ return []; }
 }
 
