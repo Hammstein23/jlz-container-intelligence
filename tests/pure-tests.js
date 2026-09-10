@@ -1070,6 +1070,55 @@ group('El descuento se resta UNA vez: en la fila y en el total, no en ambos por 
   ok('esa doble resta llevaba el total a cero',                conCrudo === 0);
 })();
 
+group('invmBuySuggestion · cuánto comprar, cuándo ordenar, cuándo llega');
+// Tres respuestas y nada más. Lo que la hace correcta o no es de dónde saca los insumos: disponible
+// NETO de committed y de excluidos, lo que ya viene en camino, y el lead time del proveedor de ESE
+// origen — no el del producto en general (turmeric tiene Fiji a 10d y Kailani a 14d).
+(function(){
+  var DIA = 86400000;
+  var hoy = new Date();
+  var iso = function(n){ return dmISOLocal(new Date(hoy.getTime() + n*DIA)); };
+
+  PRODUCTS = { turmeric:{ label:'Turmeric', caseLb:30, shrinkPct:0, suppliers:[
+    { name:'Sbimal LLC', origin:'Fiji',   mode:'air', leadDays:10 },
+    { name:'Kailani',    origin:'Hawaii', mode:'air', leadDays:14 } ] } };
+
+  var STATS = { p:'turmeric', label:'Turmeric', caseLb:30, shrinkPct:0, origin:'Fiji',
+                availCases:200, excludedCases:23, safetyWks:2, targetWks:6, win:3 };
+  invmProductStats  = function(){ return STATS; };
+  invmProductModel  = function(){ return { caseLb:30, runRate3:100*30, runRate6:50*30, runRate13:200*30, runRate26:null }; };
+  invmProductArrivals = function(){ return { 'w1':100 }; };
+
+  var g = invmBuySuggestion('turmeric','Fiji');
+  ok('devuelve algo', !!g);
+  check('usa el lead time del proveedor de ESE origen, no el más lento', g.leadDays, 10);
+  check('y lo nombra, que es la justificación', g.supplier, 'Sbimal LLC');
+  // oferta 200 disponibles + 100 en camino = 300 · demanda 100/sem -> 3 semanas de cobertura
+  check('cobertura = (disponible + en camino) / demanda', Math.round(g.cover*10)/10, 3);
+  check('comprar = lo que falta para el target', g.buy, 6*100 - 300);
+  // corrida = 3 - 2 de seguridad = 1 semana = 7 días; menos 10 de lead -> 3 días TARDE
+  check('la fecha límite descuenta el lead time', g.offset, -3);
+  check('y queda expresada como fecha', g.orderBy, iso(-3));
+  check('la llegada es hoy + lead time', g.arrives, iso(10));
+  check('reporta los excluidos aparte, no los suma al disponible', g.excluded, 23);
+
+  // El rango entre ventanas es el punto: la misma pregunta, distinta respuesta.
+  var w = {}; g.others.forEach(function(o){ w[o.win] = o; });
+  ok('muestra las otras ventanas', !!w[6] && !!w[13]);
+  ok('con ventas más flojas (6wk) la fecha se corre para adelante', w[6].orderBy > g.orderBy);
+  ok('con ventas más fuertes (13wk) se adelanta', w[13].orderBy < g.orderBy);
+  ok('y no ofrece una ventana sin datos', !w[26]);
+
+  // Cubierto: nada que ordenar.
+  STATS.availCases = 5000;
+  check('con stock de sobra no manda comprar nada', invmBuySuggestion('turmeric','Fiji').buy, 0);
+  STATS.availCases = 200;
+
+  // Sin demanda no hay sugerencia que dar.
+  invmProductModel = function(){ return { caseLb:30, runRate3:0, runRate6:0, runRate13:0, runRate26:0 }; };
+  check('sin demanda no inventa una recomendación', invmBuySuggestion('turmeric','Fiji'), null);
+})();
+
 group('mtoStaleShipments · el aviso del descuento que no se está aplicando');
 // El descuento contra-orden pide fecha REAL de llegada. El reverso es silencioso: mercadería que ya
 // salió al cliente con la orden todavía "en camino" cuenta como demanda de cámara y el plan compra

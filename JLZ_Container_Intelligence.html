@@ -16204,10 +16204,26 @@ function invmProductArrivals(p, origin){
   var orders=(typeof getOrders==='function')?getOrders():[];
   orders.forEach(function(o){
     if(_ordProd(o)!==p) return;
-    if(origin && origin!=='all'){ var _oo=(typeof _ordOrigin==='function')?_ordOrigin(o):(o.origin||''); if(_oo && _oo!==origin) return; }  // per-origin; origin derived from supplier when the field is blank
+    // ── Origen: filtrar sí, PERDER no ────────────────────────────────────────────────────────────
+    // Un origen que no coincide con ningún bucket del producto no significa "no es de este producto",
+    // significa que la orden se escribió distinto: shallots tiene sus lotes en "California" y la orden
+    // de Peri & Sons dice "Nevada", así que las 100 bolsas en camino desaparecían de la proyección.
+    // Descartar solo cuando el origen coincide con OTRO bucket real; si no encaja en ninguno, cuenta.
+    if(origin && origin!=='all'){
+      var _oo=(typeof _ordOrigin==='function')?_ordOrigin(o):(o.origin||'');
+      if(_oo && _oo!==origin){
+        var _buckets=[]; try{ _buckets=(typeof invmOriginsFor==='function')?(invmOriginsFor(p)||[]):[]; }catch(e){}
+        if(_buckets.indexOf(_oo)>-1) return;                 // es de otro origen conocido: no es de acá
+      }
+    }
     if(!(o.status==='Contracted'||o.status==='In Transit')) return;
     var eta=o.arrivalActual||o.arrivalEstimated||o.etaActual||o.etaEstimated; if(!eta) return;
-    var cs=parseFloat(o.cases)||0; if(cs<=0) return;
+    // ── Lo comprado contra orden NO entra al almacén ──────────────────────────────────────────────
+    // Mismo neteo que hace el Buy Planner de ginger (`arrivalCases`). Sin esto, turmeric mostraba 850
+    // cs entrando cuando solo 150 llegan: las otras 700 son de Sol-ti y van del puerto al cliente.
+    // La cobertura salía 9.7 semanas contra 3.0 reales, justo en el producto más ajustado.
+    var _ds=0; try{ if(typeof directShipTotal==='function') _ds=directShipTotal(o.jlzPo)||0; }catch(e){}
+    var cs=Math.max(0,(parseFloat(o.cases)||0)-_ds); if(cs<=0) return;
     var wk; try{ wk=(typeof dmWeekKey==='function')?dmWeekKey(new Date(String(eta).slice(0,10)+'T12:00:00')):null; }catch(e){ wk=null; }
     if(!wk) return;
     out[wk]=(out[wk]||0)+cs;
@@ -16656,6 +16672,97 @@ function bpRenderProduct(p){
 var SIM_PRODUCT='ginger', SIM_ORIGIN='';
 function simSetProduct(p){ var og=invmOriginsFor(p); jlzSyncScope(p, (p==='ginger')?'Peru':((og&&og[0])||'')); if(typeof renderSimulator==='function') renderSimulator(); jlzRepaintScope('renderSimulator'); try{ dmRebuildView(); }catch(e){} }
 function simSetOrigin(o){ jlzSyncScope(null, o); if(typeof renderSimulator==='function') renderSimulator(); jlzRepaintScope('renderSimulator'); try{ dmRebuildView(); }catch(e){} }
+// ── Sugerencia de compra por producto ──────────────────────────────────────────────────────────
+// Tres respuestas y nada más: cuánto, cuándo ordenar, cuándo llega. Todo sale de piezas que ya
+// existen — disponible neto de committed y de excluidos (invmProductStats), lo que ya viene en
+// camino (invmProductArrivals, neto de contra-orden) y el lead time del proveedor de ESE origen
+// (PRODUCTS[p].suppliers). Vive en el Simulator porque ahí se prueban las órdenes hipotéticas, que
+// son parte de la misma decisión.
+//
+// La ventana del run-rate cambia la respuesta más que cualquier otra variable — en ginger, 3
+// semanas contra 13 movía el "ordenar antes de" tres semanas. Por eso la sugerencia usa la ventana
+// activa pero muestra el rango de las otras: la decisión es de Juan, el número no la esconde.
+function invmBuySuggestion(p, origin){
+  try{
+    var s=invmProductStats(p, origin||'all'); if(!s) return null;
+    var m=invmProductModel(p, origin||'all'); if(!m) return null;
+    var cl=s.caseLb||30;
+    var meta=(typeof PRODUCTS==='object' && PRODUCTS[p])||{};
+    var sup=(meta.suppliers||[]).filter(function(x){
+      var so=String(x.origin||''), oo=String(origin||'');
+      return !oo || oo==='all' || so.indexOf(oo)>-1 || oo.indexOf(so)>-1;
+    });
+    if(!sup.length) sup=(meta.suppliers||[]).slice(0,1);
+    if(!sup.length) return null;
+    var best=sup.reduce(function(a,b){ return ((+b.leadDays||99)<(+a.leadDays||99))?b:a; });
+    var lead=+best.leadDays||14;
+    var arr=invmProductArrivals(p, origin||'all')||{};
+    var incoming=Object.keys(arr).reduce(function(t,k){ return t+(arr[k]||0); },0);
+    var supply=(s.availCases||0)+incoming;
+    var infl=1/(1-((s.shrinkPct||0)/100));
+    var day=86400000, hoy=new Date();
+    var addD=function(n){ var x=new Date(hoy.getTime()+n*day); return (typeof dmISOLocal==='function')?dmISOLocal(x):x.toISOString().slice(0,10); };
+    var one=function(rrLbs){
+      if(rrLbs==null) return null;
+      var d=(rrLbs/cl)*infl; if(!(d>0)) return null;
+      var cover=supply/d;
+      var runway=Math.max(0, cover-(s.safetyWks||0));       // semanas hasta tocar el mínimo
+      var offset=Math.round(runway*7)-lead;                  // días hasta la fecha límite de la orden
+      return { demand:d, cover:cover, offset:offset, orderBy:addD(offset),
+               belowSafety:(cover<(s.safetyWks||0)), far:(offset>180),
+               buy:Math.max(0, Math.ceil((s.targetWks||0)*d-supply)) };
+    };
+    var byWin={ 3:one(m.runRate3), 6:one(m.runRate6), 13:one(m.runRate13), 26:one(m.runRate26) };
+    var win=s.win||13;
+    var now=byWin[win]||byWin[13]||byWin[3]; if(!now) return null;
+    now.safetyWks=s.safetyWks||0;
+    var others=Object.keys(byWin).filter(function(w){ return +w!==win && byWin[w]; })
+                     .map(function(w){ return { win:+w, orderBy:byWin[w].orderBy, buy:byWin[w].buy,
+                                                offset:byWin[w].offset, far:byWin[w].far }; })
+                     .sort(function(a,b){ return a.win-b.win; });
+    return { p:p, label:s.label||p, origin:origin, caseLb:cl, supplier:best.name||'', mode:best.mode||'',
+             leadDays:lead, avail:s.availCases||0, incoming:incoming, excluded:s.excludedCases||0,
+             demand:now.demand, cover:now.cover, buy:now.buy, orderBy:now.orderBy, offset:now.offset,
+             belowSafety:!!now.belowSafety, far:!!now.far, safetyWks:now.safetyWks,
+             arrives:addD(lead), win:win, others:others, targetWks:s.targetWks||0 };
+  }catch(e){ return null; }
+}
+function invmBuySuggestionHTML(p, origin){
+  var g=invmBuySuggestion(p, origin);
+  if(!g) return '';
+  var esc=(typeof libEsc==='function')?libEsc:function(x){ return String(x==null?'':x); };
+  var f=function(n){ return Math.round(n||0).toLocaleString('en-US'); };
+  var f1=function(n){ return (!isFinite(n))?'∞':(Math.round((n||0)*10)/10).toFixed(1); };
+  var late=g.offset<0, soon=g.offset>=0&&g.offset<=7;
+  var tone=(late||g.buy>0&&soon)?{bg:'#FEF2F2',bd:'#FECACA',fg:'#991B1B'}
+          : soon?{bg:'#FFFBEB',bd:'#FDE68A',fg:'#92400E'}
+          : {bg:'var(--gray-50)',bd:'var(--gray-200)',fg:'var(--gray-700)'};
+  // Una fecha límite a más de medio año no es información, es ruido: se dice que no corre y ya.
+  var head = (g.buy>0)
+    ? ('Buy <b>'+f(g.buy)+'</b> cases &middot; order '+(late?'<b>now</b>':('by <b>'+esc(g.orderBy)+'</b>'+(g.offset<=14?(' &middot; in '+g.offset+'d'):'')))
+        +' &middot; lands <b>'+esc(g.arrives)+'</b>')
+    : (g.far ? '<b>Covered</b> &mdash; nothing to order for months'
+             : '<b>Covered</b> &mdash; nothing to order yet &middot; next order-by around <b>'+esc(g.orderBy)+'</b>');
+  // "Order now" con cobertura de semanas se lee como una contradicción si no se dice por qué:
+  // estás bajo el mínimo, y el lead time es más largo que lo que te queda.
+  var why = f1(g.cover)+' weeks of cover'
+    + (g.incoming>0?(' ('+f(g.avail)+' on hand + '+f(g.incoming)+' incoming)'):(' from '+f(g.avail)+' cases'))
+    + (late ? (g.belowSafety
+        ? (' &mdash; under your '+f1(g.safetyWks)+'-week safety level')
+        : (' &mdash; less than the '+g.leadDays+' days it takes to arrive')) : '')
+    + ' &middot; '+esc(g.supplier)+' takes '+g.leadDays+' days'+(g.mode?(' by '+esc(g.mode)):'')
+    + (g.excluded>0?(' &middot; '+f(g.excluded)+' excluded cases left out'):'');
+  var spread = g.others.length
+    ? ('<div style="margin-top:6px;font-size:10.5px;color:var(--gray-500);font-family:var(--fm)">On the '+g.win+'-week sales rate. Other reads: '
+        + g.others.map(function(o){ return o.win+'wk &rarr; '+(o.buy>0?(f(o.buy)+' cs '+(o.offset<0?'now':('by '+esc(o.orderBy)))):'covered'); }).join(' &middot; ')
+        + '</div>')
+    : '';
+  return '<div style="margin:0 0 14px;padding:11px 13px;border-radius:var(--r);border:1px solid '+tone.bd+';background:'+tone.bg+'">'
+       + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;color:'+tone.fg+';font-family:var(--fb);margin-bottom:4px">Buy suggestion</div>'
+       + '<div style="font-size:14px;line-height:1.5;color:var(--gray-800);font-family:var(--fb)">'+head+'</div>'
+       + '<div style="margin-top:3px;font-size:11.5px;color:var(--gray-500);font-family:var(--fm);line-height:1.5">'+why+'</div>'
+       + spread + '</div>';
+}
 function simRenderProduct(p){
   var origins=invmOriginsFor(p);
   if(origins.length && origins.indexOf(SIM_ORIGIN)<0) SIM_ORIGIN=origins[0];
@@ -16667,7 +16774,7 @@ function simRenderProduct(p){
     bar='<div style="display:flex;gap:6px;align-items:center;margin-bottom:12px;flex-wrap:wrap"><span style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-right:4px">Origin</span>'+origins.map(function(o){ return pill(o); }).join('')+'</div>';
   }
   return '<div style="margin-bottom:8px;font-size:11px;color:var(--gray-400);font-family:var(--fm)">Simulator · '+esc(s.label)+(SIM_ORIGIN?(' · '+esc(SIM_ORIGIN)):'')+' — test hypothetical buys against the projection</div>'
-    + bar + (s.hasModel?invmWindowToggle(p,s.origin):'') + invmProjectionHTML(s) + whatifCardHTML(s.p, s.origin, 'simwi');
+    + bar + (s.hasModel?invmWindowToggle(p,s.origin):'') + invmBuySuggestionHTML(s.p, s.origin) + invmProjectionHTML(s) + whatifCardHTML(s.p, s.origin, 'simwi');
 }
 function invmSetDays(x){ INVM_DAYSMODE=x; renderInventory(); }
 function invmSetRate(x){ INVM_RATEKEY=x; renderInventory(); }
