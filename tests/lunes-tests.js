@@ -68,6 +68,7 @@ var S_PROD     = snipBy(/prodInvSave/,        'snippet B · product-aware');
 var S_3B       = snipBy(/availCases/,         'paso 3b · doble descuento');
 var S_CONSOLE  = snipBy(/invariants-console/, 'paso 4b · chequeo de consola');
 var S_VENCIDAS = snipBy(/vencida/,            'paso 2 · committed vencido sin facturar');
+var S_TRANSIT  = snipBy(/DOBLE CONTEO/,     'paso 3c · órdenes que ya llegaron y siguen en camino');
 
 // ════ Snippet B — los cuatro productos del store product-aware ══════════════
 group('Snippet B — inventario por producto');
@@ -150,7 +151,7 @@ ok('y cargar el bruto en los dos es lo correcto en los dos',
 
 // ════ El runbook no perdió ningún snippet ═══════════════════════════════════
 group('Integridad del runbook');
-check('sigue teniendo los 5 bloques de código', SNIPPET_COUNT, 5);
+check('sigue teniendo los 6 bloques de código', SNIPPET_COUNT, 6);
 ok('el snippet A es el de ginger-Perú (por PO)', /bpInvSave/.test(S_GINGER) && /jlzPo/.test(S_GINGER));
 ok('el snippet B es el product-aware', /prodInvSave/.test(S_PROD) && /excluded/.test(S_PROD));
 ok('el snippet B hace REEMPLAZO total, no merge', /\.lots = LOTS/.test(S_PROD));
@@ -173,6 +174,19 @@ ok('el runbook manda cargar BRUTAS también en ginger-Perú, y restar',
 ok('el runbook asocia el store product-aware con cargar BRUTAS y restar',
    /BRUTAS/.test(_pRow) && /resta/.test(_pRow));
 ok('el chequeo de consola lleva el cache-buster', /\?v='\s*\+\s*Date\.now\(\)/.test(S_CONSOLE));
+// El paso 3c cruza órdenes abiertas contra lotes físicos. Los W-lots tienen que quedar afuera en
+// LOS DOS stores: su número lleva el PO de manufactura, así que contarlos haría match contra
+// órdenes de compra que no existen y marcaría doble conteo donde no lo hay.
+ok('el paso 3c saca los W-lots del store de ginger-Perú', /\/\^W:\//.test(S_TRANSIT));
+ok('el paso 3c saca los W-lots del store product-aware', /\^W\\d/.test(S_TRANSIT));
+ok('el paso 3c mira las dos fuentes de lote físico', /bpInvState/.test(S_TRANSIT) && /prodInvState/.test(S_TRANSIT));
+ok('el paso 3c avisa del doble conteo', /DOBLE CONTEO/.test(S_TRANSIT) && /Arrived/.test(S_TRANSIT));
+ok('el runbook recuerda que Orders no se sincroniza con WholesaleWare',
+   /Orders \*\*NO\*\* se sincroniza con WholesaleWare|Orders NO se sincroniza con WholesaleWare/.test(RUNBOOK_TEXT));
+ok('el runbook manda cruzar los dos archivos para saber qué está en tránsito',
+   /orders-in-transit\.py/.test(RUNBOOK_TEXT));
+ok('el runbook avisa que Order Status del export de compras no sirve',
+   /Order Status.*no sirve|no sirve.*Order Status/s.test(RUNBOOK_TEXT));
 
 // El chequeo que faltaba el 2026-09-03: una orden committed cuya mercadería YA salió del almacén
 // pero sigue sin facturar se descuenta dos veces y hunde el stock libre (Sol-ti, 1.000 cs).

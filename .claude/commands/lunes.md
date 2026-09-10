@@ -35,7 +35,8 @@ quedó el inventario, si la verificación dio limpia, y qué conviene comprar.
 ls -lt ~/Downloads/*.xlsx ~/Desktop/*.xlsx 2>/dev/null | head
 ```
 
-Necesitás `Sales By Account Report-<fecha>.xlsx` y `Unshipped Sales Order Report-<fecha>.xlsx`.
+Necesitás `Sales By Account Report-<fecha>.xlsx`, `Unshipped Sales Order Report-<fecha>.xlsx`,
+`Inventory Report-<fecha>.xlsx` y `Purchase_Transactions-<fecha>.xlsx` (este último para el Paso 3c).
 
 - Si el más nuevo **no es de hoy o de ayer**, pará y avisá: un export viejo mueve el `dataMax`
   para atrás y ensucia todo lo que sigue.
@@ -330,6 +331,84 @@ Confirmalas con el chequeo del Paso 2 antes de seguir.
   });
 });
 ```
+
+## Paso 3c — Las órdenes en tránsito
+
+**Orders NO se sincroniza con WholesaleWare.** Es un pipeline curado a mano contra el Google Sheet,
+así que una PO cargada allá **no aparece sola acá** — y comparar la app contra sí misma solo dice si
+está de acuerdo consigo misma. La verdad sale de cruzar los dos archivos:
+
+> **en tránsito = está en Purchase Transactions · y NO tiene lote físico en el Inventory Report**
+
+```bash
+./tests/orders-in-transit.py
+```
+
+Toma los más nuevos de `~/Downloads`, o pasale las rutas. **Hace falta un tercer export:
+`Purchase_Transactions-<fecha>.xlsx`** (WholesaleWare → Purchasing → Reports), del mismo día.
+
+Dos trampas del export, ya resueltas dentro del script pero conviene conocerlas:
+
+- **La columna `Order Status` no sirve:** dice `OPEN` en casi todo, incluidas POs de 2024 ya
+  recibidas y consumidas. WholesaleWare no las cierra. La señal buena es `Received Quantity`.
+- **El join va por `PO #` del Inventory Report**, no por `Lot #`. Un lote normal es `<PO>-0001`,
+  pero los W-lots llevan el PO de **manufactura** y hay que excluirlos.
+
+Lo que devuelve:
+
+- **EN TRÁNSITO** — cargá en Orders las que sean reales y no estén. Si falta una, el Buy Planner y
+  el Simulator no la cuentan como mercadería en camino y la cobertura sale corta.
+- **ENTREGA VENCIDA sin lote** — casi siempre son **canceladas**, no contenedores perdidos.
+  Confirmalo en WholesaleWare antes de cargar nada.
+
+**Que no haya órdenes abiertas de garlic o shallots es normal**, no un olvido: son compra doméstica
+con ~2 días de lead time (Christopher Ranch, Peri and Sons). Ginger y turmeric sí viven de pipeline.
+
+### El otro lado: órdenes que ya llegaron y siguen figurando en camino
+
+Una orden **no avanza sola**. El pipeline solo se mueve al guardar un contenedor en History
+(`advanceOrderFromContainer`): ni la llegada, ni el import del Inventory Report, ni el calendario lo
+tocan. Una orden cuyo contenedor nunca se cargó se queda en `Contracted`/`In Transit` para siempre
+y ahí **se cuenta dos veces**, como stock y como mercadería en camino. Corré esto en la consola
+**después** de cargar el inventario:
+
+```javascript
+(function(){
+  var orders = getOrders(), fisico = {};
+  var st = bpInvState();
+  Object.keys(st.rows||{}).forEach(function(k){
+    if(/^W:/.test(k)) return;                       // W-lot: PO de manufactura, no es orden de compra
+    var o = orders.find(function(x){ return bpCcId(x)===k; });
+    if(o) fisico[String(o.jlzPo||o.id||'')] = (st.rows[k].cases||0);
+  });
+  var ps = prodInvState();
+  Object.keys(ps).forEach(function(p){
+    if(p==='_savedAt') return;
+    ((ps[p]||{}).lots||[]).forEach(function(l){
+      if(!l || !l.lot || /^W\d/.test(String(l.lot))) return;
+      fisico[String(l.lot).split('-')[0]] = (fisico[String(l.lot).split('-')[0]]||0) + (+l.cases||0);
+    });
+  });
+  var abiertas = orders.filter(function(o){ return /contracted|in transit/i.test(o.status||''); });
+  var mal = abiertas.filter(function(o){ return fisico.hasOwnProperty(String(o.jlzPo||o.id||'')); });
+  abiertas.forEach(function(o){
+    console.log('  PO '+(o.jlzPo||o.id)+' · '+o.status+' · '+_ordProd(o)+' · '+(o.cases||0)+' cs · ETA '+(o.arrivalEstimated||'-'));
+  });
+  if(mal.length) mal.forEach(function(o){
+    console.warn('DOBLE CONTEO · PO '+(o.jlzPo||o.id)+' sigue en '+o.status+' pero ya tiene lote físico ('+
+                 fisico[String(o.jlzPo||o.id)]+' cs) — pasala a Arrived');
+  });
+  else console.log('%c OK · ninguna orden abierta tiene mercadería ya en cámara ','background:#0d5026;color:#fff');
+})();
+```
+
+Si sale DOBLE CONTEO: pasala a `Arrived` (`arrivalActual = arrivalEstimated`) y **acordate de
+`pushOrdersToSheet()`** — `saveOrders()` solo escribe local.
+
+> **Ojo con el campo `product`.** Cuando falta, `_ordProd()` cae a `'ginger'` por defecto, así que
+> una orden de otro producto sin ese campo se suma en silencio al ginger entrante. Además `product`
+> **no viaja en el esquema de la hoja**, así que completarlo a mano se pierde en el próximo pull:
+> arreglarlo de verdad pide tocar `pushOrdersToSheet()` y el backend.
 
 ## Paso 4 — Verificar (no lo saltees)
 
