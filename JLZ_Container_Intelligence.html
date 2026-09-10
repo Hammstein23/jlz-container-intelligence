@@ -16672,6 +16672,69 @@ function bpRenderProduct(p){
 var SIM_PRODUCT='ginger', SIM_ORIGIN='';
 function simSetProduct(p){ var og=invmOriginsFor(p); jlzSyncScope(p, (p==='ginger')?'Peru':((og&&og[0])||'')); if(typeof renderSimulator==='function') renderSimulator(); jlzRepaintScope('renderSimulator'); try{ dmRebuildView(); }catch(e){} }
 function simSetOrigin(o){ jlzSyncScope(null, o); if(typeof renderSimulator==='function') renderSimulator(); jlzRepaintScope('renderSimulator'); try{ dmRebuildView(); }catch(e){} }
+// ── Qué ventana explica mejor el comportamiento reciente ───────────────────────────────────────
+// No es opinión: se hace backtest. Para cada ventana, se recorre semana a semana y se compara lo que
+// ESA ventana habría predicho contra lo que realmente se vendió. Gana el menor error medio.
+//
+// La serie contra la que se puntea tiene que ser LIBRE DE VENTANA, o el test es circular: el neteo
+// contra-orden que usa el modelo mira los contenedores llegados dentro de la ventana activa, así que
+// la "verdad" cambiaría según la ventana que se está evaluando. Acá cada semana se netea por el
+// contenedor que llegó ESA semana — que es el hecho real y no depende de ninguna ventana.
+//
+// Dos honestidades que el número por sí solo no da:
+//   · si la segunda ventana queda a menos de 12%, no hay ganadora y se dice.
+//   · si el error medio supera el 60% de la venta típica, ninguna ventana explica nada (shallots:
+//     117%). Elegir ahí es tirar una moneda, y conviene que la pantalla lo admita.
+function invmWindowFit(p, origin, testWeeks){
+  try{
+    var TEST=testWeeks||8, WINS=[3,6,13,26];
+    var cl=(typeof productCaseLb==='function')?productCaseLb(p):30;
+    var raw=[]; try{ raw=JSON.parse(localStorage.getItem('jlz_demand_raw')||'[]')||[]; }catch(e){ return null; }
+    var byw={};
+    raw.forEach(function(r){
+      if(!r || (r.prod||'ginger')!==p) return;
+      if(r.type && r.type!=='Sale') return;
+      if(typeof dmIsInternalAccount==='function' && dmIsInternalAccount(r.c)) return;
+      if(origin && origin!=='all'){ var mt=false; try{ mt=invmOriginMatch(r,origin); }catch(e){} if(!mt) return; }
+      var w; try{ w=dmWeekKey(new Date(String(r.d)+'T12:00:00')); }catch(e){ return; }
+      (byw[w]=byw[w]||{})[r.c]=((byw[w]||{})[r.c]||0)+(+r.lbs||0);
+    });
+    var ds={};
+    ((typeof getOrders==='function')?getOrders():[]).forEach(function(o){
+      if(!o || o.status==='Cancelled') return;
+      if(((typeof _ordProd==='function')?_ordProd(o):(o.product||'ginger'))!==p) return;
+      if(!Array.isArray(o.directShip) || !o.directShip.length || !o.arrivalActual) return;
+      var w; try{ w=dmWeekKey(new Date(String(o.arrivalActual)+'T12:00:00')); }catch(e){ return; }
+      o.directShip.forEach(function(d){ if(d&&d.customer)
+        (ds[w]=ds[w]||{})[d.customer]=((ds[w]||{})[d.customer]||0)+((+d.cases||0)*cl); });
+    });
+    var nowWk=dmWeekKey(new Date());
+    var S=Object.keys(byw).sort().filter(function(w){ return w<nowWk; }).map(function(w){
+      var o=byw[w], t=0;
+      Object.keys(o).forEach(function(c){ t+=Math.max(0, o[c]-((((ds[w]||{})[c])||0))); });
+      return t/cl;
+    });
+    if(S.length < TEST+3) return null;
+    var rows=[];
+    WINS.forEach(function(W){
+      if(S.length-TEST-W < 0) return;
+      var errs=[], acts=[];
+      for(var i=S.length-TEST;i<S.length;i++){
+        var sum=0; for(var j=i-W;j<i;j++) sum+=S[j];
+        errs.push(Math.abs(S[i]-sum/W)); acts.push(S[i]);
+      }
+      var mae=errs.reduce(function(a,b){ return a+b; },0)/errs.length;
+      var avg=acts.reduce(function(a,b){ return a+b; },0)/acts.length;
+      rows.push({ win:W, mae:mae, pct:(avg>0? mae/avg*100 : null) });
+    });
+    if(rows.length<2) return null;
+    rows.sort(function(a,b){ return a.mae-b.mae; });
+    var best=rows[0], second=rows[1];
+    return { best:best.win, mae:best.mae, pct:best.pct, rows:rows, weeks:TEST,
+             clear:((second.mae-best.mae)/(best.mae||1) > 0.12),
+             noisy:(best.pct!=null && best.pct>60), runnerUp:second.win, runnerUpPct:second.pct };
+  }catch(e){ return null; }
+}
 // ── Sugerencia de compra por producto ──────────────────────────────────────────────────────────
 // Tres respuestas y nada más: cuánto, cuándo ordenar, cuándo llega. Todo sale de piezas que ya
 // existen — disponible neto de committed y de excluidos (invmProductStats), lo que ya viene en
@@ -16720,7 +16783,9 @@ function invmBuySuggestion(p, origin){
                      .map(function(w){ return { win:+w, orderBy:byWin[w].orderBy, buy:byWin[w].buy,
                                                 offset:byWin[w].offset, far:byWin[w].far }; })
                      .sort(function(a,b){ return a.win-b.win; });
-    return { p:p, label:s.label||p, origin:origin, caseLb:cl, supplier:best.name||'', mode:best.mode||'',
+    var fit=null; try{ fit=invmWindowFit(p, origin); }catch(e){}
+    return { fit:fit,
+             p:p, label:s.label||p, origin:origin, caseLb:cl, supplier:best.name||'', mode:best.mode||'',
              leadDays:lead, avail:s.availCases||0, incoming:incoming, excluded:s.excludedCases||0,
              demand:now.demand, cover:now.cover, buy:now.buy, orderBy:now.orderBy, offset:now.offset,
              belowSafety:!!now.belowSafety, far:!!now.far, safetyWks:now.safetyWks,
@@ -16757,11 +16822,25 @@ function invmBuySuggestionHTML(p, origin){
         + g.others.map(function(o){ return o.win+'wk &rarr; '+(o.buy>0?(f(o.buy)+' cs '+(o.offset<0?'now':('by '+esc(o.orderBy)))):'covered'); }).join(' &middot; ')
         + '</div>')
     : '';
+  // Una línea sobre qué ventana viene explicando mejor la venta — y cuándo ninguna lo hace.
+  var fitLine='';
+  if(g.fit){
+    var F=g.fit, pc=function(x){ return (x==null?'?':Math.round(x))+'%'; };
+    var txt = F.noisy
+      ? ('Weekly sales swing too much for the window to settle it &mdash; every read misses by '+pc(F.pct)+' or more.')
+      : (!F.clear
+          ? ('No window fits clearly: '+F.best+'wk and '+F.runnerUp+'wk are within a hair ('+pc(F.pct)+' vs '+pc(F.runnerUpPct)+' average miss).')
+          : ('Recent sales fit the <b>'+F.best+'-week</b> rate best &mdash; it would have missed by '+pc(F.pct)
+             +' over the last '+F.weeks+' weeks, against '+pc(F.runnerUpPct)+' for '+F.runnerUp+'wk.'));
+    var off = (F.clear && !F.noisy && F.best!==g.win);
+    fitLine='<div style="margin-top:5px;font-size:11px;line-height:1.5;font-family:var(--fm);color:'
+      +(off?'var(--jlz)':'var(--gray-500)')+'">'+txt+(off?(' You are on '+g.win+'wk.'):'')+'</div>';
+  }
   return '<div style="margin:0 0 14px;padding:11px 13px;border-radius:var(--r);border:1px solid '+tone.bd+';background:'+tone.bg+'">'
        + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;color:'+tone.fg+';font-family:var(--fb);margin-bottom:4px">Buy suggestion</div>'
        + '<div style="font-size:14px;line-height:1.5;color:var(--gray-800);font-family:var(--fb)">'+head+'</div>'
        + '<div style="margin-top:3px;font-size:11.5px;color:var(--gray-500);font-family:var(--fm);line-height:1.5">'+why+'</div>'
-       + spread + '</div>';
+       + spread + fitLine + '</div>';
 }
 function simRenderProduct(p){
   var origins=invmOriginsFor(p);

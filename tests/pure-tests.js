@@ -1070,6 +1070,76 @@ group('El descuento se resta UNA vez: en la fila y en el total, no en ambos por 
   ok('esa doble resta llevaba el total a cero',                conCrudo === 0);
 })();
 
+group('invmWindowFit · qué ventana viene explicando mejor la venta');
+// No es opinión: backtest. Cada ventana predice semana a semana y gana el menor error. Lo que hace
+// válido el test es que la serie sea LIBRE DE VENTANA — si se puntea contra la serie que el modelo
+// netea usando la ventana ACTIVA, la verdad cambia según la ventana evaluada y el test se muerde
+// la cola. Acá cada semana se netea por el contenedor que llegó ESA semana.
+(function(){
+  var DIA = 86400000;
+  var lunes = function(n){                       // el lunes de hace n semanas
+    var d = new Date(); d.setDate(d.getDate() - n*7);
+    return dmWeekKey(d);
+  };
+  var filas = function(serie, cust){             // serie[0] = la semana más vieja
+    var out = [];
+    serie.forEach(function(cs, i){
+      var n = serie.length - i;                  // semanas hacia atrás
+      out.push({ prod:'garlic', c:cust||'Acme', d:lunes(n), lbs:cs*30, type:'Sale' });
+    });
+    return out;
+  };
+  var poner = function(rows, orders){
+    localStorage.getItem = function(k){ return k==='jlz_demand_raw' ? JSON.stringify(rows) : null; };
+    getOrders = function(){ return orders||[]; };
+  };
+  productCaseLb = function(){ return 30; };
+  dmIsInternalAccount = function(){ return false; };
+  invmOriginMatch = function(){ return true; };
+
+  // ── Un escalón reciente: la ventana corta lo sigue, la larga se queda atrás ──
+  var plano = []; for(var i=0;i<40;i++) plano.push(100);
+  var salto = plano.concat([300,300,300,300,300,300,300,300]);
+  poner(filas(salto));
+  var f = invmWindowFit('garlic','all');
+  ok('devuelve un resultado', !!f);
+  check('con un escalón reciente gana la ventana más corta', f.best, 3);
+  ok('y lo declara claro', f.clear === true);
+  ok('reporta el error como % de la venta típica', f.pct != null);
+
+  // ── Serie estable: la ventana larga promedia mejor el ruido ──
+  var estable = []; for(var j=0;j<48;j++) estable.push(100 + ((j%2)?6:-6));
+  poner(filas(estable));
+  var f2 = invmWindowFit('garlic','all');
+  ok('en una serie estable no elige la más corta', f2.best !== 3);
+  ok('y el error es chico contra la venta', f2.pct < 20);
+
+  // ── Demasiado errático: ninguna ventana explica nada, y hay que admitirlo ──
+  var loco = []; for(var k=0;k<48;k++) loco.push(k%3===0 ? 400 : 5);
+  poner(filas(loco));
+  var f3 = invmWindowFit('garlic','all');
+  ok('marca la serie como demasiado errática', f3.noisy === true);
+  ok('porque el error supera el 60% de la venta', f3.pct > 60);
+
+  // ── La serie es libre de ventana: el contra-orden se netea en SU semana de llegada ──
+  var conSolti = []; for(var q=0;q<44;q++) conSolti.push(100);
+  var rows = filas(conSolti);
+  rows.push({ prod:'garlic', c:'Sol-ti', d:lunes(2), lbs:700*30, type:'Sale' });   // bulto contra orden
+  poner(rows, [{ jlzPo:'X', product:'garlic', status:'Arrived', arrivalActual:lunes(2),
+                 directShip:[{customer:'Sol-ti', cases:700}] }]);
+  var conNeteo = invmWindowFit('garlic','all');
+  poner(rows, []);                                                                // el mismo bulto, sin marcar
+  var sinNeteo = invmWindowFit('garlic','all');
+  ok('el bulto contra-orden marcado no ensucia el ajuste',
+     conNeteo.pct < sinNeteo.pct);
+  ok('y sin marcar sí lo ensucia, que es el sintoma de no haberla marcado',
+     sinNeteo.pct > 20);
+
+  // ── Historia corta: no se inventa un veredicto ──
+  poner(filas([100,100,100,100]));
+  check('con poca historia no opina', invmWindowFit('garlic','all'), null);
+})();
+
 group('invmBuySuggestion · cuánto comprar, cuándo ordenar, cuándo llega');
 // Tres respuestas y nada más. Lo que la hace correcta o no es de dónde saca los insumos: disponible
 // NETO de committed y de excluidos, lo que ya viene en camino, y el lead time del proveedor de ESE
