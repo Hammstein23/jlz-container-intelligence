@@ -1275,6 +1275,68 @@ group('invmBuySuggestion · cuánto comprar, cuándo ordenar, cuándo llega');
   check('sin demanda no inventa una recomendación', invmBuySuggestion('turmeric','Fiji'), null);
 })();
 
+group('mtoMismatched · la marca contra-orden tiene que calzar con lo que pidió el cliente');
+// Criterio de Juan: una compra es contra orden si lo que le pediste al proveedor calza con lo que
+// pidió el cliente. Si no calza, compraste stock con un pedido a la vista — legítimo, pero entonces
+// esa venta es demanda de tu cámara y no puede salir del run-rate. Sin este chequeo la marca es una
+// opinión que saca volumen del plan sin que nadie pueda comprobarla.
+(function(){
+  var W = function(n){ var d=new Date(); d.setDate(d.getDate()-n*7); return dmWeekKey(d); };
+  var VENTAS = [];
+  var vender = function(cust, prod, wk, cs){ VENTAS.push({ prod:prod, c:cust, d:wk, lbs:cs*30, type:'Sale' }); };
+  var poner = function(orders){
+    localStorage.getItem = function(k){ return k==='jlz_demand_raw' ? JSON.stringify(VENTAS) : null; };
+    getOrders = function(){ return orders; };
+  };
+  productCaseLb = function(){ return 30; };
+
+  // Calza exacto: contra orden de manual (el caso Sol-ti).
+  VENTAS.length = 0; vender('Sol-ti','turmeric',W(2),700);
+  poner([{ jlzPo:'CALZA', product:'turmeric', status:'Arrived', arrivalActual:W(2),
+           directShip:[{customer:'Sol-ti', cases:700}] }]);
+  check('si calza no dice nada', mtoMismatched().length, 0);
+
+  // Compró de más: quedó stock (el caso shallots — 100 compradas, 10 llevadas).
+  VENTAS.length = 0; vender('Whole Foods Market','shallots',W(2),10);
+  poner([{ jlzPo:'SOBRO', product:'shallots', status:'Arrived', arrivalActual:W(2),
+           directShip:[{customer:'Whole Foods Market', cases:100}] }]);
+  var m1 = mtoMismatched();
+  check('marca la que no calza', m1.length, 1);
+  check('y dice cuánto se compró', m1[0].marked, 100);
+  check('cuánto se llevó', m1[0].took, 10);
+  check('y la diferencia con signo', m1[0].diff, -90);
+
+  // El cliente se llevó MÁS que la orden: también estaba comiendo stock (el caso garlic).
+  VENTAS.length = 0; vender('Whole Foods Market','garlic',W(2),172);
+  poner([{ jlzPo:'FALTO', product:'garlic', status:'Arrived', arrivalActual:W(2),
+           directShip:[{customer:'Whole Foods Market', cases:134}] }]);
+  check('también marca cuando el cliente se llevó de más', mtoMismatched()[0].diff, 38);
+
+  // No se llevó nada esa semana.
+  VENTAS.length = 0;
+  poner([{ jlzPo:'NADA', product:'garlic', status:'Arrived', arrivalActual:W(2),
+           directShip:[{customer:'Whole Foods Market', cases:140}] }]);
+  check('y cuando no se llevó nada', mtoMismatched()[0].diff, -140);
+
+  // El cliente puede facturar la semana siguiente a la llegada.
+  VENTAS.length = 0; vender('Sol-ti','turmeric',W(1),700);
+  poner([{ jlzPo:'TARDE', product:'turmeric', status:'Arrived', arrivalActual:W(2),
+           directShip:[{customer:'Sol-ti', cases:700}] }]);
+  check('acepta que facture la semana siguiente', mtoMismatched().length, 0);
+
+  // Tolerancia: una caja de diferencia no es un problema.
+  VENTAS.length = 0; vender('Sol-ti','turmeric',W(2),699);
+  poner([{ jlzPo:'CASI', product:'turmeric', status:'Arrived', arrivalActual:W(2),
+           directShip:[{customer:'Sol-ti', cases:700}] }]);
+  check('no se queja por una caja', mtoMismatched().length, 0);
+
+  // Sin llegada real todavía no hay nada que comparar.
+  VENTAS.length = 0;
+  poner([{ jlzPo:'ENCAMINO', product:'turmeric', status:'In Transit',
+           directShip:[{customer:'Sol-ti', cases:700}] }]);
+  check('una orden en tránsito no se juzga todavía', mtoMismatched().length, 0);
+})();
+
 group('mtoStaleShipments · el aviso del descuento que no se está aplicando');
 // El descuento contra-orden pide fecha REAL de llegada. El reverso es silencioso: mercadería que ya
 // salió al cliente con la orden todavía "en camino" cuenta como demanda de cámara y el plan compra

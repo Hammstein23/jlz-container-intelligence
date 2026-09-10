@@ -17369,6 +17369,69 @@ function mtoStaleShipments(){
   }catch(e){}
   return out.sort(function(a, b){ return b.dias - a.dias; });
 }
+// ── Una marca contra-orden que no calza con lo que se llevó el cliente ─────────────────────────
+// El criterio es de Juan y es verificable, que es lo que lo hace bueno: una compra es CONTRA ORDEN
+// si lo que le pediste al proveedor calza con lo que pidió el cliente. Si no calza, compraste stock
+// con un pedido a la vista — cosa legítima, pero entonces esa venta SÍ es demanda de tu cámara y no
+// puede salir del run-rate.
+//
+// Sin este chequeo la marca es una opinión: saca volumen del plan y nadie puede comprobar si
+// correspondía. Con él, se compara contra el hecho. Probado en los ocho marcados: los cinco de
+// Sol-ti calzan exacto (0 de diferencia); los tres de Whole Foods fallan los tres, y distinto —
+// 100 compradas contra 10 llevadas, 140 contra 0, y 134 contra 172.
+//
+// Se mira la semana de llegada y la siguiente (el cliente puede facturar en cualquiera de las dos),
+// y se toma la que más se acerca. Tolerancia: 5% o 2 cajas, lo que sea mayor.
+function mtoMismatched(){
+  var out=[];
+  try{
+    var raw=[]; try{ raw=JSON.parse(localStorage.getItem('jlz_demand_raw')||'[]')||[]; }catch(e){ return []; }
+    var tomo=function(cust,prod,wk){
+      var cl=(typeof productCaseLb==='function')?productCaseLb(prod):30, t=0;
+      raw.forEach(function(r){
+        if(!r || (r.prod||'ginger')!==prod) return;
+        if(r.type && r.type!=='Sale') return;
+        if(String(r.c||'').trim().toLowerCase()!==String(cust||'').trim().toLowerCase()) return;
+        var w; try{ w=dmWeekKey(new Date(String(r.d)+'T12:00:00')); }catch(e){ return; }
+        if(w===wk) t+=(+r.lbs||0)/cl;
+      });
+      return t;
+    };
+    ((typeof getOrders==='function')?getOrders():[]).forEach(function(o){
+      if(!o || o.status==='Cancelled') return;
+      if(!Array.isArray(o.directShip) || !o.directShip.length || !o.arrivalActual) return;
+      var prod=(typeof _ordProd==='function')?_ordProd(o):(o.product||'ginger');
+      var k1; try{ k1=dmWeekKey(new Date(String(o.arrivalActual)+'T12:00:00')); }catch(e){ return; }
+      var k2; try{ k2=dmWeekKey(new Date(new Date(k1+'T12:00:00').getTime()+7*86400000)); }catch(e){ k2=null; }
+      o.directShip.forEach(function(d){
+        if(!d || !d.customer) return;
+        var marc=+d.cases||0; if(!(marc>0)) return;
+        var a=tomo(d.customer,prod,k1), b=k2?tomo(d.customer,prod,k2):0;
+        var llevo=(Math.abs(a-marc)<=Math.abs((a+b)-marc))?a:(a+b);
+        var dif=llevo-marc;
+        if(Math.abs(dif)<=Math.max(2, marc*0.05)) return;              // calza: es contra orden
+        out.push({ po:o.jlzPo, prod:prod, customer:d.customer, marked:marc,
+                   took:Math.round(llevo), diff:Math.round(dif), arrived:o.arrivalActual });
+      });
+    });
+  }catch(e){}
+  return out.sort(function(a,b){ return Math.abs(b.diff)-Math.abs(a.diff); });
+}
+function mtoMismatchBanner(){
+  var m=[]; try{ m=mtoMismatched(); }catch(e){ return ''; }
+  if(!m.length) return '';
+  var f=function(x){ return Math.round(x||0).toLocaleString('en-US'); };
+  return '<div style="display:flex;align-items:flex-start;gap:7px;margin:-2px 0 11px;padding:7px 9px;border-radius:6px;'
+    + 'font-size:10.5px;font-family:var(--fm);line-height:1.55;background:#FFFBEB;border:1px solid #FDE68A;color:#92400E">'
+    + '<span style="flex:none">&#9888;</span><span><b>'
+    + m.length+' purchase'+(m.length>1?'s are':' is')+' marked as bought against an order, but the quantity does not match what the customer took.</b> '
+    + 'If it does not match, it was stock with an order in view &mdash; and that sale belongs in the run-rate.'
+    + m.map(function(x){
+        return '<div style="margin-top:3px">PO <b>'+x.po+'</b> &middot; '+x.prod+' &middot; bought <b>'+f(x.marked)
+             + '</b> cs for '+x.customer+', they took <b>'+f(x.took)+'</b> ('+(x.diff>0?'+':'')+f(x.diff)+')</div>'; }).join('')
+    + '</span></div>';
+}
+
 function mtoStaleBanner(){
   var st = [];
   try{ st = (typeof mtoStaleShipments === 'function') ? mtoStaleShipments() : []; }catch(e){ return ''; }
@@ -17420,7 +17483,7 @@ function bpFreshnessStamp(){
       if(d2 > stale) stale = d2;
     } else { bits.push('stock not date-stamped yet'); }
   }catch(e){}
-  var _stale = mtoStaleBanner();
+  var _stale = mtoStaleBanner() + mtoMismatchBanner();
   if(!bits.length) return _stale;
   var warn = stale >= 3;
   return _stale + '<div style="display:flex;align-items:center;gap:7px;margin:-2px 0 11px;padding:6px 9px;border-radius:6px;'
