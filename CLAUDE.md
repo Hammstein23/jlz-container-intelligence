@@ -41,6 +41,8 @@ entenderse sin explicación** — es el criterio de diseño #1, siempre.
 - **Las librerías viven en `vendor/`, no en un CDN.** Para actualizar alguna: bajarla, comparar su
   SHA-512 contra el que publica la fuente, y recién ahí commitear. Nunca hashear lo descargado y
   confiar en eso — blindaría al atacante, no a vos.
+  Excepción documentada: SheetJS no publica hash y salió de npm después de 0.18.5 — ver
+  `vendor/README.md` antes de tocar `xlsx.full.min.js`.
 - **La CSP se sirve por `<meta>`** porque GitHub Pages no deja poner cabeceras. `connect-src` es la
   línea que importa: aunque entrara un script ajeno, no tiene a dónde mandar el token.
 - El backend (Apps Script) **exige token** — verificado llamándolo sin credencial: `unauthorized`.
