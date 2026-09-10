@@ -77,8 +77,24 @@
     // ese camino), sin direct-ship. Más dmBuildModel: solo ventas, sin cuentas internas.
     // El volumen direct-ship se cuenta aparte y se muestra: no es demanda de stock, pero
     // tampoco tiene que desaparecer sin dejar rastro.
+    // El modelo descuenta lo comprado CONTRA ORDEN (made-to-order) en las mismas filas, vía
+    // mtoNetRows (ver invmProductModel). Sin espejar eso, este recuento "independiente" cuenta
+    // volumen que el run-rate no usa y el chequeo falla todos los lunes sin que haya nada roto:
+    // Whole Foods compra garlic y shallots contra pedido, así que sus cajas no mueven la compra
+    // de stock. Se refleja acá por la misma razón que ya se llama a invmOriginMatch y a
+    // isDirectShipRow: el filtro tiene que ser el del modelo, no uno parecido.
+    var mtoOut = null;
+    if (origin !== 'all' && typeof mtoNetRows === 'function'){
+      try {
+        var base = _dmRawAll.filter(function(r){
+          return (r.prod || 'ginger') === p && invmOriginMatch(r, origin) && !isDirectShipRow(r); });
+        var kept = mtoNetRows(base, p, win);
+        mtoOut = base.filter(function(r){ return kept.indexOf(r) < 0; });
+      } catch(e){ mtoOut = null; }
+    }
     var mine = {}, dsByWk = {};
     _dmRawAll.forEach(function(r){
+      if (mtoOut && mtoOut.indexOf(r) > -1) return;   // comprado contra orden: no es demanda de stock
       if ((r.prod || 'ginger') !== p) return;
       if (r.type && r.type !== 'Sale') return;
       if (isInternal(r.c)) return;
