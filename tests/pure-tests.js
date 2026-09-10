@@ -1143,10 +1143,20 @@ group('El techo de vida útil manda sobre el order-up-to');
              cappedBy:(cont<want)?'shelf':((want<Math.ceil(raw))?'round':null) };
   };
 
-  // El caso real de ginger: 2.549 necesarias, 1.214 netas por contenedor, techo 8 semanas.
-  var g = decidir(2549, 1214, 1320, 8, 838, 4442);
+  // ── La merma se descuenta UNA vez ────────────────────────────────────────────────────────────
+  // La proyección corre en cajas FÍSICAS: suma el bruto de la orden y resta una demanda ya inflada
+  // por merma. Dividir esa necesidad por las cajas VENDIBLES del contenedor la descontaba dos veces
+  // y sobreestimaba los contenedores ~9%. Un contenedor aporta 1.320 al stock, no 1.214.
+  var gross = 1320, net = 1214, necesita = 2549;
+  ok('dividir por vendibles pide mas contenedores que dividir por fisicas',
+     (necesita/net) > (necesita/gross));
+  check('con vendibles daba 2,10', Math.round(necesita/net*100)/100, 2.1);
+  check('con fisicas da 1,93',     Math.round(necesita/gross*100)/100, 1.93);
+
+  // El caso real de ginger: 2.549 necesarias, 1.320 fisicas por contenedor, techo 8 semanas.
+  var g = decidir(2549, 1320, 1320, 8, 838, 4442);
   ok('sin arreglo habría pedido 3', Math.ceil(2549/1214) === 3);
-  check('la fracción de 0,099 no justifica un contenedor', g.want, 2);
+  check('1,93 redondea para arriba', g.want, 2);
   check('y el techo lo baja a 1', g.cont, 1);
   check('y dice que fue el techo', g.cappedBy, 'shelf');
 

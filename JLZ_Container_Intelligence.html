@@ -17207,7 +17207,7 @@ function bpGingerSuggestionHTML(){
     + row('', '&times; '+f(d.weeklyDemand)+' cs/wk + '+f(R.ssCases)+' cs safety', '<b>'+f(R.orderUpTo)+' cs</b>')
     + row('On hand then', 'projected stock when a sea order lands', f(R.projAtArrival)+' cs')
     + row('Decision', f(R.orderUpTo)+' &minus; '+f(R.projAtArrival), '<b>'+f(R.netNeeded)+' cs short</b>')
-    + row('', '&divide; '+f(R.perContainer)+' net cs per container',
+    + row('', '&divide; '+f(R.perContainer)+' cases per container',
           '<b style="color:var(--jlz)">'+R.containers+' container'+(R.containers>1?'s':'')+' &rarr; ~'+R.coverWks+' wks cover</b>')
     + (R.cappedBy==='shelf'
         ? row('Capped', 'order-up-to wanted '+R.wanted+', but only '+R.cap+' fit under the '+R.shelfWks+'-wk shelf life',
@@ -18548,7 +18548,7 @@ function renderBuyPlanner() {
     const shortfallCases = safetyThreshold - shortfallRow.endingStock;
     const netCasesPerContainer = grossCasesPerContainer * (1 - shrinkPct);
     const suggestedCadence = weeklyDemand > 0
-      ? Math.max(0.5, Math.round((netCasesPerContainer / weeklyDemand) * 2) / 2)
+      ? Math.max(0.5, Math.round((grossCasesPerContainer / weeklyDemand) * 2) / 2)
       : 1;
     const cadenceSuggEl = document.getElementById('bp-cadence-sugg');
     if (cadenceSuggEl) {
@@ -18719,7 +18719,12 @@ function renderBuyPlanner() {
     const _pkRow   = rows.reduce((m,r)=> (r.weeksOfCoverage>(m?m.weeksOfCoverage:-1)?r:m), null);
     const _pkStock = (_pkRow && _pkRow.endingStock!=null) ? _pkRow.endingStock : stockCases;
     const _capCont = Math.max(0, Math.floor((_shelfW*weeklyDemand - _pkStock)/Math.max(1,grossCasesPerContainer)));
-    const _recRaw  = netNeeded / Math.max(1, netCasesPerContainer);
+    // ── La merma se descuenta UNA vez, no dos ─────────────────────────────────────────────────
+    // Toda la proyección corre en cajas FÍSICAS: `arrivalCases` suma el bruto de la orden (1.320) y
+    // `weeklyDemand` es la salida de cámara ya inflada por merma. Así que `netNeeded` es físico, y
+    // dividirlo por las cajas VENDIBLES del contenedor (1.320 menos merma) descontaba la merma otra
+    // vez — un contenedor aporta 1.320 cajas al stock, no 1.214. Inflaba la cuenta ~9%.
+    const _recRaw  = netNeeded / Math.max(1, grossCasesPerContainer);
     const _frac    = _recRaw - Math.floor(_recRaw);
     const _recWant = Math.max(1, (_recRaw>=1 && _frac<=0.25) ? Math.floor(_recRaw) : Math.ceil(_recRaw));
     // Nunca baja de 1: si el techo ya está tocado la respuesta real es saltear un embarque, y eso lo
@@ -18727,7 +18732,8 @@ function renderBuyPlanner() {
     const recContainers = Math.max(1, Math.min(_recWant, _capCont));
     const _cappedBy = (recContainers < _recWant) ? 'shelf'
                     : ((_recWant < Math.ceil(_recRaw)) ? 'round' : null);
-    const recNetCases = Math.round(recContainers * netCasesPerContainer);
+    // Lo que se ORDENA es bruto: es lo que entra a cámara y lo que consume la proyección.
+    const recNetCases = Math.round(recContainers * grossCasesPerContainer);
     const recCoverWks = weeklyDemand > 0 ? ((projAtArrival + recNetCases) / weeklyDemand).toFixed(1) : '—';
     // Effective shrink on the order (FIFO: avg case sits to ~mid of run-out).
     const _avgDaysOrder = weeklyDemand > 0 ? Math.round(((projAtArrival + recNetCases/2) / weeklyDemand) * 7) : daysOnHandNow;
@@ -18740,9 +18746,9 @@ function renderBuyPlanner() {
       containers:recContainers, netCases:recNetCases, netNeeded:netNeeded,
       orderUpTo:orderUpToCases, projAtArrival:projAtArrival, coverWks:recCoverWks,
       leadWks:ltWeeksRec, cadence:cadence, ssCases:ssCases,
-      perContainer:netCasesPerContainer,
+      perContainer:grossCasesPerContainer,
       raw:_recRaw, wanted:_recWant, cap:_capCont, cappedBy:_cappedBy, shelfWks:_shelfW }; }catch(e){}
-    const recQtyStr = recContainers + ' container' + (recContainers>1?'s':'') + ' · ~' + recNetCases.toLocaleString() + ' net cs \u2192 ~' + recCoverWks + ' wks @ ' + serviceLevel + '% · ~' + Math.round(effShrinkOrder*100) + '% shrink';
+    const recQtyStr = recContainers + ' container' + (recContainers>1?'s':'') + ' · ~' + recNetCases.toLocaleString() + ' cs \u2192 ~' + recCoverWks + ' wks @ ' + serviceLevel + '% · ~' + Math.round(effShrinkOrder*100) + '% shrink';
     const coverWks = weeklyDemand > 0 ? (1320 / weeklyDemand).toFixed(1) : '—';
     const recHtml = '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;background:' + recBg + ';border-radius:6px;margin-bottom:8px;flex-wrap:wrap">'
       + '<span style="font-size:11px;font-weight:600;color:' + recColor + ';font-family:var(--fb)">' + recText + '</span>'
