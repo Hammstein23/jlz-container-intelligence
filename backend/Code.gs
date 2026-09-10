@@ -84,11 +84,13 @@ const ALLOWED_ACTIONS = [
 const ORDER_HEADERS = ['JLZ PO','Status','Mode','Supplier','Incoterm','Contract #',
   'Container #','JBJ Lot #','Cases','Net weight (lb)','CIF price/case','Freight (USD)',
   'CIF total','Order date','ETD estimated','ETD actual','ETA estimated','ETA actual',
-  'Arrival estimated','Arrival actual','Port of discharge','Observations','Timestamp'];
+  'Arrival estimated','Arrival actual','Port of discharge','Observations','Timestamp',
+  'Product','Origin'];
 const ORDER_FIELDS = ['jlzPo','status','mode','supplier','incoterm','contractNo',
   'containerNo','jbjLotNo','cases','netWeightLb','cifPriceCase','freightUsd',
   'cifTotal','orderDate','etdEstimated','etdActual','etaEstimated','etaActual',
-  'arrivalEstimated','arrivalActual','portOfDischarge','observations','timestamp'];
+  'arrivalEstimated','arrivalActual','portOfDischarge','observations','timestamp',
+  'product','origin'];
 
 const CHANGE_HEADERS = ['Timestamp','PO','Field','Old value','New value','Reason','Note'];
 const CHANGE_FIELDS  = ['timestamp','po','field','oldValue','newValue','reason','note'];

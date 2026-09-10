@@ -20100,6 +20100,11 @@ function pushOrdersToSheet() {
     o.portOfDischarge || '',
     o.observations || '',
     new Date().toISOString(),
+    // product/origin cierran el TODO de LOCAL_ONLY_ORDER_FIELDS: sin columna propia vivían solo en
+    // el localStorage de quien cargó la orden, así que otra máquina las leía sin producto y
+    // _ordProd() las daba por ginger — 700 cs de turmeric entrando al plan de ginger.
+    o.product || '',
+    o.origin || '',
   ]);
 
   // Flatten change history into rows. Each order's etdChangeHistory and
