@@ -16724,6 +16724,86 @@ function invmStockableWeekly(p, origin){
   }catch(e){ return []; }
 }
 
+// ── Una cuenta grande que compra a saltos rompe el promedio semanal ────────────────────────────
+// Sol-ti es ~30% del ginger y compra 700 cajas cada dos semanas: la mitad de las semanas aporta 0 y
+// la otra 700. Un promedio de 3 semanas que cae en un hueco lo subestima, y uno que agarra dos
+// compras lo dispara. Eso solo ya explicaba buena parte de por qué las ventanas empataban en ginger.
+// Peor: entre el 8-jun y el 27-jul no compró nada, ocho semanas, y ese hueco arrastró el promedio
+// del trimestre como si el mercado se hubiera caído — cuando volvió en agosto con el mismo ritmo.
+// Decirlo cambia cómo se lee el número; callarlo lo hace parecer una tendencia.
+function invmLumpyConcentration(p, origin, weeks){
+  try{
+    var N=weeks||26, cl=(typeof productCaseLb==='function')?productCaseLb(p):30;
+    var S=invmStockableWeekly(p, origin); if(S.length<12) return null;
+    var last=S.slice(-N).map(function(x){ return x.wk; });
+    var setW={}; last.forEach(function(w){ setW[w]=1; });
+    var raw=[]; try{ raw=JSON.parse(localStorage.getItem('jlz_demand_raw')||'[]')||[]; }catch(e){ return null; }
+    var byCust={}, total=0;
+    raw.forEach(function(r){
+      if(!r || (r.prod||'ginger')!==p) return;
+      if(r.type && r.type!=='Sale') return;
+      if(typeof dmIsInternalAccount==='function' && dmIsInternalAccount(r.c)) return;
+      if(origin && origin!=='all'){ var mt=false; try{ mt=invmOriginMatch(r,origin); }catch(e){} if(!mt) return; }
+      var w; try{ w=dmWeekKey(new Date(String(r.d)+'T12:00:00')); }catch(e){ return; }
+      if(!setW[w]) return;
+      var cs=(+r.lbs||0)/cl; total+=cs;
+      var c=byCust[r.c]=byCust[r.c]||{cases:0, weeks:{}};
+      c.cases+=cs; c.weeks[w]=1;
+    });
+    if(!(total>0)) return null;
+    var best=null;
+    Object.keys(byCust).forEach(function(cust){
+      var c=byCust[cust], share=c.cases/total, nW=Object.keys(c.weeks).length;
+      if(share<0.25) return;                                  // no es una cuenta dominante
+      if(nW>=last.length*0.75) return;                        // compra casi todas las semanas: no es a saltos
+      var cada=last.length/Math.max(1,nW), lote=c.cases/Math.max(1,nW);
+      if(!best || share>best.share) best={ customer:cust, share:share, buyWeeks:nW, ofWeeks:last.length,
+                                           everyWks:cada, avgLot:lote, cases:c.cases };
+    });
+    return best;
+  }catch(e){ return null; }
+}
+// ── La pista: qué pasa las próximas 12 semanas si no comprás nada ──────────────────────────────
+// Es la pregunta que frena una compra de más, y la que no estaba a la vista: no "cuánto me falta"
+// sino "cuánto ya tengo viniendo". Ginger llegó a cinco contenedores en el agua (6.540 cs) contra
+// 2.065 libres y una demanda de 736/sem — el dato existía, repartido entre tres pantallas.
+//
+// Camina semana a semana: stock + lo que llega esa semana − lo que sale. Devuelve además el PICO de
+// cobertura, que es el número que decide si conviene sumar otro contenedor: si el pico ya pasa la
+// vida útil del producto, lo que agregues se va a liquidar, y eso ya costó $22.457 en ginger.
+function invmRunway(p, origin, weeks){
+  try{
+    var N=weeks||12;
+    var s=invmProductStats(p, origin||'all'); if(!s) return null;
+    var cl=s.caseLb||30;
+    var d=s.weeklyCasesBuy||0; if(!(d>0)) return null;
+    var arr=invmProductArrivals(p, origin||'all')||{};
+    var start=s.availCases||0;
+    if(p==='ginger' && origin==='Peru'){                 // store propio: bruto − committed
+      try{ var st=bpInvState();
+           var br=Object.keys(st.rows||{}).reduce(function(a,k){ return a+(+((st.rows[k]||{}).cases)||0); },0);
+           start=br-((typeof committedInvForWeek==='function')?(committedInvForWeek(dmWeekKey(new Date()),'ginger')||0):0);
+      }catch(e){}
+    }
+    var shelf=null;
+    try{ var meta=(typeof PRODUCTS==='object'&&PRODUCTS[p])||{}; shelf=meta.shelfWks||((p==='ginger')?8:null); }catch(e){}
+    var base=new Date(), rows=[], stock=start, peak=0, peakWk=null, dip=null;
+    for(var i=0;i<N;i++){
+      var dt=new Date(base.getTime()+i*7*86400000), wk;
+      try{ wk=dmWeekKey(dt); }catch(e){ wk=null; }
+      var inc=wk?(arr[wk]||0):0;
+      stock=stock+inc-d;
+      var cover=(d>0)? Math.max(0,stock)/d : 0;
+      if(cover>peak){ peak=cover; peakWk=wk; }
+      if(dip===null && stock<=0) dip=i;
+      rows.push({ i:i, wk:wk, arrived:inc, stock:Math.max(0,stock), cover:cover });
+    }
+    return { rows:rows, start:start, demand:d, shelfWks:shelf,
+             incoming:Object.keys(arr).reduce(function(t,k){ return t+(arr[k]||0); },0),
+             peak:peak, peakWk:peakWk, dipWeek:dip,
+             overShelf:(shelf!=null && peak>shelf), runwayWks:(start+Object.keys(arr).reduce(function(t,k){ return t+(arr[k]||0); },0))/d };
+  }catch(e){ return null; }
+}
 // ── Hacia dónde va la demanda, y qué costó no verlo ────────────────────────────────────────────
 // Deliberadamente NO rankea ventanas por costo. Ese ranking se da vuelta con el régimen — en una
 // caída ganan las cortas porque se adaptan, en una subida ganan las largas — así que puesto en
@@ -16961,6 +17041,63 @@ function invmBuySuggestionHTML(p, origin){
             '<b style="color:'+(falta>0?'var(--jlz)':'var(--gray-700)')+'">'+(falta>0?('short '+n2(falta)+' &rarr; buy '+g.buy):('over by '+n2(-falta)+' &rarr; buy nothing'))+'</b>')
       + '</table>';
   }
+  // ── La pista, dibujada ────────────────────────────────────────────────────────────────────────
+  // Doce barras, una por semana: la altura es la cobertura que vas a tener. La línea punteada es la
+  // vida útil. Si las barras la pasan, lo que compres de más se va a liquidar — y eso es lo que un
+  // número solo no transmite. Las semanas con llegada van marcadas: se ve de dónde viene el pico.
+  var runway='';
+  try{
+    var R=invmRunway(g.p, g.origin, 12);
+    if(R && R.rows.length){
+      var fr=function(x){ return Math.round(x||0).toLocaleString('en-US'); };
+      var top=Math.max(R.peak, R.shelfWks||0, 1)*1.12;
+      var H=44;
+      var bars=R.rows.map(function(r){
+        var h=Math.max(2, Math.round(r.cover/top*H));
+        var over=(R.shelfWks!=null && r.cover>R.shelfWks);
+        var low=(r.cover<1);
+        var col=over?'#DC2626':(low?'#D97706':'var(--jlz)');
+        return '<div title="'+(r.wk||'')+' \u00b7 '+fr(r.stock)+' cs \u00b7 '+(Math.round(r.cover*10)/10)+' wks'
+             + (r.arrived>0?(' \u00b7 +'+fr(r.arrived)+' arriving'):'')+'" '
+             + 'style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:2px;min-width:0">'
+             + (r.arrived>0?'<span style="font-size:8px;line-height:1;color:var(--jlz)">&#9660;</span>':'<span style="font-size:8px;line-height:1">&nbsp;</span>')
+             + '<div style="width:100%;max-width:16px;height:'+h+'px;background:'+col+';border-radius:2px 2px 0 0"></div></div>';
+      }).join('');
+      var shelfLine='';
+      if(R.shelfWks!=null){
+        var y=Math.round(R.shelfWks/top*H);
+        shelfLine='<div style="position:absolute;left:0;right:0;bottom:'+y+'px;border-top:1px dashed #DC2626;pointer-events:none"></div>'
+          + '<div style="position:absolute;right:0;bottom:'+(y+2)+'px;font-size:8.5px;color:#DC2626;font-family:var(--fm);background:'+tone.bg+';padding:0 3px">'
+          + R.shelfWks+'-wk shelf life</div>';
+      }
+      var verdict = R.overShelf
+        ? ('<b style="color:#DC2626">Peaks at '+(Math.round(R.peak*10)/10)+' weeks of cover in '+(R.peakWk||'')+' &mdash; past the '+R.shelfWks+'-week shelf life.</b> Anything you add now ages out before it sells.')
+        : (R.dipWeek!=null
+            ? ('Runs out around <b>'+(R.rows[R.dipWeek]||{}).wk+'</b>. Peak '+(Math.round(R.peak*10)/10)+' weeks of cover.')
+            : ('Peaks at <b>'+(Math.round(R.peak*10)/10)+' weeks</b> of cover'+(R.shelfWks!=null?(', under the '+R.shelfWks+'-week shelf life'):'')+'.'));
+      runway='<div style="margin-top:10px">'
+        + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--gray-400);font-family:var(--fb);font-weight:700;margin-bottom:5px">'
+        + 'Next 12 weeks if you buy nothing</div>'
+        + '<div style="position:relative;display:flex;align-items:flex-end;gap:2px;height:'+(H+12)+'px">'+bars+shelfLine+'</div>'
+        + '<div style="margin-top:4px;font-size:10.5px;font-family:var(--fm);color:var(--gray-500);line-height:1.5">'
+        + '<b>'+fr(R.start)+'</b> free + <b>'+fr(R.incoming)+'</b> already on the way = <b>'+(Math.round(R.runwayWks*10)/10)+' weeks</b> of supply at '+fr(R.demand)+' cs/wk. '
+        + verdict + '</div></div>';
+    }
+  }catch(e){}
+  // Una cuenta dominante que compra a saltos: el promedio semanal la describe mal.
+  var lumpyLine='';
+  try{
+    var LC=invmLumpyConcentration(g.p, g.origin, 26);
+    if(LC){
+      var fl=function(x){ return Math.round(x||0).toLocaleString('en-US'); };
+      lumpyLine='<div style="margin-top:5px;font-size:11px;font-family:var(--fm);line-height:1.5;color:var(--gray-500)">'
+        + '<b>'+((typeof libEsc==='function')?libEsc(LC.customer):LC.customer)+'</b> is '+Math.round(LC.share*100)
+        + '% of this line and buys in lumps &mdash; about '+fl(LC.avgLot)+' cases every '
+        + (Math.round(LC.everyWks*10)/10)+' weeks, in '+LC.buyWeeks+' of the last '+LC.ofWeeks+' weeks. '
+        + 'A weekly average reads low in their quiet weeks and high right after one, so treat a swing as their cadence before treating it as the market.'
+        + '</div>';
+    }
+  }catch(e){}
   // La tendencia del año, cuando es material: explica por qué el plan pide de más (o de menos).
   var trendLine='';
   try{
@@ -17004,7 +17141,7 @@ function invmBuySuggestionHTML(p, origin){
        + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;color:'+tone.fg+';font-family:var(--fb);margin-bottom:4px">Buy suggestion</div>'
        + '<div style="font-size:14px;line-height:1.5;color:var(--gray-800);font-family:var(--fb)">'+head+'</div>'
        + '<div style="margin-top:3px;font-size:11.5px;color:var(--gray-500);font-family:var(--fm);line-height:1.5">'+why+'</div>'
-       + mathRows + spread + fitLine + trendLine + '</div>';
+       + runway + mathRows + spread + fitLine + lumpyLine + trendLine + '</div>';
 }
 // ── Sugerencia de compra para ginger-Perú ──────────────────────────────────────────────────────
 // No usa la fórmula genérica: ginger-Perú guarda su stock en OTRO store (`bpInvState`, no

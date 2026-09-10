@@ -1126,6 +1126,80 @@ group('invmStockableWeekly · la demanda que de verdad sale de cámara');
   check('excluye las cuentas internas', Math.round(invmStockableWeekly('turmeric','all')[0].lbs/30), 60);
 })();
 
+group('invmRunway · lo que ya tenés viniendo, que es lo que frena una compra de más');
+// La pregunta que evita comprar cinco contenedores de golpe no es "cuánto me falta" sino "cuánto ya
+// tengo en el agua". El pico de cobertura es el número que decide: si ya pasa la vida útil, lo que
+// agregues se liquida — y eso costó $22.457 en ginger.
+(function(){
+  var HOY = dmWeekKey(new Date());
+  var wk = function(n){ var d=new Date(); d.setDate(d.getDate()+n*7); return dmWeekKey(d); };
+  PRODUCTS = { ginger:{ label:'Ginger', caseLb:30, shelfWks:8 } };
+  invmProductStats = function(){ return { caseLb:30, availCases:1000, weeklyCasesBuy:100 }; };
+
+  // Sin nada en camino: la pista es stock / demanda.
+  invmProductArrivals = function(){ return {}; };
+  var R = invmRunway('ginger','all',12);
+  check('la pista sale del stock y la demanda', Math.round(R.runwayWks), 10);
+  check('y arranca donde arranca el stock', R.start, 1000);
+  ok('se queda sin stock dentro del horizonte', R.dipWeek !== null);
+  ok('sin llegadas el pico es la cobertura de hoy', Math.round(R.peak) === 9);
+
+  // Con contenedores en camino: el pico sube y puede pasar la vida útil.
+  invmProductArrivals = function(){ var o={}; o[wk(2)]=1300; o[wk(4)]=1300; o[wk(6)]=1300; return o; };
+  var R2 = invmRunway('ginger','all',12);
+  check('cuenta lo que ya viene', R2.incoming, 3900);
+  check('y lo suma a la pista', Math.round(R2.runwayWks), 49);
+  ok('el pico ahora pasa la vida útil', R2.overShelf === true && R2.peak > 8);
+  ok('y dice en qué semana pica', !!R2.peakWk);
+  ok('ya no se queda sin stock', R2.dipWeek === null);
+
+  // Las semanas de llegada quedan marcadas, que es de dónde viene el pico.
+  var conLlegada = R2.rows.filter(function(r){ return r.arrived > 0; });
+  check('marca las semanas con llegada', conLlegada.length, 3);
+
+  // Sin demanda no hay pista que calcular.
+  invmProductStats = function(){ return { caseLb:30, availCases:1000, weeklyCasesBuy:0 }; };
+  check('sin demanda no proyecta', invmRunway('ginger','all',12), null);
+})();
+
+group('invmLumpyConcentration · una cuenta grande que compra a saltos');
+// Sol-ti es ~30% del ginger y compra cada dos semanas. Un promedio semanal la describe mal: la mitad
+// de las semanas aporta 0. Su hueco de ocho semanas (8-jun a 27-jul) arrastró el trimestre como si
+// el mercado se hubiera caído, y volvió en agosto con el mismo ritmo.
+(function(){
+  var wkAtras = function(n){ var d=new Date(); d.setDate(d.getDate()-n*7); return dmWeekKey(d); };
+  var ROWS = [];
+  for (var i = 26; i >= 1; i--) {
+    ROWS.push({ prod:'ginger', c:'Chicos', d:wkAtras(i), lbs:300*30, type:'Sale' });   // todas las semanas
+    if (i % 2 === 0) ROWS.push({ prod:'ginger', c:'Sol-ti', d:wkAtras(i), lbs:700*30, type:'Sale' });
+  }
+  localStorage.getItem = function(k){ return k==='jlz_demand_raw' ? JSON.stringify(ROWS) : null; };
+  getOrders = function(){ return []; };
+  productCaseLb = function(){ return 30; };
+  dmIsInternalAccount = function(){ return false; };
+  invmOriginMatch = function(){ return true; };
+
+  var L = invmLumpyConcentration('ginger','all',26);
+  ok('encuentra la cuenta a saltos', !!L);
+  check('y es la correcta', L.customer, 'Sol-ti');
+  ok('con su peso real', Math.round(L.share*100) === 54);
+  ok('dice cada cuánto compra', Math.round(L.everyWks) === 2);
+  ok('y de a cuánto', Math.round(L.avgLot) === 700);
+
+  // Un cliente que compra todas las semanas NO es a saltos, por grande que sea.
+  ROWS.length = 0;
+  for (var j = 26; j >= 1; j--) ROWS.push({ prod:'ginger', c:'Grande', d:wkAtras(j), lbs:900*30, type:'Sale' });
+  check('comprar siempre no es comprar a saltos', invmLumpyConcentration('ginger','all',26), null);
+
+  // Una cuenta chica a saltos no distorsiona nada: se ignora.
+  ROWS.length = 0;
+  for (var q = 26; q >= 1; q--) {
+    ROWS.push({ prod:'ginger', c:'Chicos', d:wkAtras(q), lbs:900*30, type:'Sale' });
+    if (q % 4 === 0) ROWS.push({ prod:'ginger', c:'Mini', d:wkAtras(q), lbs:50*30, type:'Sale' });
+  }
+  check('una cuenta chica no se reporta', invmLumpyConcentration('ginger','all',26), null);
+})();
+
 group('invmDemandTrend · hacia dónde va la demanda, y qué costó no verlo');
 // A propósito NO rankea ventanas por costo: ese ranking se da vuelta con el régimen (en caída ganan
 // las cortas, en subida las largas), así que en pantalla se leería como regla y engañaría en cuanto
