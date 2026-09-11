@@ -1757,6 +1757,12 @@ group('En camino · el origen filtra, pero no puede hacer desaparecer carga');
   check('sin filtro de origen entra todo', sum(invmProductArrivals('ginger','all')), 1360);
 })();
 
+// NOTA · `invmCommittedByWeek` NO se puede probar acá: tests/stubs.js declara su propia version y,
+// por el orden de hoisting, TAPA a la extraida de produccion. O sea que cualquier test que la llame
+// mide el stub. Se saco el grupo que habia escrito para no dejar cobertura falsa; la regla queda
+// blindada en tests/committed-contra-orden-guard.py (sobre el codigo) y se verifico en vivo sobre
+// los datos de Juan. Ver el guardian de stubs que tapan produccion, mas abajo en run.sh.
+
 group('El contra-orden que se MUESTRA sale de la ventana con la que se NETEO');
 // Juan, sobre turmeric-Fiji: "esta llegando un embarque exclusivo para Sol-ti y no esta siendo
 // contabilizado". Se contabilizaba —la orden entra con neto 0 y el run-rate ya viene sin Sol-ti—

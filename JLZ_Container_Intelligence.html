@@ -16541,6 +16541,17 @@ function invmCommittedByWeek(p, origin, fromWk){
   var out={};
   var minWk=(fromWk!=null) ? String(fromWk) : ((typeof dmWeekKey==='function')?dmWeekKey(new Date()):'');
   var all=cmPlanEntries().filter(function(c){ return c && c.type==='inv' && _cmProd(c)===p && c.wk && (!minWk || String(c.wk)>=minWk); });
+  // ── El committed de una cuenta CONTRA ORDEN no es demanda de almacén ──────────────────────────
+  // Esas cajas van del puerto al cliente y la orden ya entra con neto 0 en las llegadas. Contarlas
+  // acá las castiga dos veces: no te llega el producto Y te cobran la demanda. Turmeric-Fiji el
+  // 2026-09-11: la semana 38 mostraba −700 de Sol-ti sin ninguna llegada esa semana, y la proyección
+  // entera caía en STOCKOUT desde ahí (−455 cajas y bajando) por mercadería que nunca toca la
+  // cámara. Misma regla y misma fuente que `hybridSalesForWeek` (`_hpDS`), que ya lo hacía bien —
+  // este era el camino que faltaba.
+  var _mtoCust={};
+  try{ _mtoCust=(typeof mtoByCustomer==='function')
+        ? (mtoByCustomer(p,(typeof dmWindow==='function')?dmWindow(p):13)||{}) : {}; }catch(e){}
+  all=all.filter(function(c){ return !Object.prototype.hasOwnProperty.call(_mtoCust, c.customer); });
   if(origin && origin!=='all'){
     var tagged=all.filter(function(c){ return _cmOriginFor(c); });
     if(!tagged.length) return {};                       // no origin field AND no SKU → can't attribute → lump fallback
