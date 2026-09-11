@@ -1756,6 +1756,26 @@ group('En camino · el origen filtra, pero no puede hacer desaparecer carga');
   check('sin filtro de origen entra todo', sum(invmProductArrivals('ginger','all')), 1360);
 })();
 
+group('bpRowAtDate · la semana que CONTIENE la llegada, no la siguiente');
+// Con una venta hipotetica de 700 cajas, el Simulator proyectaba MAS stock a la llegada que el Buy
+// Planner (3.801 contra 3.697). No era el escenario: era que cada uno media en una semana distinta.
+(function(){
+  var d=function(iso){ return new Date(iso+'T12:00:00'); };
+  var rows=['2026-10-05','2026-10-12','2026-10-19','2026-10-26'].map(function(w,i){
+    return { weekStartDate:d(w), startingStock:1000-100*i }; });
+  var en=function(iso){ var r=bpRowAtDate(rows, d(iso).getTime()); return r?dmISOLocal(r.weekStartDate):null; };
+  check('el lunes mismo cae en su semana',        en('2026-10-12'), '2026-10-12');
+  check('el jueves tambien',                      en('2026-10-15'), '2026-10-12');
+  check('el domingo cierra esa semana',           en('2026-10-18'), '2026-10-12');
+  check('y el lunes siguiente abre la otra',      en('2026-10-19'), '2026-10-19');
+  check('una fecha anterior a todo cae en la primera', en('2026-09-01'), '2026-10-05');
+  check('una fecha posterior a todo, en la ultima',    en('2027-01-01'), '2026-10-26');
+  check('sin filas no inventa una', bpRowAtDate([], Date.now()), null);
+  // El caso que lo hizo visible: 17-oct cae en la semana del 12, no en la del 19.
+  check('el 17-oct se mide en la semana del 12', en('2026-10-17'), '2026-10-12');
+  check('y ahi el stock es el de esa semana', bpRowAtDate(rows, d('2026-10-17').getTime()).startingStock, 900);
+})();
+
 group('bpContainerPlan · cuantos contenedores, y por que ese numero');
 // Vivia dentro de renderBuyPlanner. El Simulator tiene que contestar lo MISMO sobre SUS datos —con
 // los escenarios cargados— y dos copias de esta cuenta terminarian dando dos numeros.

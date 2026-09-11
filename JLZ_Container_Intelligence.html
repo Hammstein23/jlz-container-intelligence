@@ -16285,6 +16285,22 @@ function _invmKnownOrigin(p, o){
 //   projAtArrival  lo proyectado para el día en que el pedido entra
 //   peakStock      el pico de la proyección — contra él se mide la vida útil, no contra hoy
 //   perContainer   cajas BRUTAS por contenedor; las vendibles descontarían la merma dos veces
+// ── La fila cuya SEMANA contiene esa fecha ──────────────────────────────────────────────────────
+// Elegir "la primera semana que empieza después" corre el punto de medición una semana entera, y
+// entonces comparar dos proyecciones deja de ser una comparación. Se vio así: con una venta
+// hipotética de 700 cajas, el Simulator proyectaba MÁS stock a la llegada que el Buy Planner —
+// porque estaba mirando otra semana, no otro mundo.
+function bpRowAtDate(rows, ms){
+  if(!Array.isArray(rows) || !rows.length) return null;
+  var out=null;
+  for(var i=0;i<rows.length;i++){
+    var d=rows[i] && rows[i].weekStartDate;
+    var t=(d && d.getTime) ? d.getTime() : (d!=null ? new Date(d).getTime() : NaN);
+    if(!isFinite(t)) continue;
+    if(t<=ms) out=rows[i]; else break;
+  }
+  return out || rows[0];
+}
 function bpContainerPlan(o){
   o = o || {};
   var dem = +o.weeklyDemand || 0, per = Math.max(1, +o.perContainer || 1);
@@ -23180,10 +23196,8 @@ function simRenderProjection(realOrders, hypoOrders) {
       var _ssC=(_br.ssCases!=null)?_br.ssCases:safetyThreshold;
       var _pk=_simProjRows.reduce(function(m,r){ return (!m || r.endingStock>m.endingStock)?r:m; }, null);
       var _lead=(typeof bpGetLeadTimes==='function')?(bpGetLeadTimes().sea_total||37):37;
-      var _etaMs=Date.now()+_lead*86400000, _arr=null;
-      for(var _i=0;_i<_simProjRows.length;_i++){
-        if(_simProjRows[_i].weekStartDate && _simProjRows[_i].weekStartDate.getTime()>=_etaMs){ _arr=_simProjRows[_i]; break; }
-      }
+      // La semana que CONTIENE la llegada, igual que el Buy Planner (`r.weekNum === seaEtaWk`).
+      var _arr=bpRowAtDate(_simProjRows, Date.now()+_lead*86400000);
       var _cpS=bpContainerPlan({ weeklyDemand:weeklyDemand, leadWks:_br.leadWks, cadence:_br.cadence,
         ssCases:_ssC, perContainer:_br.perContainer, shelfWks:_br.shelfWks,
         projAtArrival:_arr?_arr.startingStock:_simProjRows[_simProjRows.length-1].endingStock,
@@ -23202,6 +23216,9 @@ function simRenderProjection(realOrders, hypoOrders) {
               cappedBy:_cpS.cappedBy, shelfWks:_cpS.shelfWks } };
     }
   }catch(e){ console.warn('sim digest', e); }
+  // Las filas quedan a la vista, igual que `_bpDigest`: sin esto la proyección del Simulator es la
+  // única de las dos que no se puede auditar desde la consola.
+  try{ window._simProjRows = _simProjRows; }catch(e){}
   try{ var _sgs=document.getElementById('sim-ginger-suggestion');
        if(_sgs) _sgs.innerHTML=bpGingerSuggestionHTML(window._simDigest||window._bpDigest); }catch(e){}
 }
