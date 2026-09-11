@@ -53,6 +53,10 @@ echo "══ Un solo número de compra ═════════════�
 python3 "$DIR/one-buy-number-guard.py" "$HTML" || FAILED=1
 echo
 
+echo "══ Las tarjetas se entienden solas ════════════════════════════"
+python3 "$DIR/plain-language-guard.py" "$HTML" || FAILED=1
+echo
+
 echo "══ Modelo de demanda ═══════════════════════════════════════════"
 python3 "$DIR/extract.py" "$HTML" "$TMP/app.js" \
   dmWeekKey nowcastProductModel dmToggleOther renderBuildupPanel dmEffectiveRunRateLbs \

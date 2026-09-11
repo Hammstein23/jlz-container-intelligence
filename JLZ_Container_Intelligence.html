@@ -17376,7 +17376,7 @@ function invmBuySuggestionHTML(p, origin, opts){
     if(P.floorUnavoidable && P.best){
       accion = caja('Order now', null, null,
         'Even today&rsquo;s order bottoms out at <b>'+f(P.best.trough)+'</b> cases ('+wkc(P.best.trough)+') the week of '
-        + esc(P.best.troughWk)+' &mdash; under your '+f(P.safetyCases)+'-case buffer. Nothing can land before that dip.', true);
+        + esc(P.best.troughWk)+', below your safety level of '+f(P.safetyCases)+' cases. Nothing you order today can arrive before that.', true);
     } else if(P.protect){
       accion = caja('Order by', P.protect.orderBy, P.protect.daysLeft,
         'Order by this date and your stock never drops below your safety level of '+f(P.safetyCases)+' cases. '
@@ -17612,7 +17612,8 @@ function bpGingerSuggestionHTML(src){
               + (x.late?' <span style="color:#DC2626">(overdue)</span>':(' <span style="color:var(--gray-400)">('+x.daysLeft+'d)</span>'))
               + (sep>0?('<span style="color:var(--gray-400)"> &middot; '+sep+'d after the previous</span>'):'')+'</td>'
             + '<td style="padding:5px 9px;color:var(--gray-500);white-space:nowrap">lands '+esc(x.landsWk)+'</td>'
-            + '<td style="padding:5px 9px;text-align:right;color:var(--gray-500);white-space:nowrap">floor '+f(x.trough)+' cs</td>'
+            // "floor" era la ultima palabra de la tarjeta que no decia que es. Se entiende sola o no sirve.
+            + '<td style="padding:5px 9px;text-align:right;color:var(--gray-500);white-space:nowrap">lowest '+f(x.trough)+' cases</td>'
             + '</tr>'; }).join('')
       + '</table></div>';
   }
@@ -17648,7 +17649,7 @@ function bpGingerSuggestionHTML(src){
     if(ya){
       accion = caja('Order now', null, null,
         'Even ordering today you bottom out at <b>'+f(P.best.trough)+'</b> cases ('+wk(P.best.trough)+') the week of '
-        + esc(P.best.troughWk)+' &mdash; under your '+f(P.safetyCases)+'-case buffer. Nothing you order can land before that dip.', true);
+        + esc(P.best.troughWk)+', below your safety level of '+f(P.safetyCases)+' cases. Nothing you order today can arrive before that.', true);
     } else if(!escalonado && prot){
       accion = caja('Order by', prot.orderBy, prot.daysLeft,
         'Order by this date and your stock never drops below your safety level of '+f(P.safetyCases)+' cases. '

@@ -2036,6 +2036,20 @@ group('La linea de compra de ginger · ordenar en el plazo no llega el mismo dia
   ok('ni la metafora del borde',                    hp.indexOf('is the edge')<0 && hp.indexOf('not a target')<0);
   ok('y el rotulo de accion no habla de "buffer"',  hp.indexOf('never drops below your safety level')>-1);
 
+  // ── Con varios contenedores manda el calendario, y tampoco usa jerga ─────────────────────────
+  window._bpDigest.schedule = [
+    { n:1, orderBy:iso(16), daysLeft:16, landsWk:iso(53), trough:1364, cases:1320, late:false },
+    { n:2, orderBy:iso(30), daysLeft:30, landsWk:iso(67), trough:1033, cases:1320, late:false } ];
+  var hc = bpGingerSuggestionHTML();
+  ok('el titular avisa que no van juntos', hc.indexOf('not all at once')>-1);
+  ok('y da la primera y la ultima fecha',
+     hc.indexOf('first by <b>'+iso(16)+'</b>')>-1 && hc.indexOf('last by <b>'+iso(30)+'</b>')>-1);
+  ok('el calendario es el rotulo de accion',  hc.indexOf('Order on this schedule')>-1);
+  ok('dice cuantos dias separan uno de otro', hc.indexOf('14d after the previous')>-1);
+  ok('el punto mas bajo se dice en palabras', hc.indexOf('lowest 1,364 cases')>-1);
+  ok('sin la jerga "floor"',                  hc.indexOf('floor ')<0);
+  window._bpDigest.schedule = null;
+
   // Cuando el pozo cae antes de que cualquier orden pueda llegar, no hay plazo que valga.
   window._bpDigest.protect.floorUnavoidable = true;
   window._bpDigest.protect.protect = null;
