@@ -2627,6 +2627,42 @@ check('"All" no filtra nada',
 //     factura como venta interna a JLZ Produce Manufacturing), así que R−S da 0 y borraría stock real.
 // Cargar el NETO en vez del BRUTO fue el bug que dejó el ginger en 1.165 cuando eran 2.250:
 // el committed se restaría dos veces. Ver [[inventory-one-convention]].
+group('dmWeekStatus no revienta · el panel de la semana tiene que dibujar algo');
+// `dmWeekStatus` devolvia `ds: _ds` con `_ds` NUNCA declarada: ReferenceError en cada llamada. Su
+// caller lo envuelve en try/catch, asi que el panel de Demand quedaba VACIO sin decir nada. El
+// chequeo de sintaxis no agarra esto — el archivo parsea perfecto. Solo llamarla lo agarra.
+(function(){
+  dmWeekKey     = function(){ return '2026-09-07'; };
+  dmWindow      = function(){ return 6; };
+  productCaseLb = function(){ return 30; };
+  _cmProd       = function(c){ return c.product||'garlic'; };
+  _cmOriginFor  = function(){ return ''; };
+  cmPlanEntries = function(){ return [
+    { type:'inv', product:'garlic', wk:'2026-09-07', customer:'Alberts',     cases:20 },
+    { type:'inv', product:'garlic', wk:'2026-09-07', customer:'Sol-ti',      cases:700 },
+    { type:'inv', product:'garlic', wk:'2026-09-07', customer:'Whole Foods', cases:140 } ]; };
+  // Sol-ti cruzado, Whole Foods reempacado: solo el primero sale de la salida de la semana.
+  mtoByCustomer = function(p, w, opts){
+    return (opts && opts.crossDockOnly) ? { 'Sol-ti':100 } : { 'Sol-ti':100, 'Whole Foods':23 }; };
+  dmWeekPace    = function(){ return { aheadPct:0.5, ahead:3 }; };
+  productFocus  = function(){ return 'garlic'; };
+  _dmRawAll = [{ prod:'garlic', d:'2026-09-10', lbs:300, c:'Alberts' }];
+  _dmModel  = { runRate3:600, runRate6:600, runRate13:600, runRate26:600,
+                customers:[{ c:'Alberts', rrCases:20, rr6Cases:20 }] };
+
+  var s=null, err=null;
+  try{ s = dmWeekStatus(); }catch(e){ err = e.name+': '+e.message; }
+  check('no lanza', err, null);
+  ok('devuelve algo que el panel pueda dibujar', !!s);
+  if(s){
+    check('ds es el total contra orden', Math.round(s.ds), 123);
+    var nombres = (s.named||[]).map(function(x){ return x.c; });
+    ok('el cruzado no figura como salida de camara', nombres.indexOf('Sol-ti') < 0);
+    ok('el reempacado SI figura',                   nombres.indexOf('Whole Foods') > -1);
+    check('y su volumen cuenta', s.namedCs, 160);
+  }
+})();
+
 group('Las fechas se leen mes/dia/año, siempre');
 // Juan: "tienes que poner siempre primero mes, dia, año. Eso es importantisimo, no podemos fallar".
 // Y hay una trampa clasica debajo: `new Date('2026-09-17')` se interpreta como UTC medianoche y al

@@ -27143,7 +27143,18 @@ function dmWeekStatus(){
   // Quién compra CONTRA ORDEN sale de los contenedores marcados, no de una etiqueta por cliente:
   // una cuenta puede comprar contra orden y de cámara en la misma semana.
   var _mtoSet = (function(){ try{ return (typeof mtoByCustomer === 'function') ? (mtoByCustomer(prod, _win) || {}) : {}; }catch(e){ return {}; } })();
-  var _isDS = function(c){ return Object.prototype.hasOwnProperty.call(_mtoSet, c); };
+  // ── `_ds` NUNCA estaba declarada ──────────────────────────────────────────────────────────────
+  // El `return` de abajo la usa (`ds: _ds`), así que la función entera lanzaba ReferenceError y el
+  // panel "This week" de Demand quedaba VACÍO — en silencio, porque su caller lo envuelve en un
+  // try/catch. Es el total contra orden por semana, que es justo lo que explica un `est` en cero:
+  // shallots vende 3,9 cs/semana pero 3,45 son contra orden, así que la demanda de STOCK es 0,45.
+  var _ds = Object.keys(_mtoSet).reduce(function(t, k){ return t + (+_mtoSet[k] || 0); }, 0);
+  // ── Y lo que ya está pedido esta semana solo excluye el CRUZADO ───────────────────────────────
+  // Lo reempacado SÍ sale de la cámara esa semana: dejarlo fuera de la lista subestima la salida
+  // real. Misma regla que invmCommittedByWeek y hybridSalesForWeek.
+  var _cdSet = (function(){ try{ return (typeof mtoByCustomer === 'function')
+      ? (mtoByCustomer(prod, _win, {crossDockOnly:true}) || {}) : {}; }catch(e){ return {}; } })();
+  var _isDS = function(c){ return Object.prototype.hasOwnProperty.call(_cdSet, c); };
   var _rrW = (_win === 3 ? (m.runRate3 || m.runRate13) : _win === 6 ? (m.runRate6 || m.runRate13)
             : _win === 26 ? (m.runRate26 || m.runRate13) : m.runRate13) || 0;
   var salesBase = Math.max(0, _rrW / caseLb);          // m ya viene neteado por mtoNetModel
