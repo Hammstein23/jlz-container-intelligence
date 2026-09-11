@@ -1727,6 +1727,25 @@ group('La linea de compra de ginger · ordenar en el plazo no llega el mismo dia
   ok('y aterriza plazo + lead',  h.indexOf('lands <b>'+iso(74)+'</b>')>-1);
   ok('NO aterriza el mismo dia que se ordena', h.indexOf('lands <b>'+iso(37)+'</b>')<0);
 
+  // ── La fecha con la que se planifica ─────────────────────────────────────────────────────────
+  // El plazo del titular aterriza el dia que el stock llega a CERO. El del colchon cae una semana
+  // antes y es el que hay que cumplir — es el criterio que ya usan los otros cuatro productos.
+  ok('sin plazo de colchon no inventa uno', h.indexOf('Plan to')<0);
+  window._bpDigest.safetySeaDeadline = { date:new Date(hoy.getTime()+30*DIA), daysLeft:30 };
+  var hb = bpGingerSuggestionHTML();
+  ok('muestra la fecha del colchon',   hb.indexOf('Plan to <b>'+iso(30)+'</b> (30d)')>-1);
+  ok('dice por que no es la de arriba', hb.indexOf('zero')>-1);
+  ok('y la cuantifica en cajas',        hb.indexOf('866 cases')>-1);
+  ok('sin pisar el plazo del titular',  hb.indexOf('order by <b>'+iso(37)+'</b>')>-1);
+
+  // Vencida se lee al reves: ya deberias haber ordenado.
+  window._bpDigest.safetySeaDeadline = { date:new Date(hoy.getTime()-4*DIA), daysLeft:-4 };
+  var hv = bpGingerSuggestionHTML();
+  ok('vencida avisa que ya paso',  hv.indexOf('should have ordered by <b>'+iso(-4)+'</b>')>-1);
+  ok('y dice hace cuanto',         hv.indexOf('4d ago')>-1);
+  ok('sin decir "Plan to" en pasado', hv.indexOf('Plan to')<0);
+  window._bpDigest.safetySeaDeadline = null;
+
   // Sin plazo no hay nada que esperar: la cuenta arranca hoy.
   window._bpDigest.seaDeadline = null;
   var h2 = bpGingerSuggestionHTML();

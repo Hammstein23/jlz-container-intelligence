@@ -17271,6 +17271,23 @@ function bpGingerSuggestionHTML(){
   var why=n2(d.coverage)+' weeks of cover from '+f(d.stockCases)+' cases on hand'
     + ' &middot; sea takes '+n2(R.leadWks)+' weeks'
     + (air&&air.daysLeft!=null?(' &middot; by air you have until '+iso(air.date)+' ('+air.daysLeft+'d)'):'');
+  // ── La fecha con la que se planifica, no la de no quebrar ─────────────────────────────────────
+  // El plazo del titular aterriza el día que el stock llega a CERO: cumplirlo es no quedarse sin
+  // producto, con cero margen. Esta otra aterriza cuando tocás el colchón, que es lo que el colchón
+  // existe para evitar, y es el criterio que ya usan los otros cuatro productos.
+  var ss=d.safetySeaDeadline, buffer='';
+  if(ss && ss.daysLeft!=null){
+    var tarde=(ss.daysLeft<0), colW=(d.weeklyDemand>0)?n2((R.ssCases||0)/d.weeklyDemand):null;
+    buffer='<div style="margin-top:6px;padding:6px 9px;border-radius:6px;font-family:var(--fm);'
+      + 'font-size:11px;line-height:1.55;background:'+(tarde?'#FEF2F2':'var(--white)')
+      + ';border:1px solid '+(tarde?'#FECACA':'var(--gray-200)')+';color:'+(tarde?'#991B1B':'var(--gray-600)')+'">'
+      + (tarde
+          ? ('&#9888; To keep your '+(colW?colW+'-week ':'')+'buffer you should have ordered by <b>'+iso(ss.date)
+             +'</b> &mdash; '+Math.abs(ss.daysLeft)+'d ago.')
+          : ('Plan to <b>'+iso(ss.date)+'</b> ('+ss.daysLeft+'d), not to the date above: that one lands the week you hit <b>zero</b>. '
+             + 'This one lands when you touch your '+(colW?colW+'-week ':'')+'buffer of '+f(R.ssCases)+' cases &mdash; which is what the buffer is for.'))
+      + '</div>';
+  }
   var row=function(h,op,res){
     return '<tr><td style="padding:2px 10px 2px 0;color:var(--gray-400);white-space:nowrap">'+(h||'')+'</td>'
       + '<td style="padding:2px 12px 2px 0;color:var(--gray-500)">'+op+'</td>'
@@ -17301,7 +17318,7 @@ function bpGingerSuggestionHTML(){
     + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;color:'+tone.fg+';font-family:var(--fb);margin-bottom:4px">Buy suggestion &middot; from the Buy Planner</div>'
     + '<div style="font-size:14px;line-height:1.5;color:var(--gray-800);font-family:var(--fb)">'+head+'</div>'
     + '<div style="margin-top:3px;font-size:11.5px;color:var(--gray-500);font-family:var(--fm);line-height:1.5">'+why+'</div>'
-    + math + fit + '</div>';
+    + buffer + math + fit + '</div>';
 }
 
 function simRenderProduct(p){
@@ -18495,6 +18512,12 @@ function renderBuyPlanner() {
   const deadlineTarget  = stockoutTarget || safetyDipTarget;
   const seaDeadline = computeDeadline(deadlineTarget, lt.sea_total);
   const airDeadline = computeDeadline(deadlineTarget, lt.air_total);
+  // El plazo de arriba apunta al QUIEBRE: ordenar ahí aterriza justo el día que llegás a cero, sin
+  // margen. El que se usa para planificar es este otro, anclado a tocar el colchón — que es como ya
+  // funcionan los otros cuatro productos (`runway = cobertura − colchón` en invmBuySuggestion).
+  // Solo tiene sentido mostrarlo cuando cae en una semana distinta a la del quiebre.
+  const safetySeaDeadline = (safetyDipTarget && (!stockoutTarget || safetyDipTarget.weekNum !== stockoutTarget.weekNum))
+    ? computeDeadline(safetyDipTarget, lt.sea_total) : null;
   // Compact digest consumed by the Home command center (renderHome) —
   // Home mirrors these numbers instead of duplicating planner logic.
   window._bpDigest = {
@@ -18502,7 +18525,7 @@ function renderBuyPlanner() {
     snapDateStr, snapAgeDays,
     shortfall: deadlineTarget ? { weekNum: deadlineTarget.weekNum, date: deadlineTarget.weekStartDate } : null,
     safetyDip: safetyDipTarget ? { weekNum: safetyDipTarget.weekNum, date: safetyDipTarget.weekStartDate } : null,
-    seaDeadline, airDeadline,
+    seaDeadline, airDeadline, safetySeaDeadline,
   };
 
   // ── Quiet-account panel: who is held out of the plan + Out/Half/Full toggle ──
