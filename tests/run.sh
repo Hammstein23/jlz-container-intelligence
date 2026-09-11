@@ -61,6 +61,10 @@ echo "══ El contra-orden no toca el inventario ═════════�
 python3 "$DIR/committed-contra-orden-guard.py" "$HTML" || FAILED=1
 echo
 
+echo "══ Proveedor y repack, cada uno en su tabla ═══════════════════"
+python3 "$DIR/lot-tables-guard.py" "$HTML" || FAILED=1
+echo
+
 echo "══ Ningún stub tapa producción ════════════════════════════════"
 python3 "$DIR/stub-shadow-guard.py" || FAILED=1
 echo
