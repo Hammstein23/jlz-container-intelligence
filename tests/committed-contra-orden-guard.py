@@ -56,10 +56,34 @@ if re.search(r'invmDirectShipOrdersHTML\(s\.p, s\.origin\)', src):
 else:
     bad('bpRenderProduct no muestra el cuadro: la compra contra-orden no se ve')
 
-if re.search(r"_bds\.innerHTML=invmDirectShipOrdersHTML\('ginger','Peru'\)", src):
+if re.search(r"_bds\.innerHTML=.*invmDirectShipOrdersHTML\('ginger','Peru'\)", src):
     ok('y ginger-Peru tambien')
 else:
     bad('el Buy Planner de ginger no muestra el cuadro')
+
+# ── Y los candidatos que la app detecta tienen que decirse ──────────────────────────────────────
+# `mtoDetectCandidates` existia, estaba testeada, y no se mostraba en ninguna pantalla: la app
+# detectaba compras que parecen hechas para un cliente y se lo guardaba. Juan lo encontro a ojo.
+if 'function invmMtoCandidatesHTML(p, origin)' in src:
+    ok('los candidatos a contra-orden se muestran')
+else:
+    bad('no existe invmMtoCandidatesHTML: la app vuelve a callarse lo que detecta')
+
+if len(re.findall(r'invmMtoCandidatesHTML\(', src)) >= 3:
+    ok('en el Buy Planner de los cuatro y en el de ginger')
+else:
+    bad('el aviso de candidatos no esta cableado en los dos modulos')
+
+_mc = re.search(r'function invmMtoCandidatesHTML\(p, origin\)\{(.*?)\n\}', src, re.S)
+if _mc and 'getDirectShip' in _mc.group(1):
+    ok('y no vuelve a proponer lo que ya esta marcado')
+else:
+    bad('el aviso propone ordenes ya marcadas: ruido sobre una decision ya tomada')
+
+if _mc and 'addDirectShip' not in _mc.group(1):
+    ok('avisa, pero no marca: la decision sigue siendo de Juan')
+else:
+    bad('el aviso marca ordenes por su cuenta: eso cambia el plan de compra sin que nadie lo decida')
 
 print()
 if fails:

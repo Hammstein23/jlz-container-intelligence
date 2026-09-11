@@ -16731,6 +16731,39 @@ function invmToggleHist(p){
 // desaparecen de la pantalla: se compra producto, se paga, se despacha, y ninguna vista lo muestra.
 // Juan: "en la práctica estamos comprando algo, no está entrando al inventario, pero se está
 // haciendo el despacho". Va en su propio cuadro, separado a propósito del plan de compra.
+// ── Los candidatos a contra-orden, dichos en voz alta ───────────────────────────────────────────
+// `mtoDetectCandidates` existía, estaba testeada, y no se mostraba en NINGUNA pantalla: la app
+// detectaba compras que parecen hechas para un cliente y se lo guardaba. Juan lo encontró a ojo
+// mirando el garlic — "esta orden de 227 cajas era para Whole Foods, ¿esto no debería regirse como
+// la cúrcuma?". Tenía razón en preguntar, y la app tenía la respuesta sin decirla.
+//
+// Esto NO marca nada: marcar una orden como contra-orden cambia el plan de compra y es decisión de
+// Juan. Acá solo se pone a la vista lo que ya se sabía, con el número que lo sustenta.
+function invmMtoCandidatesHTML(p, origin){
+  try{
+    if(typeof mtoDetectCandidates!=='function') return '';
+    var cands=mtoDetectCandidates(p, 26)||[];
+    if(!cands.length) return '';
+    // Lo ya marcado no vuelve a proponerse.
+    cands=cands.filter(function(c){ var ds=[]; try{ ds=getDirectShip(c.po)||[]; }catch(e){} return !ds.length; });
+    if(!cands.length) return '';
+    var esc=(typeof libEsc==='function')?libEsc:function(x){ return String(x==null?'':x); };
+    var f=function(n){ return Math.round(n||0).toLocaleString('en-US'); };
+    return '<div style="margin:12px 0 8px;padding:10px 13px;border:1px solid #FDE68A;border-left:3px solid #D97706;'
+      + 'border-radius:8px;background:#FFFBEB">'
+      + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.07em;font-weight:700;color:#92400E;font-family:var(--fb)">'
+      + 'Looks like it was bought for a customer</div>'
+      + '<div style="margin-top:3px;font-size:11px;font-family:var(--fm);color:#92400E;line-height:1.55">'
+      + 'These purchases line up with one customer\u2019s order. If the goods went from the supplier straight to them, '
+      + 'mark the order so the plan stops treating those cases as warehouse stock. If they came through the cooler, leave it alone.</div>'
+      + '<div style="margin-top:6px;font-family:var(--fm);font-size:11px;color:var(--gray-700)">'
+      + cands.map(function(c){
+          return '<div style="margin-top:3px">PO <b>'+esc(c.po)+'</b> &middot; '+f(c.cases)+' cases &middot; week of '
+            + esc(c.wk)+' &mdash; <b>'+esc(c.customer)+'</b> ordered '+f(c.custCases)+' that week'
+            + (c.routine?(', against a routine '+f(c.routine)):'')+'.</div>'; }).join('')
+      + '</div></div>';
+  }catch(e){ return ''; }
+}
 function invmDirectShipOrdersHTML(p, origin){
   try{
     var esc=(typeof libEsc==='function')?libEsc:function(x){ return String(x==null?'':x); };
@@ -17208,7 +17241,7 @@ function bpRenderProduct(p){
     + bar + (s.hasModel?invmWindowToggle(p,s.origin):'')
     + invmBuySuggestionHTML(s.p, s.origin, {whatif:false})
     + invmAnalysisHTML(s) + invmProjectionHTML(s)
-    + invmDirectShipOrdersHTML(s.p, s.origin)
+    + invmMtoCandidatesHTML(s.p, s.origin) + invmDirectShipOrdersHTML(s.p, s.origin)
     + '<div style="font-size:11px;color:var(--gray-400);font-family:var(--fm);margin:-4px 0 8px">Test hypothetical buys in the <b style="color:#7c3aed">Simulator</b> tab.</div>';
 }
 // Simulator product view (turmeric/garlic/shallots + ginger-Hawaii): projection + what-if, per product+origin.
@@ -19584,7 +19617,7 @@ function renderBuyPlanner() {
     // Lo que se compra para un cliente y nunca entra a cámara: se descuenta de todo lo de arriba con
     // razón, y por eso desaparecía de la pantalla. Va acá, al final y aparte del plan de compra.
     try{ var _bds=document.getElementById('bp-ginger-directship');
-         if(_bds) _bds.innerHTML=invmDirectShipOrdersHTML('ginger','Peru'); }catch(e){}
+         if(_bds) _bds.innerHTML=invmMtoCandidatesHTML('ginger','Peru')+invmDirectShipOrdersHTML('ginger','Peru'); }catch(e){}
     try{ var _bs=document.getElementById('bp-ginger-suggestion');
          if(_bs) setTimeout(function(){ try{ _bs.innerHTML=bpGingerSuggestionHTML(window._bpDigest); }catch(e){} }, 0); }catch(e){}
     try{ if(window._bpDigest) window._bpDigest.rec = {
