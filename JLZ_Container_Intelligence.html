@@ -4823,6 +4823,8 @@ function authInjectLogo() {
     </div>
   </div>
 
+  <div id="bp-ginger-directship"></div>
+
   </div><!-- end bp-ginger-body -->
 </div><!-- end tab-planner -->
 
@@ -16567,6 +16569,69 @@ function invmToggleHist(p){
   if(typeof invmReRender==='function') invmReRender();
   else if(typeof renderInventory==='function') renderInventory();
 }
+// ── Lo que se compra para un cliente y nunca entra a cámara ─────────────────────────────────────
+// Estas órdenes se descuentan de TODAS partes, y con razón: no suman a las llegadas (van del puerto
+// al cliente) ni a la demanda de almacén (esas cajas ya tienen dueño). El efecto lateral es que
+// desaparecen de la pantalla: se compra producto, se paga, se despacha, y ninguna vista lo muestra.
+// Juan: "en la práctica estamos comprando algo, no está entrando al inventario, pero se está
+// haciendo el despacho". Va en su propio cuadro, separado a propósito del plan de compra.
+function invmDirectShipOrdersHTML(p, origin){
+  try{
+    var esc=(typeof libEsc==='function')?libEsc:function(x){ return String(x==null?'':x); };
+    var f=function(n){ return Math.round(n||0).toLocaleString('en-US'); };
+    var hoy=(typeof dmISOLocal==='function')?dmISOLocal(new Date()):new Date().toISOString().slice(0,10);
+    var filas=[], enCamino=0, llegadas=0;
+    (getOrders()||[]).forEach(function(o){
+      if(_ordProd(o)!==p) return;
+      if(origin && origin!=='all'){
+        var _oo=(typeof _ordOrigin==='function')?_ordOrigin(o):(o.origin||'');
+        if(_oo && _oo!==origin && typeof _invmKnownOrigin==='function' && _invmKnownOrigin(p,_oo)) return;
+      }
+      var ds=[]; try{ ds=getDirectShip(o.jlzPo)||[]; }catch(e){}
+      if(!ds.length) return;
+      var tot=ds.reduce(function(t,x){ return t+(+x.cases||0); },0);
+      if(!(tot>0)) return;
+      var eta=String(o.arrivalActual||o.arrivalEstimated||o.etaActual||o.etaEstimated||'').slice(0,10);
+      var pend=(o.status==='Contracted'||o.status==='In Transit');
+      if(pend) enCamino+=tot; else if(eta && eta>=_dsDesde()) llegadas+=tot;
+      if(!pend && !(eta && eta>=_dsDesde())) return;          // histórico viejo: no llena la pantalla
+      var propio=Math.max(0,(parseFloat(o.cases)||0)-tot);
+      filas.push({ po:String(o.jlzPo||o.id||'—'), estado:o.status, eta:eta, cajas:tot, propio:propio,
+                   clientes:ds.map(function(x){ return (x.customer||x.name||'?')+(ds.length>1?(' '+f(x.cases)):''); }).join(', '),
+                   pend:pend, tarde:(pend && eta && eta<hoy) });
+    });
+    if(!filas.length) return '';
+    filas.sort(function(a,b){ if(a.pend!==b.pend) return a.pend?-1:1; return String(a.eta)<String(b.eta)?-1:1; });
+    var th='padding:5px 9px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--gray-400);font-family:var(--fb);font-weight:700';
+    var td='padding:6px 9px;font-family:var(--fm);font-size:11px;color:var(--gray-700);white-space:nowrap';
+    var tasa=0; try{ tasa=(typeof mtoCasesPerWeek==='function')?mtoCasesPerWeek(p,(typeof dmWindow==='function')?dmWindow(p):13):0; }catch(e){}
+    return '<div style="margin:14px 0 8px;border:1px solid var(--gray-200);border-left:3px solid #7c3aed;border-radius:8px;overflow:hidden">'
+      + '<div style="padding:8px 12px;background:var(--gray-50)">'
+        + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.07em;font-weight:700;color:#7c3aed;font-family:var(--fb)">Bought for a customer &middot; never enters the warehouse</div>'
+        + '<div style="margin-top:2px;font-size:11px;font-family:var(--fm);color:var(--gray-500);line-height:1.5">'
+        + 'You are buying and shipping this, port to customer. It is not in the projection above and not in the buy plan &mdash; '
+        + 'those cases never sit in the cooler.' + (tasa>0?(' Running at about <b>'+f(tasa)+' cases a week</b>.'):'') + '</div>'
+      + '</div>'
+      + '<table style="width:100%;border-collapse:collapse">'
+      + '<thead><tr><th style="'+th+'">PO</th><th style="'+th+'">For</th>'
+        + '<th style="'+th+';text-align:right">Cases</th><th style="'+th+'">Arrives</th><th style="'+th+'">Status</th></tr></thead><tbody>'
+      + filas.map(function(r){
+          var col=r.tarde?'#DC2626':(r.pend?'var(--gray-800)':'var(--gray-400)');
+          return '<tr style="border-top:1px solid var(--gray-100)">'
+            + '<td style="'+td+';color:'+col+'"><b>'+esc(r.po)+'</b></td>'
+            + '<td style="'+td+'">'+esc(r.clientes)+(r.propio>0?(' <span style="color:var(--gray-400)">(+'+f(r.propio)+' to the warehouse)</span>'):'')+'</td>'
+            + '<td style="'+td+';text-align:right;font-weight:700">'+f(r.cajas)+'</td>'
+            + '<td style="'+td+';color:var(--gray-500)">'+(r.eta?esc(r.eta):'&mdash;')+'</td>'
+            + '<td style="'+td+';color:'+col+'">'+esc(r.estado)+(r.tarde?' &middot; past its date':'')+'</td></tr>'; }).join('')
+      + '</tbody></table>'
+      + '<div style="padding:7px 12px;border-top:1px solid var(--gray-200);font-family:var(--fm);font-size:11px;color:var(--gray-600)">'
+        + (enCamino>0?('<b>'+f(enCamino)+' cases</b> on the way for customers'):'Nothing on the way for customers right now')
+        + (llegadas>0?(' &middot; '+f(llegadas)+' already delivered in the last 13 weeks'):'')
+      + '</div></div>';
+  }catch(e){ return ''; }
+}
+function _dsDesde(){ try{ var d=new Date(Date.now()-13*7*86400000);
+  return (typeof dmISOLocal==='function')?dmISOLocal(d):d.toISOString().slice(0,10); }catch(e){ return ''; } }
 function invmProjectionHTML(s){
   var p=s.p, N=13;
   var f=function(n){ return Math.round(n||0).toLocaleString('en-US'); };
@@ -16939,6 +17004,7 @@ function bpRenderProduct(p){
     + bar + (s.hasModel?invmWindowToggle(p,s.origin):'')
     + invmBuySuggestionHTML(s.p, s.origin, {whatif:false})
     + invmAnalysisHTML(s) + invmProjectionHTML(s)
+    + invmDirectShipOrdersHTML(s.p, s.origin)
     + '<div style="font-size:11px;color:var(--gray-400);font-family:var(--fm);margin:-4px 0 8px">Test hypothetical buys in the <b style="color:#7c3aed">Simulator</b> tab.</div>';
 }
 // Simulator product view (turmeric/garlic/shallots + ginger-Hawaii): projection + what-if, per product+origin.
@@ -19311,6 +19377,10 @@ function renderBuyPlanner() {
       return { wkISO:(typeof dmWeekKey==='function' && r.weekStartDate) ? dmWeekKey(r.weekStartDate) : null,
                weekStartDate:r.weekStartDate, arrivals:r.arrivalCases, demand:r.demand,
                committed:r.committed, startingStock:r.startingStock, endingStock:r.endingStock }; }); }catch(e){}
+    // Lo que se compra para un cliente y nunca entra a cámara: se descuenta de todo lo de arriba con
+    // razón, y por eso desaparecía de la pantalla. Va acá, al final y aparte del plan de compra.
+    try{ var _bds=document.getElementById('bp-ginger-directship');
+         if(_bds) _bds.innerHTML=invmDirectShipOrdersHTML('ginger','Peru'); }catch(e){}
     try{ var _bs=document.getElementById('bp-ginger-suggestion');
          if(_bs) setTimeout(function(){ try{ _bs.innerHTML=bpGingerSuggestionHTML(window._bpDigest); }catch(e){} }, 0); }catch(e){}
     try{ if(window._bpDigest) window._bpDigest.rec = {

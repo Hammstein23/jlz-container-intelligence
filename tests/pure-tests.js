@@ -37,7 +37,7 @@ var _PRISTINO_NOMBRES = [
   'PRODUCTS','invmProductModel','invmRunRateLbs','invmStockableWeekly','prodInvFor',
   'prodCommittedTotal','mtoCasesPerWeek','dsWindow','_ordOrigin','directShipTotal','invmOriginsFor',
   'invmRunway','bpProtectPlan','invmOrderCases',
-  'mtoByCustomer','cmPlanEntries','cmCasesInBuyPack','hybridSalesForWeek'
+  'mtoByCustomer','cmPlanEntries','cmCasesInBuyPack','hybridSalesForWeek','getDirectShip'
 ];
 var _PRISTINO = {};
 _PRISTINO_NOMBRES.forEach(function(n){ try { _PRISTINO[n] = eval(n); } catch (e) {} });
@@ -1762,6 +1762,58 @@ group('En camino · el origen filtra, pero no puede hacer desaparecer carga');
 // mide el stub. Se saco el grupo que habia escrito para no dejar cobertura falsa; la regla queda
 // blindada en tests/committed-contra-orden-guard.py (sobre el codigo) y se verifico en vivo sobre
 // los datos de Juan. Ver el guardian de stubs que tapan produccion, mas abajo en run.sh.
+
+group('Lo comprado para un cliente se VE, aunque no entre a camara');
+// Las ordenes contra-orden se descuentan de todo —no suman a las llegadas ni a la demanda de
+// almacen— y con razon. El efecto lateral era que desaparecian de la pantalla: se compra producto,
+// se paga y se despacha, y ninguna vista lo mostraba. Juan: "en la practica estamos comprando algo,
+// no esta entrando al inventario, pero se esta haciendo el despacho".
+(function(){
+  var hoy=new Date(), DIA=86400000;
+  var iso=function(n){ return dmISOLocal(new Date(hoy.getTime()+n*DIA)); };
+  _ordProd   = function(o){ return o.product; };
+  _ordOrigin = function(o){ return o.origin; };
+  mtoCasesPerWeek = function(){ return 233; };
+  dmWindow   = function(){ return 6; };
+  var DS={};
+  getDirectShip = function(po){ return DS[String(po)]||[]; };
+  getOrders = function(){ return [
+    { product:'turmeric', origin:'Fiji', status:'In Transit', cases:700, jlzPo:'P-SOLTI', arrivalEstimated:iso(6) },
+    { product:'turmeric', origin:'Fiji', status:'In Transit', cases:150, jlzPo:'P-STOCK', arrivalEstimated:iso(3) },
+    { product:'turmeric', origin:'Fiji', status:'Arrived',    cases:700, jlzPo:'P-VIEJA', arrivalEstimated:iso(-30) },
+    { product:'turmeric', origin:'Fiji', status:'Arrived',    cases:400, jlzPo:'P-ANTIGUA', arrivalEstimated:iso(-200) },
+    { product:'garlic',   origin:'California', status:'In Transit', cases:99, jlzPo:'P-OTRO', arrivalEstimated:iso(5) } ]; };
+  DS['P-SOLTI']   = [{ customer:'Sol-ti', cases:700 }];
+  DS['P-VIEJA']   = [{ customer:'Sol-ti', cases:700 }];
+  DS['P-ANTIGUA'] = [{ customer:'Sol-ti', cases:400 }];
+  DS['P-OTRO']    = [{ customer:'Whole Foods', cases:99 }];
+
+  var h = invmDirectShipOrdersHTML('turmeric','Fiji');
+  ok('arma el cuadro',                         h.length>0);
+  ok('dice que no entra a camara',             h.indexOf('never enters the warehouse')>-1);
+  ok('muestra la orden contra-orden',          h.indexOf('P-SOLTI')>-1);
+  ok('con su cliente',                         h.indexOf('Sol-ti')>-1);
+  ok('y su fecha de llegada',                  h.indexOf(iso(6))>-1);
+  ok('NO muestra la que si entra a camara',    h.indexOf('P-STOCK')<0);
+  ok('ni la de otro producto',                 h.indexOf('P-OTRO')<0);
+  ok('muestra las recientes ya entregadas',    h.indexOf('P-VIEJA')>-1);
+  ok('pero no el historial viejo',             h.indexOf('P-ANTIGUA')<0);
+  ok('suma lo que viene en camino',            h.indexOf('<b>700 cases</b> on the way for customers')>-1);
+  ok('y lo ya entregado hace poco, aparte',    h.indexOf('700 already delivered in the last 13 weeks')>-1);
+  ok('y aclara que no esta en el plan de compra', h.indexOf('not in the buy plan')>-1);
+  ok('con la tasa semanal, para atarlo al panel', h.indexOf('233 cases a week')>-1);
+
+  // Una orden PARTIDA: parte al cliente, parte a camara. Se dice cuanto va a cada lado.
+  DS['P-STOCK'] = [{ customer:'Erewhon', cases:50 }];
+  var hp = invmDirectShipOrdersHTML('turmeric','Fiji');
+  ok('la orden partida aparece',          hp.indexOf('P-STOCK')>-1);
+  ok('y dice cuanto va a la camara',      hp.indexOf('(+100 to the warehouse)')>-1);
+  delete DS['P-STOCK'];
+
+  // Sin ordenes contra-orden no se dibuja nada: un cuadro vacio es ruido.
+  DS={};
+  check('sin contra-orden, no hay cuadro', invmDirectShipOrdersHTML('turmeric','Fiji'), '');
+})();
 
 group('El contra-orden que se MUESTRA sale de la ventana con la que se NETEO');
 // Juan, sobre turmeric-Fiji: "esta llegando un embarque exclusivo para Sol-ti y no esta siendo

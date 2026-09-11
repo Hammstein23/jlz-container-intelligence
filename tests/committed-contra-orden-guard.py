@@ -43,6 +43,24 @@ if a and 'directShipTotal' in a.group(1):
 else:
     bad('invmProductArrivals dejo de netear direct-ship: la otra mitad del mismo error')
 
+# ── Y tiene que VERSE en algun lado ─────────────────────────────────────────────────────────────
+# Se descuenta de todo con razon, y el efecto lateral era que desaparecia de la pantalla: se compra
+# producto, se paga y se despacha, y ninguna vista lo mostraba.
+if 'function invmDirectShipOrdersHTML(p, origin)' in src:
+    ok('existe el cuadro de lo comprado para un cliente')
+else:
+    bad('no existe invmDirectShipOrdersHTML: el contra-orden vuelve a ser invisible')
+
+if re.search(r'invmDirectShipOrdersHTML\(s\.p, s\.origin\)', src):
+    ok('los cuatro productos lo muestran bajo el Buy Planner')
+else:
+    bad('bpRenderProduct no muestra el cuadro: la compra contra-orden no se ve')
+
+if re.search(r"_bds\.innerHTML=invmDirectShipOrdersHTML\('ginger','Peru'\)", src):
+    ok('y ginger-Peru tambien')
+else:
+    bad('el Buy Planner de ginger no muestra el cuadro')
+
 print()
 if fails:
     print('  %d problema(s): el contra-orden vuelve a contarse contra el inventario' % len(fails)); sys.exit(1)
