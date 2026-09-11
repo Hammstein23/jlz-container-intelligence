@@ -15083,12 +15083,16 @@ function invmLots(m,t){
       '<td><button class="invm-rm" title="Remove lot" onclick="invmRemoveLot(\''+l.id+'\')">&times;</button></td>'+
     '</tr>';
   };
+  var _minAge=(typeof invmLotFilter==='function')?invmLotFilter('ginger-peru'):0;
   var _tabla=function(lots, titulo, nota){
-    var ord=(typeof invmSortLots==='function')?invmSortLots(lots,_sg):lots;
+    var _vis=(typeof invmFilterLots==='function')?invmFilterLots(lots,_minAge):lots;
+    var _esc=lots.length-_vis.length;
+    var ord=(typeof invmSortLots==='function')?invmSortLots(_vis,_sg):_vis;
     var cs=ord.reduce(function(t,l){ return t+(+l.cases||0); },0);
     var at=ord.reduce(function(t,l){ return t+(+l.atCs||0); },0);
     var edad=cs>0?Math.round(ord.reduce(function(t,l){ return t+((+l.stored||0)*(+l.cases||0)); },0)/cs):0;
-    return '<div class="invm-lead" style="margin-top:14px"><b>'+titulo+'</b> &middot; <span style="font-weight:400;color:var(--gray-500)">'+nota+'</span></div>'
+    return '<div class="invm-lead" style="margin-top:14px"><b>'+titulo+'</b> &middot; <span style="font-weight:400;color:var(--gray-500)">'+nota
+      + (_esc?(' &middot; '+_esc+' lot(s) hidden by the '+_minAge+'+ day filter'):'')+'</span></div>'
       + '<div class="invm-card"><div class="invm-tw"><table class="invm-table"><thead><tr>'
       + '<th class="l">PO</th><th class="l">Supplier</th><th class="l">Mode</th>'
       + _thO('received','Received') + _thO('stored','Stored') + '<th>Expires</th>' + _thO('cases','Cases')
@@ -15100,6 +15104,7 @@ function invmLots(m,t){
   };
   var _rep=m.lots.filter(function(l){ return !!l.repack; });
   var _prov=m.lots.filter(function(l){ return !l.repack; });
+  h+=(typeof invmLotControlsHTML==='function') ? invmLotControlsHTML('ginger-peru',{value:true}) : '';
   h+=_tabla(_prov,'Supplier lots','what the grower shipped you');
   if(_rep.length) h+=_tabla(_rep,'Repacked — River Road','already repacked by JLZ Produce Manufacturing · same cases, new presentation');
   h+='<div class="invm-lead" style="margin-top:10px;color:var(--gray-500);font-weight:400">Both tables are physically in the cooler and both count toward the <b>'+invmF(t.cases)+' cs</b> on hand.</div>';
@@ -16337,6 +16342,56 @@ function invmSetLotSort(p, key){
        localStorage.setItem(INVM_LOTSORT_LS, JSON.stringify(o)); }catch(e){}
   if(typeof invmReRender==='function') invmReRender(); else if(typeof renderInventory==='function') renderInventory();
 }
+// ── Filtro por antigüedad ───────────────────────────────────────────────────────────────────────
+// Ordenar contesta "qué mirar primero"; filtrar contesta "qué NO quiero ver ahora". Con 15 filas de
+// ginger-Perú, poder dejar a la vista solo lo que pasa de 30 días es la diferencia entre revisar el
+// inventario y escanearlo. Lo que se esconde SIEMPRE se dice abajo: nada desaparece en silencio.
+function invmLotFilter(p){
+  try{ var o=JSON.parse(localStorage.getItem(INVM_LOTSORT_LS)||'{}');
+       var v=o&&o[p]&&o[p].minAge; return (v===30||v===45)?v:0; }catch(e){}
+  return 0;
+}
+function invmSetLotFilter(p, v){
+  v=(+v===30||+v===45)?+v:0;
+  try{ var o=JSON.parse(localStorage.getItem(INVM_LOTSORT_LS)||'{}'); o[p]=o[p]||{}; o[p].minAge=v;
+       localStorage.setItem(INVM_LOTSORT_LS, JSON.stringify(o)); }catch(e){}
+  if(typeof invmReRender==='function') invmReRender(); else if(typeof renderInventory==='function') renderInventory();
+}
+// Un lote sin fecha no tiene edad conocida: NO se esconde por antigüedad. Esconderlo sería decidir
+// por él, y justamente es el que hay que completar.
+function invmLotAgeDays(l){
+  if(l && l.stored!=null && isFinite(+l.stored)) return +l.stored;
+  try{ return (l&&l.received && typeof bpDaysSince==='function')?bpDaysSince(l.received):null; }catch(e){}
+  return null;
+}
+function invmFilterLots(lots, minAge){
+  if(!minAge) return (lots||[]).slice();
+  return (lots||[]).filter(function(l){ var d=invmLotAgeDays(l); return d==null || d>=minAge; });
+}
+// ── La barra de controles ───────────────────────────────────────────────────────────────────────
+// Las columnas ya ordenaban al clickearlas, pero nada en pantalla lo decía — y un control que no se
+// ve no existe. Acá está escrito, con la flecha del sentido activo.
+function invmLotControlsHTML(key, opts){
+  opts=opts||{};
+  var so=(typeof invmLotSort==='function')?invmLotSort(key):{key:'fefo',dir:1};
+  var fi=(typeof invmLotFilter==='function')?invmLotFilter(key):0;
+  var btn=function(on,label,onclick,extra){
+    return '<button onclick="'+onclick+'" style="font-family:var(--fm);font-size:10.5px;font-weight:'+(on?'700':'500')
+      + ';padding:3px 9px;border-radius:999px;cursor:pointer;border:1px solid '+(on?'var(--jlz)':'var(--gray-200)')
+      + ';background:'+(on?'var(--jlz)':'var(--white)')+';color:'+(on?'#fff':'var(--gray-600)')+'">'+label+(extra||'')+'</button>';
+  };
+  var flecha=function(k){ return (so.key===k)?(so.dir===1?' &#9650;':' &#9660;'):''; };
+  var sb=function(k,label){ return btn(so.key===k,label,"invmSetLotSort('"+key+"','"+k+"')",flecha(k)); };
+  var fb=function(v,label){ return btn(fi===v,label,"invmSetLotFilter('"+key+"',"+v+")"); };
+  return '<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:10px 0 4px;font-family:var(--fm);font-size:10.5px;color:var(--gray-500)">'
+    + '<div style="display:flex;gap:5px;align-items:center"><span style="text-transform:uppercase;letter-spacing:.05em;font-size:9px;font-weight:700;color:var(--gray-400);font-family:var(--fb)">Sort</span>'
+      + sb('fefo','Oldest first') + sb('received','Received') + sb('stored','Days stored') + sb('cases','Cases')
+      + (opts.value?sb('value','Value'):'') + '</div>'
+    + '<div style="display:flex;gap:5px;align-items:center"><span style="text-transform:uppercase;letter-spacing:.05em;font-size:9px;font-weight:700;color:var(--gray-400);font-family:var(--fb)">Show</span>'
+      + fb(0,'All') + fb(30,'30+ days') + fb(45,'45+ days') + '</div>'
+    + '<span style="color:var(--gray-400)">Click a column header to sort by it too.</span>'
+    + '</div>';
+}
 function invmSortLots(lots, sort){
   lots=Array.isArray(lots)?lots.slice():[];
   var k=(sort&&sort.key)||'fefo', d=(sort&&sort.dir===-1)?-1:1;
@@ -16348,6 +16403,8 @@ function invmSortLots(lots, sort){
     return null; };
   var val=function(l){
     if(k==='cases')    return parseFloat(l&&l.cases)||0;
+    // Dónde está la plata: el lote más caro no es el más grande ni el más viejo.
+    if(k==='value')    return (parseFloat(l&&l.cases)||0) * (parseFloat(l&&(l.avgCost!=null?l.avgCost:l.landed))||0);
     if(k==='stored')   return dias(l);
     // Sin fecha explícita, "recibido" es el inverso de los días en cámara: más días = más viejo.
     if(k==='received'){ if(l&&l.received) return String(l.received);
@@ -16991,9 +17048,14 @@ function invmRenderProduct(p){
 
   var esRepack=function(l){ return (typeof invmIsRepackLot==='function') ? invmIsRepackLot(l) : false; };
   var repacks=s.lots.filter(esRepack), prov=s.lots.filter(function(l){ return !esRepack(l); });
+  var minAge=(typeof invmLotFilter==='function')?invmLotFilter(p):0;
+  html += (typeof invmLotControlsHTML==='function') ? invmLotControlsHTML(p,{value:true}) : '';
 
   var tabla=function(lots, titulo, nota, conAgregar){
-    var orden=(typeof invmSortLots==='function')?invmSortLots(lots,sort):lots;
+    var todos=lots;
+    var vistos=(typeof invmFilterLots==='function')?invmFilterLots(lots,minAge):lots;
+    var escondidos=todos.length-vistos.length;
+    var orden=(typeof invmSortLots==='function')?invmSortLots(vistos,sort):vistos;
     var oldest=0,sumAge=0,sumC=0,undated=0,cs=0;
     orden.forEach(function(l){ if(l&&l.excluded) return; var d=storedOf(l), c=parseFloat(l.cases)||0;
       cs+=c; if(d==null){ undated++; } else { if(d>oldest) oldest=d; sumAge+=d*c; } });
@@ -17008,7 +17070,8 @@ function invmRenderProduct(p){
       + '<div style="padding:9px 14px;font-size:11px;color:var(--gray-600);font-family:var(--fm);border-bottom:1px solid var(--gray-100);background:var(--gray-50)">'
         + (sort.key==='fefo' ? 'Oldest first (soonest to move)' : ('Sorted by '+({received:'received date',stored:'days stored',cases:'cases'}[sort.key]||sort.key)+', '+(sort.dir===1?'oldest / smallest first':'newest / largest first')))
         + ' · <b>'+f(cs)+'</b> cs · avg age <b>'+(avgAge==null?'—':avgAge+'d')+'</b> · oldest <b>'+(oldest?oldest+'d':'—')+'</b>'
-        + (undated?(' · <span style="color:var(--amber-700)">'+undated+' lot(s) missing received date</span>'):'')+'</div>';
+        + (undated?(' · <span style="color:var(--amber-700)">'+undated+' lot(s) missing received date</span>'):'')
+        + (escondidos?(' · <span style="color:var(--gray-400)">'+escondidos+' lot(s) hidden by the '+minAge+'+ day filter</span>'):'')+'</div>';
     // Un solo punto de salida: con dos `return` que cierran la tarjeta, el chequeo estático de divs
     // cuenta dos cierres para una apertura y da falso negativo. Ese chequeo vale, así que se respeta.
     var cuerpo='';
