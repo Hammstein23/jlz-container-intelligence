@@ -62,6 +62,46 @@ elif re.search(r'o\.buy\s*=\s*Math\.max\(0,\s*Math\.ceil\(upTo-\(ancla\.stockAtL
 else:
     bad('la cantidad ya no sale de objetivo menos lo proyectado a la llegada')
 
+# ── Cada tarjeta contesta con SUS datos ─────────────────────────────────────────────────────────
+# Antes habia una sola: la del Buy Planner, renderizada DENTRO del Simulator. Asi que el Simulator
+# mostraba una recomendacion que ignoraba los escenarios que Juan acababa de cargar en el Simulator.
+print()
+if re.search(r"function bpGingerSuggestionHTML\(src\)\{", src):
+    ok('la tarjeta de ginger recibe el digest que tiene que leer')
+else:
+    bad('bpGingerSuggestionHTML no toma el digest por parametro: vuelve a haber una sola fuente')
+
+if re.search(r"_bs\.innerHTML=bpGingerSuggestionHTML\(window\._bpDigest\)", src):
+    ok('el Buy Planner pinta la suya con el digest real')
+else:
+    bad('el Buy Planner no pinta su tarjeta con su propio digest')
+
+if re.search(r"_sgs\.innerHTML=bpGingerSuggestionHTML\(window\._simDigest", src):
+    ok('el Simulator pinta la suya con el digest de escenarios')
+else:
+    bad('el Simulator no pinta su tarjeta con su propio digest')
+
+if re.search(r"window\._simDigest = \{ scenario:true", src):
+    ok('el Simulator publica su digest, marcado como escenario')
+else:
+    bad('el Simulator no publica un digest propio')
+
+if re.search(r"invmBuySuggestionHTML\(s\.p, s\.origin, \{whatif:false\}\)", src):
+    ok('los otros cuatro tienen tarjeta en el Buy Planner, sin escenarios')
+else:
+    bad('los otros cuatro no tienen tarjeta en el Buy Planner')
+
+if re.search(r"invmBuySuggestionHTML\(s\.p, s\.origin, \{whatif:true\}\)", src):
+    ok('y en el Simulator, con escenarios')
+else:
+    bad('los otros cuatro no tienen tarjeta con escenarios en el Simulator')
+
+# La cuenta de contenedores tiene que ser UNA, o los dos digest divergen en silencio.
+if len(re.findall(r"bpContainerPlan\(\{", src)) >= 2 and 'function bpContainerPlan(o){' in src:
+    ok('los dos digest deciden contenedores con la misma funcion')
+else:
+    bad('la cuenta de contenedores no esta compartida entre Buy Planner y Simulator')
+
 print()
 if fails:
     print('  %d problema(s): vuelve a haber mas de un numero de compra' % len(fails)); sys.exit(1)

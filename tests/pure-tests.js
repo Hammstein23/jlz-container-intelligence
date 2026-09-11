@@ -1756,6 +1756,42 @@ group('En camino · el origen filtra, pero no puede hacer desaparecer carga');
   check('sin filtro de origen entra todo', sum(invmProductArrivals('ginger','all')), 1360);
 })();
 
+group('bpContainerPlan · cuantos contenedores, y por que ese numero');
+// Vivia dentro de renderBuyPlanner. El Simulator tiene que contestar lo MISMO sobre SUS datos —con
+// los escenarios cargados— y dos copias de esta cuenta terminarian dando dos numeros.
+(function(){
+  // Los numeros reales de ginger-Peru del 2026-09-10.
+  var o={ weeklyDemand:826, leadWks:37/7, cadence:1, ssCases:913, perContainer:1320,
+          shelfWks:8, projAtArrival:3697, peakStock:4920 };
+  var p=bpContainerPlan(o);
+  check('order-up-to = (lead + cadencia) x demanda + colchon', Math.round(p.orderUpTo), 6105);
+  check('falta lo que no vas a tener cuando entre',            Math.round(p.netNeeded), 2408);
+  check('en contenedores, sin redondear',                      +p.raw.toFixed(3), 1.824);
+  check('la fraccion pasa de un cuarto, asi que sube a 2',     p.wanted, 2);
+  check('pero en el pico solo cabe 1 bajo la vida util',       p.cap, 1);
+  check('manda el techo',                                      p.containers, 1);
+  check('y se dice que fue el techo',                          p.cappedBy, 'shelf');
+  check('lo que se ordena es BRUTO',                           p.netCases, 1320);
+  check('y la cobertura con eso puesto',                       p.coverWks, 6.1);
+
+  // ── La fraccion chica redondea HACIA ABAJO, y se dice ────────────────────────────────────────
+  // 2.549 cs entre 1.214 da 2,099 y `ceil` lo llevaba a 3: un contenedor entero, 1.214 cajas, para
+  // cubrir un faltante de 120. Repetido en cada orden, eso solo explica parte del sobrestock.
+  var r=bpContainerPlan({ weeklyDemand:826, leadWks:37/7, cadence:1, ssCases:0, perContainer:1214,
+                          shelfWks:99, projAtArrival:5192-2549, peakStock:0 });
+  check('2,099 contenedores no son 3', r.wanted, 2);
+  check('y se dice que fue el redondeo', r.cappedBy, 'round');
+
+  // Nunca baja de 1: saltear el embarque lo dice el bloque de vida util, no un cero mudo.
+  var tope=bpContainerPlan({ weeklyDemand:826, leadWks:37/7, cadence:1, ssCases:913,
+                             perContainer:1320, shelfWks:8, projAtArrival:3697, peakStock:99999 });
+  check('el techo da cero', tope.cap, 0);
+  check('pero la recomendacion nunca es cero', tope.containers, 1);
+
+  // La merma se descuenta UNA vez: el contenedor aporta sus cajas fisicas, no las vendibles.
+  ok('un contenedor aporta sus cajas brutas', bpContainerPlan(o).perContainer === 1320);
+})();
+
 group('bpProtectPlan · la ultima fecha en que ordenar TODAVIA protege');
 // El caso real del 2026-09-10, con las cinco ordenes de ginger-Peru ya en el agua. Anclar el plazo
 // al quiebre hacia aterrizar el contenedor la semana en que el stock es cero: se tocaban 437 cajas

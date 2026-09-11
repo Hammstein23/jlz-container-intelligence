@@ -4501,6 +4501,8 @@ function authInjectLogo() {
   <div id="bp-product-view" style="display:none"></div>
   <div id="bp-ginger-body">
 
+  <div id="bp-ginger-suggestion"></div>
+
   <div class="bp-zone"><span class="bp-zone-tag">Now</span><span class="bp-zone-desc">your position at a glance</span><span class="bp-zone-line"></span></div>
 
   <div id="bp-snapshot-banner" class="bp-status">
@@ -16272,6 +16274,40 @@ function _invmKnownOrigin(p, o){
 //
 // El piso baja de forma monótona al atrasar la orden (la ventana crece y la llegada se corre), así
 // que un solo barrido lineal alcanza para las tres.
+// ── Cuántos contenedores, y por qué ese número ──────────────────────────────────────────────────
+// Vive acá y no dentro de renderBuyPlanner porque el Simulator tiene que contestar lo MISMO sobre
+// sus propios datos —con los escenarios cargados— y dos copias de esta cuenta terminarían dando dos
+// números distintos, que es exactamente el defecto que esta auditoría vino cerrando.
+//
+//   weeklyDemand   cajas que SALEN de cámara por semana (ya inflada por merma)
+//   leadWks+cadence  el order-up-to: cuánto hay que tener cubierto cuando el pedido entra
+//   ssCases        el colchón
+//   projAtArrival  lo proyectado para el día en que el pedido entra
+//   peakStock      el pico de la proyección — contra él se mide la vida útil, no contra hoy
+//   perContainer   cajas BRUTAS por contenedor; las vendibles descontarían la merma dos veces
+function bpContainerPlan(o){
+  o = o || {};
+  var dem = +o.weeklyDemand || 0, per = Math.max(1, +o.perContainer || 1);
+  var orderUpTo = dem * ((+o.leadWks||0) + (+o.cadence||0)) + (+o.ssCases||0);
+  var proj = +o.projAtArrival || 0;
+  var netNeeded = Math.max(0, orderUpTo - proj);
+  var shelf = (o.shelfWks != null) ? +o.shelfWks : 8;
+  var peak  = (o.peakStock != null) ? +o.peakStock : proj;
+  // El techo de vida útil manda sobre el order-up-to: lo que se compra de más no se vende, se liquida.
+  var cap = Math.max(0, Math.floor((shelf*dem - peak) / per));
+  // Y el redondeo no va siempre para arriba: una fracción menor a un cuarto de contenedor baja, y se dice.
+  var raw = netNeeded / per, frac = raw - Math.floor(raw);
+  var want = Math.max(1, (raw >= 1 && frac <= 0.25) ? Math.floor(raw) : Math.ceil(raw));
+  // Nunca baja de 1: si el techo ya está tocado, la respuesta real es saltear un embarque y eso lo
+  // dice el bloque de vida útil. Recomendar 0 acá dejaría la pantalla sin decir qué hacer.
+  var containers = Math.max(1, Math.min(want, cap));
+  var netCases = Math.round(containers * per);
+  return { orderUpTo:orderUpTo, projAtArrival:proj, netNeeded:netNeeded, shelfWks:shelf,
+           peakStock:peak, cap:cap, raw:raw, wanted:want, containers:containers,
+           cappedBy:(containers < want) ? 'shelf' : ((want < Math.ceil(raw)) ? 'round' : null),
+           netCases:netCases, coverWks:(dem > 0) ? +(((proj + netCases)/dem).toFixed(1)) : null,
+           leadWks:+o.leadWks||0, cadence:+o.cadence||0, ssCases:+o.ssCases||0, perContainer:per };
+}
 function bpProtectPlan(rows, opts){
   rows = Array.isArray(rows) ? rows : []; opts = opts || {};
   var n = rows.length; if(!n) return null;
@@ -16807,7 +16843,9 @@ function bpRenderProduct(p){
     bar='<div style="display:flex;gap:6px;align-items:center;margin-bottom:12px;flex-wrap:wrap"><span style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-right:4px">Origin</span>'+origins.map(function(o){ return pill(o); }).join('')+'</div>';
   }
   return '<div style="margin-bottom:8px;font-size:11px;color:var(--gray-400);font-family:var(--fm)">Buy Planner · '+esc(s.label)+(BP_ORIGIN?(' · '+esc(BP_ORIGIN)):'')+' — when &amp; how much to order</div>'
-    + bar + (s.hasModel?invmWindowToggle(p,s.origin):'') + invmAnalysisHTML(s) + invmProjectionHTML(s)
+    + bar + (s.hasModel?invmWindowToggle(p,s.origin):'')
+    + invmBuySuggestionHTML(s.p, s.origin, {whatif:false})
+    + invmAnalysisHTML(s) + invmProjectionHTML(s)
     + '<div style="font-size:11px;color:var(--gray-400);font-family:var(--fm);margin:-4px 0 8px">Test hypothetical buys in the <b style="color:#7c3aed">Simulator</b> tab.</div>';
 }
 // Simulator product view (turmeric/garlic/shallots + ginger-Hawaii): projection + what-if, per product+origin.
@@ -17409,7 +17447,8 @@ function invmBuySuggestionHTML(p, origin, opts){
       +(off?'var(--jlz)':'var(--gray-500)')+'">'+txt+(off?(' You are on '+g.win+'wk.'):'')+'</div>';
   }
   return '<div style="margin:0 0 14px;padding:11px 13px;border-radius:var(--r);border:1px solid '+tone.bd+';background:'+tone.bg+'">'
-       + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;color:'+tone.fg+';font-family:var(--fb);margin-bottom:4px">Buy suggestion'
+       + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;color:'+((g.whatif&&(g.hypoIn>0||g.hypoOut>0))?'#7c3aed':tone.fg)+';font-family:var(--fb);margin-bottom:4px">Buy suggestion'
+       + (!g.whatif ? ' <span style="font-weight:400;color:var(--gray-400);text-transform:none;letter-spacing:0">&middot; from the Buy Planner &mdash; real data only</span>' : '')
        + ((g.whatif && (g.hypoIn>0 || g.hypoOut>0))
            ? ' <span style="font-weight:400;color:var(--gray-400);text-transform:none;letter-spacing:0">&middot; with your simulator scenarios ('
              + [ (g.hypoIn>0? ('+'+f(g.hypoIn)+' arriving') : null), (g.hypoOut>0? ('&minus;'+f(g.hypoOut)+' sold') : null) ]
@@ -17426,9 +17465,13 @@ function invmBuySuggestionHTML(p, origin, opts){
 // compra con aritmética propia — merma por tiempo, cadencia, order-up-to — que da distinto de la
 // genérica. Re-derivarla acá pondría dos respuestas para la misma pregunta a dos clics de distancia.
 // Así que esto MUESTRA lo que el Buy Planner ya decidió, con la cuenta a la vista.
-function bpGingerSuggestionHTML(){
-  var d=(typeof window!=='undefined')?window._bpDigest:null;
+// `src` decide con QUÉ datos contesta: el digest del Buy Planner (lo real) o el del Simulator (lo
+// real más los escenarios que Juan cargó). La tarjeta es la misma; cambia de dónde saca los números,
+// y lo dice en el encabezado para que nunca haya que adivinar cuál estás mirando.
+function bpGingerSuggestionHTML(src){
+  var d=(src!=null)?src:((typeof window!=='undefined')?window._bpDigest:null);
   if(!d || !d.rec) return '';
+  var _conEsc=!!d.scenario;
   var esc=(typeof libEsc==='function')?libEsc:function(x){ return String(x==null?'':x); };
   var f=function(x){ return Math.round(x||0).toLocaleString('en-US'); };
   var n2=function(x){ return (Math.round((x||0)*100)/100).toLocaleString('en-US'); };
@@ -17516,7 +17559,8 @@ function bpGingerSuggestionHTML(){
           :('Recent sales fit the <b>'+F.best+'-week</b> rate best &mdash; '+Math.round(F.pct)+'% miss against '+Math.round(F.runnerUpPct)+'% for '+F.runnerUp+'wk.')))
       + '</div>'; }catch(e){}
   return '<div style="margin:0 0 14px;padding:11px 13px;border-radius:var(--r);border:1px solid '+tone.bd+';background:'+tone.bg+'">'
-    + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;color:'+tone.fg+';font-family:var(--fb);margin-bottom:4px">Buy suggestion &middot; from the Buy Planner</div>'
+    + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;color:'+(_conEsc?'#7c3aed':tone.fg)+';font-family:var(--fb);margin-bottom:4px">Buy suggestion &middot; '
+      + (_conEsc ? 'with your simulated orders' : 'from the Buy Planner &mdash; real data only') + '</div>'
     + '<div style="font-size:14px;line-height:1.5;color:var(--gray-800);font-family:var(--fb)">'+head+'</div>'
     + '<div style="margin-top:3px;font-size:11.5px;color:var(--gray-500);font-family:var(--fm);line-height:1.5">'+why+'</div>'
     + buffer + math + fit + '</div>';
@@ -19041,10 +19085,7 @@ function renderBuyPlanner() {
     // Order-up-to level = demand over (lead time + one cadence cycle) + safety
     // stock, minus what's projected to be on hand when a sea order lands today.
     const ltWeeksRec = (typeof bpGetLeadTimes === 'function') ? ((bpGetLeadTimes().sea_total||37)/7) : 5.3;
-    const orderUpToCases = weeklyDemand * (ltWeeksRec + cadence) + ssCases;
     const _arrRow = rows.find(r => seaEtaWk != null && r.weekNum === seaEtaWk);
-    const projAtArrival = _arrRow ? _arrRow.startingStock : (rows.length ? rows[rows.length-1].endingStock : stockCases);
-    const netNeeded = Math.max(0, orderUpToCases - projAtArrival);
     // ── El techo de vida útil manda sobre el order-up-to ──────────────────────────────────────
     // La app calculaba el techo ("safe to add at peak") y la recomendación lo ignoraba, así que se
     // contradecía a sí misma dos líneas más abajo: "comprá 3 contenedores" arriba y "solo cabe 1"
@@ -19057,24 +19098,26 @@ function renderBuyPlanner() {
     // de contenedor redondea hacia abajo y se dice; el resto sigue redondeando hacia arriba.
     const _shelfW  = (typeof dmShelfWeeks==='function') ? dmShelfWeeks('ginger') : 8;
     const _pkRow   = rows.reduce((m,r)=> (r.weeksOfCoverage>(m?m.weeksOfCoverage:-1)?r:m), null);
-    const _pkStock = (_pkRow && _pkRow.endingStock!=null) ? _pkRow.endingStock : stockCases;
-    const _capCont = Math.max(0, Math.floor((_shelfW*weeklyDemand - _pkStock)/Math.max(1,grossCasesPerContainer)));
+    const _cp = bpContainerPlan({
+      weeklyDemand, leadWks:ltWeeksRec, cadence, ssCases, perContainer:grossCasesPerContainer,
+      shelfWks:_shelfW,
+      projAtArrival:(_arrRow ? _arrRow.startingStock : (rows.length ? rows[rows.length-1].endingStock : stockCases)),
+      peakStock:((_pkRow && _pkRow.endingStock!=null) ? _pkRow.endingStock : stockCases) });
+    const orderUpToCases = _cp.orderUpTo, projAtArrival = _cp.projAtArrival, netNeeded = _cp.netNeeded;
+    const _pkStock = _cp.peakStock;
+    const _capCont = _cp.cap;
     // ── La merma se descuenta UNA vez, no dos ─────────────────────────────────────────────────
     // Toda la proyección corre en cajas FÍSICAS: `arrivalCases` suma el bruto de la orden (1.320) y
     // `weeklyDemand` es la salida de cámara ya inflada por merma. Así que `netNeeded` es físico, y
     // dividirlo por las cajas VENDIBLES del contenedor (1.320 menos merma) descontaba la merma otra
     // vez — un contenedor aporta 1.320 cajas al stock, no 1.214. Inflaba la cuenta ~9%.
-    const _recRaw  = netNeeded / Math.max(1, grossCasesPerContainer);
-    const _frac    = _recRaw - Math.floor(_recRaw);
-    const _recWant = Math.max(1, (_recRaw>=1 && _frac<=0.25) ? Math.floor(_recRaw) : Math.ceil(_recRaw));
+    const _recRaw  = _cp.raw, _recWant = _cp.wanted;
     // Nunca baja de 1: si el techo ya está tocado la respuesta real es saltear un embarque, y eso lo
     // dice el bloque de shelf-life. Recomendar 0 acá dejaría la pantalla sin decir qué hacer.
-    const recContainers = Math.max(1, Math.min(_recWant, _capCont));
-    const _cappedBy = (recContainers < _recWant) ? 'shelf'
-                    : ((_recWant < Math.ceil(_recRaw)) ? 'round' : null);
+    const recContainers = _cp.containers, _cappedBy = _cp.cappedBy;
     // Lo que se ORDENA es bruto: es lo que entra a cámara y lo que consume la proyección.
-    const recNetCases = Math.round(recContainers * grossCasesPerContainer);
-    const recCoverWks = weeklyDemand > 0 ? ((projAtArrival + recNetCases) / weeklyDemand).toFixed(1) : '—';
+    const recNetCases = _cp.netCases;
+    const recCoverWks = (_cp.coverWks != null) ? _cp.coverWks : '—';
     // Effective shrink on the order (FIFO: avg case sits to ~mid of run-out).
     const _avgDaysOrder = weeklyDemand > 0 ? Math.round(((projAtArrival + recNetCases/2) / weeklyDemand) * 7) : daysOnHandNow;
     const effShrinkOrder = bpEffectiveShrink(dailyShrinkRate, _avgDaysOrder);
@@ -19094,6 +19137,11 @@ function renderBuyPlanner() {
             leadDays: lt.sea_total, addCases: grossCasesPerContainer*Math.max(1,recContainers) });
       }
     }catch(e){}
+    // La tarjeta del Buy Planner sale de ESTOS datos: sin escenarios. La del Simulator sale de los
+    // suyos, con los hipotéticos cargados. Es la misma tarjeta contestando sobre dos mundos, y cada
+    // una lo dice en su encabezado. El setTimeout deja que `rec` termine de escribirse abajo.
+    try{ var _bs=document.getElementById('bp-ginger-suggestion');
+         if(_bs) setTimeout(function(){ try{ _bs.innerHTML=bpGingerSuggestionHTML(window._bpDigest); }catch(e){} }, 0); }catch(e){}
     try{ if(window._bpDigest) window._bpDigest.rec = {
       containers:recContainers, netCases:recNetCases, netNeeded:netNeeded,
       orderUpTo:orderUpToCases, projAtArrival:projAtArrival, coverWks:recCoverWks,
@@ -22979,6 +23027,7 @@ function simRenderProjection(realOrders, hypoOrders) {
     : (salesDemand / (1 - shrinkPct));
   const safetyThreshold = weeklyDemand * safety;
 
+  const _simProjRows = [];
   // Combine real + hypo into "arrivals by week" map
   const arrivalsByWeek = {};  // wkKey → [{label, cases, isReal, isDowngraded}]
   const addArrival = (wkKey, item) => {
@@ -23073,6 +23122,11 @@ function simRenderProjection(realOrders, hypoOrders) {
     const _hypoSalesWk = _sw.hypo, wkDemand = _sw.demand;
     const startStock = running;
     running = running + arrivalCases - wkDemand;
+    // Las mismas filas que se dibujan, guardadas para que la tarjeta de compra del Simulator conteste
+    // sobre lo que el Simulator MUESTRA —escenarios incluidos— y no sobre la proyección del Buy Planner.
+    _simProjRows.push({ wkISO:(typeof dmWeekKey==='function' && fw.weekStartDate) ? dmWeekKey(fw.weekStartDate) : null,
+                        weekStartDate:fw.weekStartDate, arrivals:arrivalCases, demand:wkDemand,
+                        startingStock:startStock, endingStock:running });
     // Contra las demandas que TODAVÍA vienen, no contra la de esta misma semana.
     const cover = bpWeeksOfCover(running, _simFutureDemands(_simIdx));
     _simIdx++;
@@ -23116,6 +23170,40 @@ function simRenderProjection(realOrders, hypoOrders) {
   });
   html += '</tbody>';
   el.innerHTML = html;
+  // ── El digest del Simulator: la misma forma que el del Buy Planner, sobre ESTA proyección ──────
+  // Los parámetros del pedido (lead, cadencia, colchón, cajas por contenedor, vida útil) son los
+  // mismos: lo que cambia es el mundo sobre el que se decide. Sin esto la tarjeta del Simulator
+  // mostraba la recomendación del Buy Planner — ignorando los escenarios recién cargados.
+  try{
+    var _bd=window._bpDigest||{}, _br=_bd.rec||{};
+    if(_simProjRows.length && weeklyDemand>0 && _br.perContainer){
+      var _ssC=(_br.ssCases!=null)?_br.ssCases:safetyThreshold;
+      var _pk=_simProjRows.reduce(function(m,r){ return (!m || r.endingStock>m.endingStock)?r:m; }, null);
+      var _lead=(typeof bpGetLeadTimes==='function')?(bpGetLeadTimes().sea_total||37):37;
+      var _etaMs=Date.now()+_lead*86400000, _arr=null;
+      for(var _i=0;_i<_simProjRows.length;_i++){
+        if(_simProjRows[_i].weekStartDate && _simProjRows[_i].weekStartDate.getTime()>=_etaMs){ _arr=_simProjRows[_i]; break; }
+      }
+      var _cpS=bpContainerPlan({ weeklyDemand:weeklyDemand, leadWks:_br.leadWks, cadence:_br.cadence,
+        ssCases:_ssC, perContainer:_br.perContainer, shelfWks:_br.shelfWks,
+        projAtArrival:_arr?_arr.startingStock:_simProjRows[_simProjRows.length-1].endingStock,
+        peakStock:_pk?_pk.endingStock:stockCasesGross });
+      var _plS=bpProtectPlan(_simProjRows.filter(function(r){ return !!r.wkISO; })
+                  .map(function(r){ return { wkISO:r.wkISO, arrivals:r.arrivals, demand:r.demand }; }),
+        { startCases:_simProjRows[0].startingStock, safetyCases:_ssC, leadDays:_lead,
+          addCases:_cpS.netCases });
+      window._simDigest = { scenario:true, stockCases:stockCasesGross, weeklyDemand:weeklyDemand,
+        salesDemand:salesDemand, coverage:(weeklyDemand>0?stockCasesGross/weeklyDemand:0),
+        safety:safety, protect:_plS,
+        rec:{ containers:_cpS.containers, netCases:_cpS.netCases, netNeeded:_cpS.netNeeded,
+              orderUpTo:_cpS.orderUpTo, projAtArrival:_cpS.projAtArrival, coverWks:_cpS.coverWks,
+              leadWks:_cpS.leadWks, cadence:_cpS.cadence, ssCases:_cpS.ssCases,
+              perContainer:_cpS.perContainer, raw:_cpS.raw, wanted:_cpS.wanted, cap:_cpS.cap,
+              cappedBy:_cpS.cappedBy, shelfWks:_cpS.shelfWks } };
+    }
+  }catch(e){ console.warn('sim digest', e); }
+  try{ var _sgs=document.getElementById('sim-ginger-suggestion');
+       if(_sgs) _sgs.innerHTML=bpGingerSuggestionHTML(window._simDigest||window._bpDigest); }catch(e){}
 }
 
 // ── HYPOTHETICAL SALES (scenario demand) — sandbox, Simulator-only ──
@@ -23213,9 +23301,11 @@ function renderSimulator() {
     if(_gO==='Hawaii'){ if(_sgb) _sgb.style.display='none'; if(_spv){ _spv.style.display=''; _spv.innerHTML=simRenderProduct('ginger'); } return; }
     if(_sgb) _sgb.style.display=''; if(_spv){ _spv.style.display='none'; _spv.innerHTML=''; }
     // El digest lo publica renderBuyPlanner, así que puede no existir si el Simulator se abre primero.
+    // La tarjeta la pinta simRenderProjection con el digest DEL SIMULATOR. Acá solo se asegura que
+    // los parámetros del pedido existan, y se deja algo en pantalla mientras tanto.
     try{ var _gs=document.getElementById('sim-ginger-suggestion');
          if(_gs){ if(!(window._bpDigest&&window._bpDigest.rec) && typeof renderBuyPlanner==='function') renderBuyPlanner();
-                  _gs.innerHTML=bpGingerSuggestionHTML(); } }catch(e){}
+                  if(!window._simDigest) _gs.innerHTML=bpGingerSuggestionHTML(window._bpDigest); } }catch(e){}
   }catch(e){ console.warn('sim product view', e); }
   const state = simGetState();
 
