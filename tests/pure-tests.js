@@ -2011,12 +2011,22 @@ group('La linea de compra de ginger · ordenar en el plazo no llega el mismo dia
   ok('el titular ordena por la fecha que protege', hp.indexOf('order by <b>'+iso(30)+'</b> &middot; in 30d')>-1);
   ok('y ya NO por la del quiebre',                 hp.indexOf('order by <b>'+iso(37)+'</b>')<0);
   ok('aterriza donde dice el plan',                hp.indexOf('lands <b>'+iso(67)+'</b>')>-1);
-  ok('dice hasta cuando esperar es gratis',        hp.indexOf('Free until '+iso(16))>-1);
-  ok('explica que antes de esa fecha no cambia nada', hp.indexOf('changes nothing')>-1);
   ok('cuantifica el piso que se toca',             hp.indexOf('<b>1,263</b> cases')>-1);
   ok('nombra el colchon en cajas',                 hp.indexOf('866-case buffer')>-1);
-  ok('marca el borde como borde, no como meta',    hp.indexOf(iso(37)+' is the edge')>-1);
-  ok('y dice que ese aterriza en el cero',         hp.indexOf('the week you hit zero')>-1);
+  ok('y dice que el borde aterriza en el cero',    hp.indexOf('the week you hit zero')>-1);
+
+  // ── UNA sola fecha se lee como accion ────────────────────────────────────────────────────────
+  // Las tres lineas arrancaban con una fecha y todas parecian accionables: "Free until 26-sep" en
+  // el Buy Planner contra "Order by 26-sep" en el Simulator — la MISMA fecha significando cosas
+  // opuestas en dos tarjetas que se miran juntas. Ahora la de ordenar va sola y etiquetada.
+  ok('la fecha de ordenar va bajo su propio rotulo', /Order by<\/div>[\s\S]{0,120}?2026-/.test(hp)
+        || hp.indexOf('>Order by</div>')>-1);
+  ok('y las otras dos ya no empiezan con una fecha',
+        hp.indexOf('>Free until '+iso(16))<0 && hp.indexOf('>'+iso(37)+' is the edge')<0);
+  ok('esperar sale gratis, dicho como prosa',  hp.indexOf('Waiting costs you nothing until')>-1);
+  ok('con su fecha',                           hp.indexOf(iso(16))>-1);
+  ok('el borde dicho como limite, no como meta', hp.indexOf('It is too late after')>-1);
+  ok('y se declara que no es una meta',        hp.indexOf('not a target')>-1);
 
   // Cuando el pozo cae antes de que cualquier orden pueda llegar, no hay plazo que valga.
   window._bpDigest.protect.floorUnavoidable = true;
