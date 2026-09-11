@@ -63,6 +63,35 @@ else:
     else:
         bad('invmIsRepackLot perdio una de las dos señales: se pierde un repack si el vendedor viene escrito distinto')
 
+# ── La fecha de recepcion: presente, y en mes/dia/año ───────────────────────────────────────────
+# Juan: "no podemos fallar ahi". A ginger le faltaba la columna entera; en los otros cuatro el
+# <input type="date"> se renderiza segun el locale del navegador, asi que se fuerza con lang.
+if m2 and re.search(r"_thO\('received','Received'\)", m2.group(1)):
+    ok('ginger-Peru muestra la fecha de recepcion')
+else:
+    bad('ginger-Peru perdio la columna Received')
+
+if m2 and 'invmFmtDate(l.received)' in m2.group(1):
+    ok('y la muestra en mes/dia/año')
+else:
+    bad('ginger-Peru no formatea la fecha con invmFmtDate')
+
+if m and re.search(r'type="date" lang="en-US"', m.group(1)):
+    ok('los otros cuatro fuerzan el formato del selector')
+else:
+    bad('el <input type="date"> perdio lang="en-US": el formato queda a merced del navegador')
+
+if m and 'invmFmtDate(l.received)' in m.group(1):
+    ok('y lo escriben tambien como texto, sin depender del navegador')
+else:
+    bad('los cuatro productos no muestran la fecha en texto: si el navegador no es en-US, se lee al reves')
+
+_fd = re.search(r'function invmFmtDate\(v\)\{(.*?)\n\}', src, re.S)
+if _fd and 'new Date' not in _fd.group(1):
+    ok('el formateo no construye un Date, asi que no puede correrse un dia')
+else:
+    bad('invmFmtDate construye un Date: al oeste de Greenwich mostrara el dia anterior')
+
 print()
 if fails:
     print('  %d problema(s) en las tablas de lotes' % len(fails)); sys.exit(1)
