@@ -16285,12 +16285,16 @@ function bpProtectPlan(rows, opts){
   var wkDate  = function(i){ var w = rows[i] && rows[i].wkISO; return w ? new Date(String(w)+'T12:00:00') : null; };
   var orderBy = function(i){ var d = wkDate(i); return d ? new Date(d.getTime() - lead*DIA) : null; };
   var dias    = function(d){ return d ? Math.round((d - hoy)/DIA) : null; };
-  // El piso si el pedido aterriza en la semana `land` (-1 = no ordenar nada).
-  var troughIf = function(land){
-    var st = start, min = Infinity, minWk = null;
+  // El piso si el pedido aterriza en la semana `land` (-1 = no ordenar nada). `from` acota DESDE
+  // dónde se mira: el pozo que cae antes de que cualquier orden nueva pueda llegar ya está decidido
+  // —no hay fecha que lo cambie— así que la decisión se toma sobre lo que sí se puede mover. Mirarlo
+  // desde la semana cero hacía gritar "ordená ya" en productos con cobertura de sobra, solo porque
+  // esta semana cerraba un poco baja.
+  var troughIf = function(land, from){
+    var st = start, min = Infinity, minWk = null; from = from || 0;
     for(var i=0;i<n;i++){
       st += (+(rows[i].arrivals)||0) + ((i===land) ? add : 0) - (+(rows[i].demand)||0);
-      if(st < min){ min = st; minWk = rows[i].wkISO; }
+      if(i >= from && st < min){ min = st; minWk = rows[i].wkISO; }
       if(i === land) break;
     }
     return { trough: min, troughWk: minWk };
@@ -16301,21 +16305,34 @@ function bpProtectPlan(rows, opts){
   var noOrder = troughIf(-1);
   if(first < 0) return { horizonShort:true, best:null, free:null, protect:null, stockout:null,
                          noOrder:noOrder, safetyCases:Math.round(safety), floorUnavoidable:true };
-  var pack = function(i){ if(i < 0) return null; var t = troughIf(i), ob = orderBy(i);
+  var pack = function(i,from){ if(i < 0) return null; var t = troughIf(i,from||0), ob = orderBy(i);
     return { landsWk:rows[i].wkISO, orderBy:iso(ob), daysLeft:dias(ob),
              trough:Math.round(t.trough), troughWk:t.troughWk }; };
-  var best = troughIf(first);
+  // `best`/`free` se miden sobre TODO el horizonte: de ahí sale que esperar no cueste nada cuando el
+  // pozo ya cayó. `protect`/`stockout` se miden desde `first`, que es lo único que una orden nueva
+  // puede cambiar.
+  var best = troughIf(first, 0);
   var free = first, protect = -1, stockout = -1;
   for(var j=first;j<n;j++){
-    var t = troughIf(j);
-    if(t.trough >= best.trough - 0.5) free = j;   // media caja de tolerancia: es redondeo, no holgura
-    if(t.trough >= safety) protect = j;
-    if(t.trough > 0)       stockout = j;
+    if(troughIf(j,0).trough >= best.trough - 0.5) free = j;   // media caja: es redondeo, no holgura
+    var ta = troughIf(j, first).trough;
+    if(ta >= safety) protect = j;
+    if(ta > 0)       stockout = j;
   }
-  return { horizonShort:false, best:pack(first), free:pack(free),
-           protect:(protect>=0)?pack(protect):null, stockout:(stockout>=0)?pack(stockout):null,
-           noOrder:noOrder, safetyCases:Math.round(safety),
-           floorUnavoidable:(best.trough < safety) };
+  // El pozo que ya no se puede evitar: información, no un llamado a la acción.
+  var unavoidable = (first > 0) ? (function(){
+    var st = start, min = Infinity, minWk = null;
+    for(var k=0;k<first;k++){
+      st += (+(rows[k].arrivals)||0) - (+(rows[k].demand)||0);
+      if(st < min){ min = st; minWk = rows[k].wkISO; }
+    }
+    return { trough:Math.round(min), troughWk:minWk };
+  })() : null;
+  return { horizonShort:false, best:pack(first,0), free:pack(free,0),
+           protect:(protect>=0)?pack(protect,first):null,
+           stockout:(stockout>=0)?pack(stockout,first):null,
+           noOrder:noOrder, unavoidable:unavoidable, safetyCases:Math.round(safety),
+           floorUnavoidable:(troughIf(first, first).trough < safety) };
 }
 function invmProductArrivals(p, origin){
   var out={};
@@ -17131,7 +17148,11 @@ function invmBuySuggestion(p, origin, opts){
         prot=bpProtectPlan(
           RW.rows.map(function(r){ return { wkISO:r.wk, arrivals:+r.arrived||0, demand:+r.demand||0 }; }),
           { startCases:(RW.start!=null?RW.start:(s.availCases||0)),
-            safetyCases:(s.safetyWks||0)*now.demand, leadDays:lead, addCases:now.buy||0 });
+            safetyCases:(s.safetyWks||0)*now.demand, leadDays:lead,
+            // Aunque hoy no haya que comprar nada, la orden que se simula es una orden DE VERDAD:
+            // la que te devuelve al objetivo. Con cero no agregaba nada y la pregunta degeneraba en
+            // "la curva baja" — que baja siempre.
+            addCases:Math.max(now.buy||0, Math.ceil((s.targetWks||0)*now.demand)) });
       }
     }catch(e){}
     // La fecha que se muestra pasa a ser la que protege. La cuenta plana queda de respaldo para
@@ -18145,19 +18166,36 @@ function renderBuyPlanner() {
   // semanas, ninguna en cero), así que esto no mueve el número — pero deja de depender de que lo
   // sean. Y sin `filter(x>0)`: una semana sin venta ES variabilidad, y es lo que dimensiona el
   // colchón. Ginger vende todas las semanas; los otros productos no, y ese filtro ya costó una vez.
-  const _wkSrc = (usingDemandModule && _dmModel)
-    ? (Array.isArray(_dmModel.weeklyReliable) && _dmModel.weeklyReliable.length ? _dmModel.weeklyReliable
-       : (Array.isArray(_dmModel.weekly) ? _dmModel.weekly : []))
+  // ── La variabilidad tiene que ser la de GINGER ────────────────────────────────────────────────
+  // Salía de `_dmModel`, que es el modelo del producto ENFOCADO en la pestaña Demand — no el de
+  // ginger. Con el foco en turmeric, cuya serie promedia 195 lb/semana contra las 22.317 de ginger,
+  // el colchón de ginger daba 64 cajas (0,08 semanas) en vez de ~1.172 (1,42). Dieciocho veces
+  // menos, decidido por qué producto estaba seleccionado en OTRA pantalla. La demanda
+  // (`demandLbsWk`) siempre fue la de ginger; solo la serie de la sigma se iba al producto de al
+  // lado, y por eso no se notaba: el resto del plan se veía bien.
+  const _gModel = (function(){ try{
+      if(typeof qaModelG === 'function') return qaModelG();
+      if(typeof invmProductModel === 'function') return invmProductModel('ginger','all');
+    }catch(e){} return null; })();
+  const _wkSrc = (usingDemandModule && _gModel)
+    ? (Array.isArray(_gModel.weeklyReliable) && _gModel.weeklyReliable.length ? _gModel.weeklyReliable
+       : (Array.isArray(_gModel.weekly) ? _gModel.weekly : []))
     : [];
   const _weeklyLbsSeries = _wkSrc.slice(-13).map(w => (w && w.lbs) || 0);
-  // Con el módulo de demanda vivo pero sin serie, sigma queda en 0 y el colchón se derrumba al término
-  // de variabilidad del lead time — sin que nada lo diga. Se vio una vez, en el render de arranque:
-  // 134 cajas de colchón en vez de 866, y el plan pedía 1,23 contenedores en vez de 1,79. Que no
-  // vuelva a pasar callado.
-  const _ssDegradado = usingDemandModule && _weeklyLbsSeries.length < 2;
+  // ── Y si la serie no es del mismo tamaño que la demanda, no es del mismo producto ─────────────
+  // El guardián que faltaba. Sin serie, sigma queda en 0 y el colchón se derrumba al término de
+  // variabilidad del lead time; con la serie EQUIVOCADA pasa lo mismo y encima parece sana (tenía
+  // sus 13 semanas). Un promedio semanal que no está en el mismo orden de magnitud que la demanda
+  // semanal no puede ser del mismo producto. Cuando eso pasa no se asume variabilidad cero — se
+  // sostiene una semana de colchón, que es el lado por el que hay que equivocarse.
+  const _ssMean = _weeklyLbsSeries.length
+    ? _weeklyLbsSeries.reduce((a,b)=>a+b,0)/_weeklyLbsSeries.length : 0;
+  const _ssMismatch = usingDemandModule && demandLbsWk > 0 && _ssMean > 0
+    && (_ssMean < demandLbsWk/4 || _ssMean > demandLbsWk*4);
+  const _ssDegradado = (usingDemandModule && _weeklyLbsSeries.length < 2) || _ssMismatch;
   const _ltSig = bpLeadTimeSigmaWeeks();
   const _ssCalc = bpSafetyStockLbs(_weeklyLbsSeries, demandLbsWk, _ltWeeks, _ltSig.sigmaWeeks, _z);
-  const ssLbs = _ssCalc.ssLbs;
+  const ssLbs = _ssDegradado ? Math.max(_ssCalc.ssLbs, demandLbsWk) : _ssCalc.ssLbs;
   const ssCases = ssLbs / 30;
   const sigmaDLbs = _ssCalc.sigmaD;
   const demandCv = demandLbsWk > 0 ? (sigmaDLbs / demandLbsWk) : 0;   // coefficient of variation
@@ -18166,7 +18204,10 @@ function renderBuyPlanner() {
   const _setKpi = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
   _setKpi('bp-demand-lbs', Math.round(demandLbsWk).toLocaleString());
   _setKpi('bp-demand-cs',  Math.round(salesDemand).toLocaleString());
-  _setKpi('bp-demand-src', usingDemandModule ? (_ssDegradado ? 'Demand · Peru \u00b7 \u26a0 sin serie semanal' : 'Demand · Peru') : 'Manual fallback');
+  _setKpi('bp-demand-src', usingDemandModule
+    ? (_ssMismatch ? 'Demand · Peru \u00b7 \u26a0 buffer held at 1 wk (sales series doesn\u2019t match)'
+      : (_ssDegradado ? 'Demand · Peru \u00b7 \u26a0 buffer held at 1 wk (no weekly series)' : 'Demand · Peru'))
+    : 'Manual fallback');
   if (typeof winRenderToggle === 'function') winRenderToggle('bp-winsel');
 
   // Update sales source indicator
@@ -19014,7 +19055,8 @@ function renderBuyPlanner() {
       leadWks:ltWeeksRec, cadence:cadence, ssCases:ssCases,
       perContainer:grossCasesPerContainer,
       raw:_recRaw, wanted:_recWant, cap:_capCont, cappedBy:_cappedBy, shelfWks:_shelfW,
-      ssDegraded:_ssDegradado, ssWeeks:_weeklyLbsSeries.length }; }catch(e){}
+      ssDegraded:_ssDegradado, ssMismatch:_ssMismatch, ssWeeks:_weeklyLbsSeries.length,
+      ssSeriesMeanLbs:Math.round(_ssMean) }; }catch(e){}
     const recQtyStr = recContainers + ' container' + (recContainers>1?'s':'') + ' · ~' + recNetCases.toLocaleString() + ' cs \u2192 ~' + recCoverWks + ' wks @ ' + serviceLevel + '% · ~' + Math.round(effShrinkOrder*100) + '% shrink';
     const coverWks = weeklyDemand > 0 ? (1320 / weeklyDemand).toFixed(1) : '—';
     const recHtml = '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;background:' + recBg + ';border-radius:6px;margin-bottom:8px;flex-wrap:wrap">'

@@ -1608,13 +1608,13 @@ group('invmBuySuggestion · cuánto comprar, cuándo ordenar, cuándo llega');
     rows: WK.map(function(w){ return { wk:w, arrived:0, demand:100 }; }) }; };
   var gp = invmBuySuggestion('turmeric','Fiji');
   ok('trae el plan de proteccion', !!gp.protect && !gp.protect.horizonShort);
-  check('la fecha limite ya no sale de la cuenta plana', gp.orderBy, menos(WK[7],10));
+  check('la fecha limite ya no sale de la cuenta plana', gp.orderBy, menos(WK[8],10));
   check('esperar es gratis solo hasta la primera llegada posible', gp.protect.free.landsWk, WK[2]);
-  // Aca la sugerencia es no comprar nada (hay 1.000 cajas para un objetivo de 343), asi que el
-  // pedido que se simula es de cero: la pregunta que queda es "¿para cuando tiene que aterrizar
-  // ALGO?", y sigue teniendo respuesta. Por eso el borde cae en WK[8] y no en WK[9].
+  // Aca la sugerencia es no comprar nada (hay 1.000 cajas para un objetivo de 343). Aun asi el
+  // pedido que se SIMULA es una orden de verdad —la que devuelve al objetivo— porque con cero la
+  // pregunta degenera en "la curva baja", que baja siempre.
   check('con compra cero el plan sigue contestando', gp.buy, 0);
-  check('el borde del precipicio cae despues', gp.protect.stockout.landsWk, WK[8]);
+  check('el borde del precipicio cae despues', gp.protect.stockout.landsWk, WK[9]);
   ok('y el borde es posterior al plazo que protege', gp.protect.stockout.orderBy > gp.protect.protect.orderBy);
   ok('el piso del plazo que protege respeta el colchon', gp.protect.protect.trough >= gp.protect.safetyCases);
 
@@ -1776,15 +1776,25 @@ group('bpProtectPlan · la ultima fecha en que ordenar TODAVIA protege');
   ok('una semana despues del plazo que protege', p.stockout.orderBy > p.protect.orderBy);
   check('con el colchon alcanzable, no se pide ordenar ya', p.floorUnavoidable, false);
 
-  // ── Cuando ya es tarde, se dice que es tarde ──────────────────────────────────────────────────
-  // Si el pozo cae antes de que cualquier orden pueda llegar, no hay fecha que valga: es ahora, y
-  // hay que decir cuanto se va a tocar igual en vez de inventar un plazo que no salva nada.
-  var tarde=bpProtectPlan(rows, { startCases:1200, safetyCases:866, leadDays:37, addCases:1320,
-                                  today:'2026-09-10T12:00:00' });
-  check('el piso ya no se salva', tarde.floorUnavoidable, true);
+  // ── El pozo que NINGUNA orden puede evitar es informacion, no un llamado a la accion ──────────
+  // Con 1.200 cajas de arranque se toca el fondo esta misma semana, antes de que nada pueda llegar:
+  // gritar "orden urgente" por eso es ruido. Se reporta aparte y la decision sigue viva.
+  var yaPaso=bpProtectPlan(rows, { startCases:1200, safetyCases:866, leadDays:37, addCases:1320,
+                                   today:'2026-09-10T12:00:00' });
+  check('el pozo inevitable se reporta',        yaPaso.unavoidable.trough, 374);
+  check('y se dice en que semana cae',          yaPaso.unavoidable.troughWk, '2026-09-07');
+  check('pero NO se convierte en "orden ya"',   yaPaso.floorUnavoidable, false);
+  ok('porque desde la primera llegada posible se esta bien', yaPaso.protect.trough >= 866);
+
+  // ── Cuando de verdad ya es tarde, se dice que es tarde ───────────────────────────────────────
+  // Sin nada en camino y con la demanda comiendose el stock, ninguna fecha salva el colchon: la
+  // respuesta es "ahora", y hay que decir cuanto se va a tocar igual en vez de inventar un plazo.
+  var secas=W.map(function(w){ return { wkISO:w, arrivals:0, demand:826 }; });
+  var tarde=bpProtectPlan(secas, { startCases:2000, safetyCases:866, leadDays:37, addCases:1320,
+                                   today:'2026-09-10T12:00:00' });
+  check('el colchon no se salva', tarde.floorUnavoidable, true);
   check('y no hay plazo que lo proteja', tarde.protect, null);
-  check('pero sigue diciendo cuanto se toca', tarde.best.trough, 374);
-  ok('y en que semana', tarde.best.troughWk === '2026-09-07');
+  ok('el piso alcanzable esta bajo el colchon', tarde.best.trough < 866);
 
   // Sin ordenar nada, el piso es el de la proyeccion entera.
   ok('sin ordenar nada el piso es peor', p.noOrder.trough < p.protect.trough);

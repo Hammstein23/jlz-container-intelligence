@@ -45,6 +45,10 @@ echo "══ Guardián del lote de reempaque (W-lot) ═════════
 python3 "$DIR/repack-guard.py" "$HTML" || FAILED=1
 echo
 
+echo "══ Guardián del colchón de ginger ═════════════════════════════"
+python3 "$DIR/ginger-sigma-guard.py" "$HTML" || FAILED=1
+echo
+
 echo "══ Modelo de demanda ═══════════════════════════════════════════"
 python3 "$DIR/extract.py" "$HTML" "$TMP/app.js" \
   dmWeekKey nowcastProductModel dmToggleOther renderBuildupPanel dmEffectiveRunRateLbs \
