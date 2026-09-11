@@ -19156,6 +19156,13 @@ function renderBuyPlanner() {
     // La tarjeta del Buy Planner sale de ESTOS datos: sin escenarios. La del Simulator sale de los
     // suyos, con los hipotéticos cargados. Es la misma tarjeta contestando sobre dos mundos, y cada
     // una lo dice en su encabezado. El setTimeout deja que `rec` termine de escribirse abajo.
+    // Las filas del Buy Planner, a la vista igual que las del Simulator. Las dos proyecciones dicen
+    // reflejarse semana a semana; sin poder compararlas, esa afirmación no se puede verificar — y el
+    // bug de la semana de medición apareció justamente al compararlas.
+    try{ window._bpProjRows = rows.map(function(r){
+      return { wkISO:(typeof dmWeekKey==='function' && r.weekStartDate) ? dmWeekKey(r.weekStartDate) : null,
+               weekStartDate:r.weekStartDate, arrivals:r.arrivalCases, demand:r.demand,
+               committed:r.committed, startingStock:r.startingStock, endingStock:r.endingStock }; }); }catch(e){}
     try{ var _bs=document.getElementById('bp-ginger-suggestion');
          if(_bs) setTimeout(function(){ try{ _bs.innerHTML=bpGingerSuggestionHTML(window._bpDigest); }catch(e){} }, 0); }catch(e){}
     try{ if(window._bpDigest) window._bpDigest.rec = {
