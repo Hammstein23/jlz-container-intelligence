@@ -15865,10 +15865,13 @@ function dsLabelFor(prod, model){
 // Averaging window (weeks) for the direct-ship business figure. Default 26 — a lumpy order-driven
 // account only lands a few POs in 13 wks, so a longer window gives a steadier sizing number.
 // Selectable (3/6/13/26) mirroring the stock-buy demand window. Never affects the buy math.
-var DIRECTSHIP_WIN_LS='jlz_directship_window';
-function dsWindow(){ var v=parseInt(localStorage.getItem(DIRECTSHIP_WIN_LS)||'26',10); return (v===3||v===6||v===13||v===26)?v:26; }
-function dsSetWindow(v){ v=parseInt(v,10); if(!(v===3||v===6||v===13||v===26)) v=26; try{ localStorage.setItem(DIRECTSHIP_WIN_LS, String(v)); }catch(e){}
-  if(typeof invmReRender==='function') invmReRender(); else { try{ if(typeof renderBuyPlanner==='function') renderBuyPlanner(); }catch(e){} try{ if(typeof renderSimulator==='function') renderSimulator(); }catch(e){} } }
+// El selector que escribía esta ventana ya no existe en la UI —`dsSetWindow` no se llamaba desde
+// ningún lado— pero el valor viejo seguía en localStorage y seguía mandando: el de Juan estaba en 3,
+// y con 3 semanas el volumen contra-orden de turmeric daba 0 aunque hubiera 700 cajas en camino.
+// Una perilla sin mando que igual mueve números es peor que no tenerla. Queda la constante
+// documentada: el volumen de pass-through se reporta sobre 26 semanas, que es lo que dice el
+// comentario de abajo y lo que espera su test.
+function dsWindow(){ return 26; }
 // Direct-ship (pass-through) business volume in cases/wk for a product+origin — order-driven,
 // NOT a stock forecast. Deliberately a SIMPLE calendar-week average of that account's sales over
 // dsWindow() weeks (default 26; no reliability windows / reporting-lag correction — that machinery
@@ -16216,7 +16219,14 @@ function invmProductStats(p,origin){
   // `mtoCasesPerWeek` devuelve 0 para un cliente que ya está flageado, así que nunca se suma dos veces.
   // Cuando el flag desaparezca del todo, este número sigue saliendo — de las órdenes, que es la fuente
   // que Juan eligió: cada compra dice si tenía destino, en vez de etiquetar al cliente para siempre.
-  var directShipCases=((typeof mtoCasesPerWeek==='function')?mtoCasesPerWeek(p,(typeof dsWindow==='function')?dsWindow():26):0);
+  // ── Lo que se MUESTRA sale de la misma ventana con la que se NETEÓ ────────────────────────────
+  // Salía de `dsWindow()`, una ventana propia y distinta de la del producto. Con dsWindow en 3 y la
+  // ventana de turmeric en 6, el panel mostraba 0 cs/wk contra-orden mientras el run-rate ya tenía
+  // 233 cs/wk de Sol-ti descontados: escondía el bloque entero, ponía la etiqueta en "live run-rate"
+  // en vez de "stock-buy run-rate", y la propia tarjeta afirmaba "both on the N-wk window" siendo
+  // falso. Desde afuera se veía exactamente como si el embarque contra-orden no se estuviera
+  // contabilizando — y sí se contabilizaba, solo que la pantalla no lo decía.
+  var directShipCases=_mto;
   var coverWks=(weeklyLbsBuy>0)?availLbs/weeklyLbsBuy:(availLbs>0?Infinity:0);
   // ── Comprar se decide sobre la POSICIÓN, no sobre lo que hay en la cámara ─────────────────────
   // `orderCases` salía de `available` sola: ignoraba lo que ya está comprado y navegando, así que el

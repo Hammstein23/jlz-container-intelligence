@@ -1757,6 +1757,45 @@ group('En camino · el origen filtra, pero no puede hacer desaparecer carga');
   check('sin filtro de origen entra todo', sum(invmProductArrivals('ginger','all')), 1360);
 })();
 
+group('El contra-orden que se MUESTRA sale de la ventana con la que se NETEO');
+// Juan, sobre turmeric-Fiji: "esta llegando un embarque exclusivo para Sol-ti y no esta siendo
+// contabilizado". Se contabilizaba —la orden entra con neto 0 y el run-rate ya viene sin Sol-ti—
+// pero el panel mostraba 0 cs/wk contra-orden, escondia el bloque y etiquetaba "live run-rate".
+// El volumen mostrado salia de `dsWindow()` (3, un valor viejo en localStorage de un selector que
+// ya no existe) mientras el neteo usaba la ventana del producto (6). Desde afuera se veia
+// exactamente como si el embarque no se estuviera considerando.
+(function(){
+  PRODUCTS = { turmeric:{ label:'Turmeric', caseLb:30, shrinkPct:0, suppliers:[
+      { name:'Sbimal LLC', origin:'Fiji', mode:'air', leadDays:10 } ] } };
+  prodInvFor         = function(){ return { serviceLevel:95, demandOverride:null, shrinkPct:0, lots:[
+      { lot:'A', origin:'Fiji', supplier:'Sbimal LLC', cases:200, avgCost:70, sku:'OG-TUR-30LBS-PR-FJ' } ] }; };
+  invmOriginsFor     = function(){ return ['Fiji']; };
+  dmWindow           = function(){ return 6; };
+  prodCommittedTotal = function(){ return 0; };
+  stockSnapRecord    = function(){};
+  invmProductArrivals= function(){ return {}; };
+  invmStockableWeekly= function(){ return [{wk:'a',lbs:3000},{wk:'b',lbs:3000},{wk:'c',lbs:3000}]; };
+  invmProductModel   = function(){ return { caseLb:30, runRate3:100*30, runRate6:100*30,
+      runRate13:100*30, runRate26:100*30, weeklyReliable:[{lbs:3000},{lbs:3000},{lbs:3000}] }; };
+  // El contra-orden por ventana: 233 en la del producto (6), 0 en la vieja de 3 semanas.
+  mtoCasesPerWeek = function(p, win){ return win===6 ? 233.33 : (win===26 ? 117.31 : 0); };
+
+  var s = invmProductStats('turmeric','Fiji');
+  check('el panel muestra el contra-orden de la ventana del producto', Math.round(s.directShipCases), 233);
+  check('que es el MISMO numero con el que se neteo',                  s.directShipCases, s.mtoCases);
+  ok('y por lo tanto el bloque contra-orden se muestra',               s.directShipCases > 0);
+
+  // La regresion exacta: si volviera a salir de dsWindow (3), el panel diria 0 y escondria todo.
+  ok('con la ventana vieja habria dicho cero', mtoCasesPerWeek('turmeric', 3) === 0);
+  ok('y el panel NO usa esa ventana',          s.directShipCases !== mtoCasesPerWeek('turmeric', 3));
+
+  // ── La perilla muerta ya no lee localStorage ─────────────────────────────────────────────────
+  // Se mira el CODIGO, no el resultado: el localStorage del harness es un objeto vacio, asi que
+  // cualquier check sobre el valor devuelto pasa con las dos implementaciones y no prueba nada.
+  ok('dsWindow ya no lee un valor guardado', String(dsWindow).indexOf('localStorage') < 0);
+  check('y devuelve la constante documentada', dsWindow(), 26);
+})();
+
 group('Un escenario puede sumar demanda, nunca borrarla');
 // Los escenarios del Simulator pasaban por el mismo acumulador que el committed real, y ese
 // acumulador mueve el "horizonte conocido" de cada cuenta. Un committed real si dice "se lo que
