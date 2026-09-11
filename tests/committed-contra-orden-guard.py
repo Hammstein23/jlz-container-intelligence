@@ -85,6 +85,27 @@ if _mc and 'addDirectShip' not in _mc.group(1):
 else:
     bad('el aviso marca ordenes por su cuenta: eso cambia el plan de compra sin que nadie lo decida')
 
+# ── El stock libre tampoco puede restar lo cruzado ──────────────────────────────────────────────
+# Esa mercaderia nunca entro a camara, asi que no esta en el fisico: restarla del stock libre lo
+# hunde por cajas que nadie tiene. El REEMPACADO si entra y si espera, asi que su committed cuenta.
+for fn in ['committedInvForWeek', 'prodCommittedTotal']:
+    m3 = re.search(r'function %s\(.*?\)\s*\{(.*?)\n\}' % fn, src, re.S)
+    if not m3:
+        bad('no se encontro %s' % fn); continue
+    # No alcanza con LLAMAR a _cmCrossDock: el filtro tiene que aplicarse de verdad. Con solo la
+    # llamada, borrar la linea del filtro dejaba pasar el chequeo.
+    cuerpo = m3.group(1)
+    if re.search(r'hasOwnProperty\.call\(_?cd,\s*c\.customer\)', cuerpo):
+        ok('%s no resta el cruzado del stock libre' % fn)
+    else:
+        bad('%s resta committed cruzado: descuenta mercaderia que nunca entro' % fn)
+
+_cd = re.search(r'function _cmCrossDock\(p\)\{(.*?)\n\}', src, re.S)
+if _cd and 'crossDockOnly:true' in _cd.group(1):
+    ok('y la fuente del cruzado es la misma de siempre')
+else:
+    bad('_cmCrossDock no sale de mtoByCustomer con crossDockOnly')
+
 print()
 if fails:
     print('  %d problema(s): el contra-orden vuelve a contarse contra el inventario' % len(fails)); sys.exit(1)

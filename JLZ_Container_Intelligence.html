@@ -12001,9 +12001,20 @@ function cmPlanEntries(){
   if(!Array.isArray(all)) return [];                 // store vacío o todavía sin cargar
   return all.filter(function(c){ return c && !(typeof _cmShipped === 'function' && _cmShipped(c)); });
 }
+// ── El committed CRUZADO no consume stock: esa mercadería nunca entró ────────────────────────────
+// Va del puerto al cliente, así que no está en el físico. Restarla del stock libre lo hunde por
+// mercadería que nadie tiene en cámara — el mismo doble descuento que ya se cerró en la proyección.
+// El REEMPACADO sí entra y sí espera en la cámara, así que su committed sigue contando.
+function _cmCrossDock(p){
+  try{ return (typeof mtoByCustomer==='function')
+      ? (mtoByCustomer(p,(typeof dmWindow==='function')?dmWindow(p):13,{crossDockOnly:true})||{}) : {}; }
+  catch(e){ return {}; }
+}
 function committedInvForWeek(wk, product) {
   var p = product || 'ginger';
+  var cd = _cmCrossDock(p);
   return cmPlanEntries().reduce(function(s, c){
+    if(c && c.customer && Object.prototype.hasOwnProperty.call(cd, c.customer)) return s;
     return s + ((c.wk === wk && c.type === 'inv' && _cmProd(c) === p) ? cmCasesInBuyPack(c, p) : 0); }, 0);
 }
 // Hybrid weekly sales demand (raw cases, pre-shrink). Starts from the run-rate baseline (salesDemand)
@@ -16142,7 +16153,10 @@ function prodCommittedTotal(p,origin){
   // it was the root of the turmeric/garlic/shallots error). No seed fallback either: absent committed
   // means 0, never a stale hard-coded snapshot that reappears after the store is cleared.
   var nowWk=(typeof dmWeekKey==='function')?dmWeekKey(new Date()):'';
-  var all=cmPlanEntries().filter(function(c){ return c && c.type==='inv' && _cmProd(c)===p && (!nowWk || (c.wk && String(c.wk)>=nowWk)); });
+  // Lo CRUZADO nunca entró a cámara, así que no puede descontarse del stock libre.
+  var _cd=(typeof _cmCrossDock==='function')?_cmCrossDock(p):{};
+  var all=cmPlanEntries().filter(function(c){ return c && c.type==='inv' && _cmProd(c)===p && (!nowWk || (c.wk && String(c.wk)>=nowWk))
+                                                     && !(c.customer && Object.prototype.hasOwnProperty.call(_cd, c.customer)); });
   // ── Solo el committed del MISMO pack que se compra ──────────────────────────────────────────────
   // Los packs chicos (5/10/20 lb) son producto YA TRABAJADO y viven en sus propios lotes — los W-lots de
   // River Road, que el inventario excluye a propósito. Restar su committed del inventario de 30/50 lb
