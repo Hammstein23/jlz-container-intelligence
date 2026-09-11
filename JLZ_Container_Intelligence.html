@@ -27432,7 +27432,7 @@ function dmRenderPulse(){
   var sev=function(c){ return (c==null) ? 'var(--gray-300)' : (c<1.5 ? '#b42318' : (c<3 ? '#b45309' : 'var(--jlz)')); };
   var head='<div class="dm-lsum">'
     + '<div><span class="k">Stock demand</span><span class="v">'+dmFmt0(totRR)+'</span> <small>cs/wk</small></div>'
-    + (totDS>=1 ? '<div><span class="k">Direct-ship</span><span class="v" style="color:#7c3aed">'+dmFmt0(totDS)+'</span> <small>cs/wk · never enters stock</small></div>' : '')
+    + (totDS>=1 ? '<div><span class="k">Made to order</span><span class="v" style="color:#7c3aed">'+dmFmt0(totDS)+'</span> <small>cs/wk · bought when they order, so no stock waits for it</small></div>' : '')
     + '<div><span class="k">Lines needing attention</span><span class="v"'+(alerta?' style="color:#b42318"':'')+'>'+alerta+'</span> <small>of '+lines.length+'</small></div>'
   + '</div>';
   host.innerHTML = head + '<div class="dm-lgrid">' + lines.map(function(L){
@@ -27700,7 +27700,7 @@ function renderCommittedPanel(model) {
   var shipBlock = isG
     ? ('<label class="dmc-l">How does it ship?</label><div class="dmc-seg">'
        + '<button type="button" class="dmc-segb' + (_dmcType === 'inv' ? ' on' : '') + '" data-t="inv">From warehouse</button>'
-       + '<button type="button" class="dmc-segb' + (_dmcType === 'direct' ? ' on' : '') + '" data-t="direct">Direct-ship from port</button></div>'
+       + '<button type="button" class="dmc-segb' + (_dmcType === 'direct' ? ' on' : '') + '" data-t="direct">Cross-dock from port</button></div>'
        + '<div id="dmc-cwrap" style="display:' + (_dmcType === 'direct' ? 'block' : 'none') + '"><label class="dmc-l">From which container?</label>'
        + (arriving.length
            ? '<select class="dmc-in" id="dmc-cont">' + arriving.map(function(o){ var wk = dmcOrderEtaWk(o); return opt(o.jlzPo, 'PO ' + o.jlzPo + ' — arrives ' + dmcWeekLabel(wk) + (o.supplier ? ' · ' + o.supplier : ''), ' data-wk="' + wk + '"'); }).join('') + '</select>'

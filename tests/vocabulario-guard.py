@@ -26,6 +26,9 @@ vivo = '\n'.join(l for l in src.split('\n') if not l.lstrip().startswith('//'))
 PROHIBIDO = [
     ("direct-ship'",        'la palabra vieja como texto de UI; decir "made to order"'),
     ('>direct-ship<',       'idem, dentro de una etiqueta'),
+    # Se escapo una con mayuscula: el chequeo buscaba solo la minuscula. Ahora va sin distinguir.
+    ('Direct-ship',         'idem, con mayuscula'),
+    ('never enters stock',  'solo vale para el cruzado'),
     ('Cuentas que NO',      'texto en castellano dentro de una UI en ingles'),
     ('never touches stock', 'solo vale para el cruzado; el reempacado SI toca stock'),
     ('never enter inventory', 'idem'),
