@@ -65,6 +65,10 @@ echo "══ Proveedor y repack, cada uno en su tabla ════════�
 python3 "$DIR/lot-tables-guard.py" "$HTML" || FAILED=1
 echo
 
+echo "══ Un solo vocabulario para las tres formas ═══════════════════"
+python3 "$DIR/vocabulario-guard.py" "$HTML" || FAILED=1
+echo
+
 echo "══ Ningún stub tapa producción ════════════════════════════════"
 python3 "$DIR/stub-shadow-guard.py" || FAILED=1
 echo

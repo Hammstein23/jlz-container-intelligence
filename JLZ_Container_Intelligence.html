@@ -15094,7 +15094,7 @@ function invmLots(m,t){
     var addCell=(INVM_DAYSMODE==='auto')?('<span class="invm-cin lock" style="display:inline-block">'+l.add.toFixed(1)+'</span>'):('<input class="invm-cin" type="number" value="'+(l.addManual!=null?l.addManual:l.addAuto.toFixed(0))+'" onchange="invmSetManual(\''+l.id+'\',this.value)">');
     var zl=l.zone==='under'?'UNDERWATER':l.zone;
     return '<tr>'+
-      '<td class="l"><span class="invm-po">'+l.po+'</span>'+(l.directShip>0?'<br><span style="font-size:9px;font-family:var(--fm);color:#6d28d9;background:#ede9fe;padding:1px 5px;border-radius:99px;white-space:nowrap" title="Sold port → customer, never entered the warehouse — not counted as stock or shrink">'+invmF(l.directShip)+' cs direct-shipped</span>':'')+'</td>'+
+      '<td class="l"><span class="invm-po">'+l.po+'</span>'+(l.directShip>0?'<br><span style="font-size:9px;font-family:var(--fm);color:#6d28d9;background:#ede9fe;padding:1px 5px;border-radius:99px;white-space:nowrap" title="Cross-dock: shipped supplier → customer, never entered the warehouse — not counted as stock or shrink">'+invmF(l.directShip)+' cs cross-docked</span>':'')+'</td>'+
       '<td class="l"><span class="invm-supn">'+l.sup+'</span></td>'+
       '<td class="l"><span class="invm-mc '+l.mode+'">'+(l.mode==='repack'?'REPACK':(l.mode==='air'?'AIR':'SEA'))+'</span></td>'+
       '<td class="invm-muted">'+(invmFmtDate(l.received)||'&mdash;')+'</td>'+
@@ -15930,7 +15930,7 @@ function dsLabelFor(prod, model){
   // la mitad de los casos.
   if(n.length === 1) return n[0] + ' made to order';
   if(n.length === 2) return n[0] + ' + ' + n[1] + ' made to order';
-  return n.length + ' accounts direct-ship';
+  return n.length + ' accounts made to order';
 }
 // Averaging window (weeks) for the direct-ship business figure. Default 26 — a lumpy order-driven
 // account only lands a few POs in 13 wks, so a longer window gives a steadier sizing number.
@@ -17053,7 +17053,7 @@ function invmProjectionHTML(s){
     +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11px;min-width:640px">'
     +'<thead><tr><th style="'+th+';text-align:left">Week</th>'
       +'<th style="'+th+'"><span class="jlz-gloss">Starting stock<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Starting stock</span><span class="jlz-td">Stock at the start of that week. The first row starts from what you have on hand today.</span></span></span></th>'
-      +'<th style="'+th+'"><span class="jlz-gloss">Arrivals<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Arrivals</span><span class="jlz-td">Cases arriving that week from your purchase pipeline, net of direct-ship (which never enters the cooler).</span></span></span></th>'
+      +'<th style="'+th+'"><span class="jlz-gloss">Arrivals<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Arrivals</span><span class="jlz-td">Cases arriving that week from your purchase pipeline, net of cross-dock cases (those go supplier → customer and never reach the cooler). Cases repacked here DO arrive, so they are counted.</span></span></span></th>'
       +'<th style="'+th+'"><span class="jlz-gloss">Demand<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Demand</span><span class="jlz-td">What leaves that week: the run-rate, or the confirmed (unshipped) orders if larger. Order-driven accounts use their actual order that week, not a smeared average.</span><span class="jlz-tf">= max(committed, run-rate)</span></span></span></th>'
       +'<th style="'+th+'"><span class="jlz-gloss">Ending stock<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Ending stock</span><span class="jlz-td">What is left at the close of that week.</span><span class="jlz-tf">= Start + Arrivals − Demand</span></span></span></th>'
       +'<th style="'+th+'"><span class="jlz-gloss">Cover<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Cover</span><span class="jlz-td">Weeks of coverage at that week\'s close.</span><span class="jlz-tf">= Ending ÷ weekly demand</span></span></span></th>'
@@ -17225,7 +17225,7 @@ function invmAnalysisHTML(s){
     + (s.directShipCases>0 ? ('<div style="margin:6px 0 2px;padding:8px 11px;border:1px solid var(--gray-200);border-radius:8px;background:var(--gray-50);font-family:var(--fm);font-size:11.5px;line-height:1.55">'
         + '<div style="font-weight:700;color:var(--gray-600);text-transform:uppercase;letter-spacing:.04em;font-size:10px;margin-bottom:3px">Business split · this origin</div>'
         + '<div><span style="color:var(--jlz);font-weight:700">'+f(s.weeklyCases)+' cs/wk</span> stock-buy <span style="color:var(--gray-400)">— drives the order below</span></div>'
-        + '<div><span style="color:#7c3aed;font-weight:700">~'+f(s.directShipCases)+' cs/wk</span> '+((typeof dsLabelFor==='function')?dsLabelFor(s.p):'made to order')+' <span style="color:var(--gray-400)">— order-driven, ships on confirmation · no stock, doesn\'t drive the buy</span></div>'
+        + '<div><span style="color:#7c3aed;font-weight:700">~'+f(s.directShipCases)+' cs/wk</span> '+((typeof dsLabelFor==='function')?dsLabelFor(s.p):'made to order')+' <span style="color:var(--gray-400)">— you buy it when they order, so no stock waits for it · out of the buy plan</span></div>'
         + '<div style="margin-top:2px;color:var(--gray-500)">Total business ≈ <b>'+f(s.weeklyCases+s.directShipCases)+' cs/wk</b> <span style="color:var(--gray-400)">· both on the '+(s.win||13)+'-wk window</span></div>'
       + '</div>') : '')
     + '<div class="ipv-kpis">'
@@ -26705,10 +26705,10 @@ function renderDmRunRate(){
   }
   rows += '<tr class="tot"><td class="l">Total</td><td>'+Math.max(tot, Math.round(bigRR)).toLocaleString()+'</td><td></td></tr>';
   host.innerHTML = '<div class="card dmrr">'
-    + '<div class="dmrr-top"><div class="dmrr-k">Run-rate · what they buy per week'+(dsCases>=1?' <span style="color:var(--gray-400);font-weight:400;text-transform:none">· stockable ('+((typeof dsLabelFor==='function')?dsLabelFor(_hpProd, mTotal):'direct-ship')+' shown apart)</span>':'')+'</div>'+seg+'</div>'
+    + '<div class="dmrr-top"><div class="dmrr-k">Run-rate · what they buy per week'+(dsCases>=1?' <span style="color:var(--gray-400);font-weight:400;text-transform:none">· stockable ('+((typeof dsLabelFor==='function')?dsLabelFor(_hpProd, mTotal):'made to order')+' shown apart)</span>':'')+'</div>'+seg+'</div>'
     + '<div class="dmrr-bigrow"><div class="dmrr-big">'+bigRR.toLocaleString()+'</div><div class="dmrr-u">cs/wk</div><div class="dmrr-role">'+(win===26?'26-week smooth':win===13?'13-week base':win===6?'6-week momentum':'3-week spot')+'</div></div>'
     + dmSoldAsHTML(bigRR*cl, cl, m.presMix)
-    + (dsCases>=1 ? ('<div style="font-family:var(--fm);font-size:11px;line-height:1.5;margin:-2px 0 10px;color:#7c3aed">＋ <b>~'+Math.round(dsCases).toLocaleString()+' cs/wk</b> '+((typeof dsLabelFor==='function')?dsLabelFor(_hpProd, mTotal):'direct-ship')+' <span style="color:var(--gray-400)">— order-driven, ships from supplier · excluded from this run-rate (never touches stock)</span></div>') : '')
+    + (dsCases>=1 ? ('<div style="font-family:var(--fm);font-size:11px;line-height:1.5;margin:-2px 0 10px;color:#7c3aed">＋ <b>~'+Math.round(dsCases).toLocaleString()+' cs/wk</b> '+((typeof dsLabelFor==='function')?dsLabelFor(_hpProd, mTotal):'made to order')+' <span style="color:var(--gray-400)">— bought when they order · out of this run-rate, because no stock waits for it</span></div>') : '')
     // ── Lo comprado contra orden, nombrado ────────────────────────────────────────────────────────
     // Sol-ti desaparecía de la lista de clientes: su tasa neta es 0 y la lista solo muestra >= 1 cs/wk.
     // Meterlo de vuelta ahí sería ruido —esa lista existe para sumar el titular y una fila en 0 no suma—
@@ -26960,9 +26960,12 @@ function dmForwardWeeks(afterWk, product) {
     if(!c || c.type !== 'inv' || !c.wk || _cmProd(c) !== _p) return;
     (byWk[c.wk] = byWk[c.wk] || { committed:0, direct:0 }).committed += (c.cases || 0);
   });
-  if(_p === 'ginger'){   // direct-ship (port container → customer) is a ginger-only concept
+  // Era ginger-only, de cuando el contra-orden solo existía para ginger. Ya no: turmeric tiene seis
+  // POs marcadas para Sol-ti y garlic una para Whole Foods, y el gráfico las dibujaba en cero. Se
+  // suman las DOS formas —cruzado y reempacado— porque las dos son volumen comprado contra orden.
+  {
     (typeof getOrders === 'function' ? getOrders() : []).forEach(function(o) {
-      if(!o || _ordProd(o) !== 'ginger' || !Array.isArray(o.directShip)) return;
+      if(!o || _ordProd(o) !== _p || !Array.isArray(o.directShip)) return;
       var wk = dmMondayISO(o.arrivalEstimated || o.arrivalActual); if(!wk) return;
       var tot = o.directShip.reduce(function(s, d){ return s + (d.cases || 0); }, 0);
       if(tot > 0) (byWk[wk] = byWk[wk] || { committed:0, direct:0 }).direct += tot;
@@ -27071,7 +27074,7 @@ function dmTrendPriceShell(){
         + '<span><i class="sw" style="background:var(--jlz)"></i>Cases / week</span>'
         + '<span><i class="ln"></i>$/lb (sell price)</span>'
         + '<span><i class="sw" style="background:var(--jlz-light);border:1.5px solid var(--jlz)"></i>Committed (booked)</span>'
-        + '<span><i class="sw" style="background:var(--jlz-light);border:1.5px solid var(--jlz);background-image:repeating-linear-gradient(45deg,var(--jlz) 0 1px,transparent 1px 3px)"></i>Direct-ship</span>'
+        + '<span><i class="sw" style="background:var(--jlz-light);border:1.5px solid var(--jlz);background-image:repeating-linear-gradient(45deg,var(--jlz) 0 1px,transparent 1px 3px)"></i>Made to order</span>'
         + '<span style="margin-left:auto"><i class="sw hatch"></i>incomplete week</span>'
       + '</div>'
       + '<div id="dm-note"></div>'
@@ -27308,7 +27311,7 @@ function dmRenderTrendPrice(){
      // ventas, direct-ship incluido. Pero eso la hace distinta del run-rate de las zonas 1 y 2, que es
      // solo stock — turmeric muestra 254 acá y 88 arriba. Se dice en la propia fila en vez de dejar dos
      // números sin explicar en la misma pantalla.
-     '<div class="dm-ro"><div class="rl">Cases / wk <span style="font-weight:400;color:var(--gray-400)">· all sales</span></div><div class="rv">'+dmFmt0(cmp.casesNow)+' '+dmDeltaTag(cmp.dCases)+'</div><div class="rcmp">prior '+dmFmt0(cmp.casesPrior)+' \u00b7 '+win+'w vs '+win+'w'+(_dsInTP>=1?(' \u00b7 incl. '+dmFmt0(_dsInTP)+' direct-ship'):'')+'</div></div>'
+     '<div class="dm-ro"><div class="rl">Cases / wk <span style="font-weight:400;color:var(--gray-400)">· all sales</span></div><div class="rv">'+dmFmt0(cmp.casesNow)+' '+dmDeltaTag(cmp.dCases)+'</div><div class="rcmp">prior '+dmFmt0(cmp.casesPrior)+' \u00b7 '+win+'w vs '+win+'w'+(_dsInTP>=1?(' \u00b7 incl. '+dmFmt0(_dsInTP)+' made to order'):'')+'</div></div>'
     +'<div class="dm-ro"><div class="rl">$/lb sell price</div><div class="rv">'+dmMoney2(cmp.pxNow)+' '+dmDeltaTag(cmp.dPx)+'</div><div class="rcmp">prior '+dmMoney2(cmp.pxPrior)+' \u00b7 vol-weighted</div></div>'
     +'<div class="dm-ro"><div class="rl">Implied $ / wk</div><div class="rv">$'+dmFmt0(cmp.casesNow*cl*cmp.pxNow)+'</div><div class="rcmp">cases \u00d7 '+cl+'lb \u00d7 $/lb</div></div>';
   const DM_SPAN=26;                                   // span del gráfico: FIJO, para no confundirlo con la ventana
@@ -27444,7 +27447,7 @@ function dmRenderPulse(){
         +'<div><span class="ck">Cover</span><span class="cv" style="color:var(--sev)">'+(s.cover!=null?(Math.round(s.cover*10)/10)+' wks':'&mdash;')+'</span></div>'
         +'<div><span class="ck">On hand</span><span class="cv">'+dmFmt0(s.onHand)+' '+s.unit+'</span></div>'
       +'</div>'
-      + (s.ds>=1 ? '<div class="pds">+'+dmFmt0(s.ds)+' cs/wk <span>'+dmEsc((typeof dsLabelFor==='function')?dsLabelFor(p):'direct-ship')+'</span></div>' : '')
+      + (s.ds>=1 ? '<div class="pds">+'+dmFmt0(s.ds)+' cs/wk <span>'+dmEsc((typeof dsLabelFor==='function')?dsLabelFor(p):'made to order')+'</span></div>' : '')
       +'<div class="pspark">'+dmSparkSVG(s.spark)+'</div>'
     +'</div>';
   }).join('') + '</div>';
@@ -27787,7 +27790,7 @@ function dmcRenderChips() {
     (typeof getOrders === 'function' ? getOrders() : []).forEach(function(o) {
       if(!o || _ordProd(o) !== 'ginger' || !Array.isArray(o.directShip)) return;
       o.directShip.forEach(function(d, i) {
-        html += '<div class="dmc-chip"><span><b>' + libEsc(d.customer) + '</b> · ' + libEsc(o.jlzPo) + ' · ' + d.cases + ' cs <span class="dmc-tag direct">direct-ship</span></span>'
+        html += '<div class="dmc-chip"><span><b>' + libEsc(d.customer) + '</b> · ' + libEsc(o.jlzPo) + ' · ' + d.cases + ' cs <span class="dmc-tag direct">made to order</span></span>'
           + '<button class="dmc-rm" onclick="dmcRemoveDirect(\'' + docJs(o.jlzPo) + '\',' + i + ')" title="Remove">×</button></div>';
       });
     });
@@ -28228,8 +28231,9 @@ function renderBuildupPanel(){
   // Pass-through accounts: shipped supplier → customer, so their volume is deliberately OUT of every
   // number above. Listed here (never hidden) so it is obvious what was set aside and easy to undo.
   h += '<div style="margin-top:10px;padding:10px 12px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:var(--r)">'
-    + '<div style="font-size:11px;font-weight:700;color:var(--gray-600);margin-bottom:6px">Cuentas que NO entran al inventario '
-    + '<span style="font-weight:400;color:var(--gray-400)">· direct-ship para ' + esc(pl) + ' — su volumen no cuenta como demanda de stock</span></div>';
+    + '<div style="font-size:11px;font-weight:700;color:var(--gray-600);margin-bottom:6px">Bought to order '
+    + '<span style="font-weight:400;color:var(--gray-400)">· ' + esc(pl) + ' &mdash; you buy for them when they order, so no stock waits for it and their volume is out of every number above. '
+    + 'Some never reach the cooler (cross-dock); others arrive and get repacked here. Either way they do not drive the buy.</span></div>';
   if(dsList.length){
     h += dsList.map(function(c){
       return '<span style="display:inline-flex;align-items:center;gap:6px;margin:0 8px 6px 0;padding:3px 8px;border-radius:6px;'
@@ -28298,10 +28302,10 @@ function cxKpis(m){
              Object.keys(_mto).forEach(function(c){ _ds += (+_mto[c]||0); }); }catch(e){ _ds = 0; }
         var _stock = Math.max(0, _agg/_cl - _ds);
         var _dsNote = (_ds >= 1)
-          ? (' \u00b7 <span style="color:#7c3aed">+'+cxFmtN(_ds)+' cs/wk '+((typeof dsLabelFor==='function')?dsLabelFor(_p,m):'direct-ship')+'</span>')
+          ? (' \u00b7 <span style="color:#7c3aed">+'+cxFmtN(_ds)+' cs/wk '+((typeof dsLabelFor==='function')?dsLabelFor(_p,m):'made to order')+'</span>')
           : '';
         return '<div class="cx-kpi"><div class="v">'+cxFmtN(_stock)+' '+dmRunRateDelta()+'</div><div class="l">Run-rate cases/wk'
-          + cxInfo('Stockable demand: average cases sold per week over the last '+_w+' weeks, EXCLUDING direct-ship accounts (they ship supplier \u2192 customer and never enter inventory). This is the number that feeds the Buy Planner. 1 case = '+_cl+' lb, post-shrink.')
+          + cxInfo('Stockable demand: average cases sold per week over the last '+_w+' weeks, EXCLUDING made-to-order accounts (you buy for them when they order, so no stock waits for them \u2014 whether the cases cross-dock or get repacked here). This is the number that feeds the Buy Planner. 1 case = '+_cl+' lb, post-shrink.')
           + '</div><div class="x">'+cxFmtN(_stock*_cl)+' lbs/wk \u00b7 '+_w+'-wk window'+_dsNote+_qkNote+'</div></div>';
       })()
     + '<div class="cx-kpi"><div class="v">'+active+'</div><div class="l">Active clients</div><div class="x">'+quiet+' going quiet</div></div>'

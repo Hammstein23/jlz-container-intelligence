@@ -507,7 +507,10 @@ check('solo devuelve las cuentas del producto pedido', dsNamesFor('garlic', _MDL
 _PAIRS.garlic['Sol-ti'] = 1;
 check('con dos cuentas las nombra a las dos', dsLabelFor('garlic', _MDL), 'Whole Foods Market + Sol-ti made to order');
 _PAIRS.garlic["Albert's Organics"] = 1;
-check('con tres o más, cuenta en vez de enumerar', dsLabelFor('garlic', _MDL), '3 accounts direct-ship');
+// "made to order" y no "direct-ship": lo que define al concepto para el plan es que se compra
+// CONTRA una orden, no que evite el almacen. El ajo de Whole Foods entra a camara y sale a los
+// pocos dias, y la palabra vieja decia lo contrario de la mitad de los casos.
+check('con tres o más, cuenta en vez de enumerar', dsLabelFor('garlic', _MDL), '3 accounts made to order');
 if(_mtoSave0) mtoByCustomer = _mtoSave0;
 
 // ════ Un solo alcance para toda la app ══════════════════════════════════════
