@@ -35,7 +35,8 @@ var _PRISTINO_NOMBRES = [
   // Los insumos del numero de compra. Sin esto el stub de un grupo se filtraba al siguiente:
   // `mtoCasesPerWeek` clavado en 0 hacia fallar seis checks de su propio grupo, tres grupos despues.
   'PRODUCTS','invmProductModel','invmRunRateLbs','invmStockableWeekly','prodInvFor',
-  'prodCommittedTotal','mtoCasesPerWeek','dsWindow','_ordOrigin','directShipTotal','invmOriginsFor'
+  'prodCommittedTotal','mtoCasesPerWeek','dsWindow','_ordOrigin','directShipTotal','invmOriginsFor',
+  'invmRunway','bpProtectPlan'
 ];
 var _PRISTINO = {};
 _PRISTINO_NOMBRES.forEach(function(n){ try { _PRISTINO[n] = eval(n); } catch (e) {} });
@@ -1595,6 +1596,37 @@ group('invmBuySuggestion · cuánto comprar, cuándo ordenar, cuándo llega');
   ok('y el desglose muestra que sobra, no que falta', gc.steps.supply > gc.steps.needed);
   STATS.availCases = 200;
 
+  // ── La fecha sale de la PROYECCION, no de dividir una cobertura plana ────────────────────────
+  // La cuenta plana sabe cuantas semanas de producto hay; no sabe en que semana cae el pozo. Con
+  // algo grande llegando en cinco semanas la cobertura se ve sana y el hueco del mes que viene no
+  // aparece. Si hay proyeccion, manda la proyeccion — la misma logica que el Buy Planner de ginger.
+  var WK=[], _c=new Date(dmWeekKey(hoy)+'T12:00:00');
+  for(var _i=0;_i<12;_i++){ WK.push(dmWeekKey(_c)); _c=new Date(_c.getTime()+7*86400000); }
+  var menos=function(wkISO,d){ return dmISOLocal(new Date(new Date(wkISO+'T12:00:00').getTime()-d*86400000)); };
+  STATS.availCases = 1000; STATS.incomingCases = 0;
+  invmRunway = function(){ return { start:1000,
+    rows: WK.map(function(w){ return { wk:w, arrived:0, demand:100 }; }) }; };
+  var gp = invmBuySuggestion('turmeric','Fiji');
+  ok('trae el plan de proteccion', !!gp.protect && !gp.protect.horizonShort);
+  check('la fecha limite ya no sale de la cuenta plana', gp.orderBy, menos(WK[7],10));
+  check('esperar es gratis solo hasta la primera llegada posible', gp.protect.free.landsWk, WK[2]);
+  // Aca la sugerencia es no comprar nada (hay 1.000 cajas para un objetivo de 343), asi que el
+  // pedido que se simula es de cero: la pregunta que queda es "¿para cuando tiene que aterrizar
+  // ALGO?", y sigue teniendo respuesta. Por eso el borde cae en WK[8] y no en WK[9].
+  check('con compra cero el plan sigue contestando', gp.buy, 0);
+  check('el borde del precipicio cae despues', gp.protect.stockout.landsWk, WK[8]);
+  ok('y el borde es posterior al plazo que protege', gp.protect.stockout.orderBy > gp.protect.protect.orderBy);
+  ok('el piso del plazo que protege respeta el colchon', gp.protect.protect.trough >= gp.protect.safetyCases);
+
+  // Si el pozo cae antes de que nada pueda llegar, la respuesta es "ahora", no una fecha inventada.
+  invmRunway = function(){ return { start:150,
+    rows: WK.map(function(w){ return { wk:w, arrived:0, demand:100 }; }) }; };
+  var gy = invmBuySuggestion('turmeric','Fiji');
+  check('no se salva el colchon', gy.protect.floorUnavoidable, true);
+  check('y la fecha limite es hoy', gy.orderBy, iso(0));
+  check('sin plazo que proteja', gy.protect.protect, null);
+  STATS.availCases = 200; STATS.incomingCases = 100;
+
   // Sin demanda no hay sugerencia que dar.
   invmProductModel = function(){ return { caseLb:30, runRate3:0, runRate6:0, runRate13:0, runRate26:0 }; };
   check('sin demanda no inventa una recomendación', invmBuySuggestion('turmeric','Fiji'), null);
@@ -1706,6 +1738,64 @@ group('En camino · el origen filtra, pero no puede hacer desaparecer carga');
   check('sin filtro de origen entra todo', sum(invmProductArrivals('ginger','all')), 1360);
 })();
 
+group('bpProtectPlan · la ultima fecha en que ordenar TODAVIA protege');
+// El caso real del 2026-09-10, con las cinco ordenes de ginger-Peru ya en el agua. Anclar el plazo
+// al quiebre hacia aterrizar el contenedor la semana en que el stock es cero: se tocaban 437 cajas
+// contra un colchon de 866. Y ordenar tres semanas ANTES no cambiaba nada, porque el pozo cae en la
+// semana en curso, antes de que cualquier orden nueva pueda llegar.
+(function(){
+  var W=['2026-09-07','2026-09-14','2026-09-21','2026-09-28','2026-10-05','2026-10-12','2026-10-19',
+         '2026-10-26','2026-11-02','2026-11-09','2026-11-16','2026-11-23','2026-11-30','2026-12-07'];
+  var LLEG={ '2026-09-14':1300, '2026-09-21':2620, '2026-09-28':1320, '2026-10-12':1300 };
+  var rows=W.map(function(w){ return { wkISO:w, arrivals:LLEG[w]||0, demand:826 }; });
+  var O={ startCases:2983, safetyCases:866, leadDays:37, addCases:1320, today:'2026-09-10T12:00:00' };
+  var p=bpProtectPlan(rows,O);
+  ok('devuelve un plan', !!p && !p.horizonShort);
+
+  // Lo antes que puede llegar una orden puesta hoy: 37 dias -> la semana del 19-oct.
+  check('la primera llegada posible es el 19-oct', p.best.landsWk, '2026-10-19');
+  check('y esa orden se pondria hoy o casi', p.best.orderBy, '2026-09-12');
+  check('el mejor piso alcanzable son 2.157 cajas', p.best.trough, 2157);
+  check('y cae en la semana EN CURSO', p.best.troughWk, '2026-09-07');
+
+  // Esperar sale gratis mientras el piso siga siendo ese: el pozo ya paso antes de la llegada.
+  check('esperar es gratis hasta el 26-sep', p.free.orderBy, '2026-09-26');
+  check('esa orden aterriza el 2-nov',       p.free.landsWk, '2026-11-02');
+  check('y el piso no se movio',             p.free.trough, 2157);
+
+  // La fecha que hay que cumplir: la ultima que no baja del colchon.
+  check('el plazo que protege es el 10-oct', p.protect.orderBy, '2026-10-10');
+  check('aterriza el 16-nov',                p.protect.landsWk, '2026-11-16');
+  check('tocando 1.263 cajas, sobre las 866', p.protect.trough, 1263);
+  ok('nunca baja del colchon', p.protect.trough >= p.safetyCases);
+
+  // Y el borde: el plazo viejo, el que anclaba al quiebre.
+  check('el borde del precipicio es el 17-oct', p.stockout.orderBy, '2026-10-17');
+  check('y toca 437 cajas', p.stockout.trough, 437);
+  ok('el borde esta POR DEBAJO del colchon', p.stockout.trough < p.safetyCases);
+  ok('una semana despues del plazo que protege', p.stockout.orderBy > p.protect.orderBy);
+  check('con el colchon alcanzable, no se pide ordenar ya', p.floorUnavoidable, false);
+
+  // ── Cuando ya es tarde, se dice que es tarde ──────────────────────────────────────────────────
+  // Si el pozo cae antes de que cualquier orden pueda llegar, no hay fecha que valga: es ahora, y
+  // hay que decir cuanto se va a tocar igual en vez de inventar un plazo que no salva nada.
+  var tarde=bpProtectPlan(rows, { startCases:1200, safetyCases:866, leadDays:37, addCases:1320,
+                                  today:'2026-09-10T12:00:00' });
+  check('el piso ya no se salva', tarde.floorUnavoidable, true);
+  check('y no hay plazo que lo proteja', tarde.protect, null);
+  check('pero sigue diciendo cuanto se toca', tarde.best.trough, 374);
+  ok('y en que semana', tarde.best.troughWk === '2026-09-07');
+
+  // Sin ordenar nada, el piso es el de la proyeccion entera.
+  ok('sin ordenar nada el piso es peor', p.noOrder.trough < p.protect.trough);
+  check('sin filas no inventa un plan', bpProtectPlan([], O), null);
+
+  // Con add 0 la pregunta sigue teniendo sentido: por cuando tiene que aterrizar ALGO.
+  var sinCantidad=bpProtectPlan(rows, { startCases:2983, safetyCases:866, leadDays:37, addCases:0,
+                                        today:'2026-09-10T12:00:00' });
+  ok('sin cantidad el plazo no es posterior', sinCantidad.protect.orderBy <= p.protect.orderBy);
+})();
+
 group('La linea de compra de ginger · ordenar en el plazo no llega el mismo dia');
 // "Buy 1 container · order by 2026-10-17 · in 37d · lands 2026-10-17". Las dos fechas iguales porque
 // faltaban 37 dias para el plazo y el lead de mar es de 37: `lands` salia de HOY, no del plazo.
@@ -1727,24 +1817,39 @@ group('La linea de compra de ginger · ordenar en el plazo no llega el mismo dia
   ok('y aterriza plazo + lead',  h.indexOf('lands <b>'+iso(74)+'</b>')>-1);
   ok('NO aterriza el mismo dia que se ordena', h.indexOf('lands <b>'+iso(37)+'</b>')<0);
 
-  // ── La fecha con la que se planifica ─────────────────────────────────────────────────────────
-  // El plazo del titular aterriza el dia que el stock llega a CERO. El del colchon cae una semana
-  // antes y es el que hay que cumplir — es el criterio que ya usan los otros cuatro productos.
-  ok('sin plazo de colchon no inventa uno', h.indexOf('Plan to')<0);
-  window._bpDigest.safetySeaDeadline = { date:new Date(hoy.getTime()+30*DIA), daysLeft:30 };
-  var hb = bpGingerSuggestionHTML();
-  ok('muestra la fecha del colchon',   hb.indexOf('Plan to <b>'+iso(30)+'</b> (30d)')>-1);
-  ok('dice por que no es la de arriba', hb.indexOf('zero')>-1);
-  ok('y la cuantifica en cajas',        hb.indexOf('866 cases')>-1);
-  ok('sin pisar el plazo del titular',  hb.indexOf('order by <b>'+iso(37)+'</b>')>-1);
+  // ── El titular va anclado a la fecha que PROTEGE, no a la del quiebre ────────────────────────
+  // Sin plan de proteccion cae al plazo viejo (el del quiebre), que es lo que se acaba de probar.
+  // Con plan, manda el plan — y las tres fechas se muestran juntas porque cada una decide algo.
+  ok('sin plan no inventa las tres fechas', h.indexOf('Free until')<0 && h.indexOf('is the edge')<0);
+  window._bpDigest.protect = {
+    horizonShort:false, safetyCases:866, floorUnavoidable:false,
+    best:     { landsWk:iso(39), orderBy:iso(2),  daysLeft:2,  trough:2157, troughWk:iso(-3) },
+    free:     { landsWk:iso(53), orderBy:iso(16), daysLeft:16, trough:2157, troughWk:iso(-3) },
+    protect:  { landsWk:iso(67), orderBy:iso(30), daysLeft:30, trough:1263, troughWk:iso(60) },
+    stockout: { landsWk:iso(74), orderBy:iso(37), daysLeft:37, trough:437,  troughWk:iso(67) },
+    noOrder:  { trough:-3688, troughWk:iso(102) }
+  };
+  var hp = bpGingerSuggestionHTML();
+  ok('el titular ordena por la fecha que protege', hp.indexOf('order by <b>'+iso(30)+'</b> &middot; in 30d')>-1);
+  ok('y ya NO por la del quiebre',                 hp.indexOf('order by <b>'+iso(37)+'</b>')<0);
+  ok('aterriza donde dice el plan',                hp.indexOf('lands <b>'+iso(67)+'</b>')>-1);
+  ok('dice hasta cuando esperar es gratis',        hp.indexOf('Free until '+iso(16))>-1);
+  ok('explica que antes de esa fecha no cambia nada', hp.indexOf('changes nothing')>-1);
+  ok('cuantifica el piso que se toca',             hp.indexOf('<b>1,263</b> cases')>-1);
+  ok('nombra el colchon en cajas',                 hp.indexOf('866-case buffer')>-1);
+  ok('marca el borde como borde, no como meta',    hp.indexOf(iso(37)+' is the edge')>-1);
+  ok('y dice que ese aterriza en el cero',         hp.indexOf('the week you hit zero')>-1);
 
-  // Vencida se lee al reves: ya deberias haber ordenado.
-  window._bpDigest.safetySeaDeadline = { date:new Date(hoy.getTime()-4*DIA), daysLeft:-4 };
-  var hv = bpGingerSuggestionHTML();
-  ok('vencida avisa que ya paso',  hv.indexOf('should have ordered by <b>'+iso(-4)+'</b>')>-1);
-  ok('y dice hace cuanto',         hv.indexOf('4d ago')>-1);
-  ok('sin decir "Plan to" en pasado', hv.indexOf('Plan to')<0);
-  window._bpDigest.safetySeaDeadline = null;
+  // Cuando el pozo cae antes de que cualquier orden pueda llegar, no hay plazo que valga.
+  window._bpDigest.protect.floorUnavoidable = true;
+  window._bpDigest.protect.protect = null;
+  window._bpDigest.protect.best = { landsWk:iso(39), orderBy:iso(2), daysLeft:2, trough:374, troughWk:iso(-3) };
+  var hy = bpGingerSuggestionHTML();
+  ok('dice que es ahora',            hy.indexOf('order <b>now</b>')>-1);
+  ok('y cuanto se toca igual',       hy.indexOf('<b>374</b> cases')>-1);
+  ok('sin prometer un plazo',        hy.indexOf('Free until')<0);
+  ok('ni ofrecer el borde como meta', hy.indexOf('is the edge')<0);
+  window._bpDigest.protect = null;
 
   // Sin plazo no hay nada que esperar: la cuenta arranca hoy.
   window._bpDigest.seaDeadline = null;

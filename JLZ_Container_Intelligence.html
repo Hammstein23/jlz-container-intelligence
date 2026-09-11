@@ -16254,6 +16254,69 @@ function _invmKnownOrigin(p, o){
        for(var i=0;i<sup.length;i++) if(String((sup[i]||{}).origin||'')===o) return true; }catch(e){}
   return false;
 }
+// ── La última fecha en que ordenar TODAVÍA te protege ────────────────────────────────────────────
+// La pregunta no es "¿cuándo me quedo sin producto?" sino "¿cuál es la última fecha en que puedo
+// poner la orden sin bajar del colchón ninguna semana mientras espero?". Son distintas y la
+// diferencia es cara: dividir una cobertura plana por la demanda NO ve el pozo que hay antes de que
+// llegue lo que ya está comprado, y anclar al quiebre hace aterrizar el contenedor el día que el
+// stock es cero. Con los números del 2026-09-10, ginger: esperar al plazo del quiebre tocaba 441
+// cajas — medio colchón— mientras que ordenar tres semanas antes no costaba absolutamente nada.
+//
+// `rows` va semana a semana desde la semana en curso: {wkISO, arrivals, demand}. Se prueba aterrizar
+// el pedido en CADA semana y se mide el piso hasta esa llegada — después de que entra, la pregunta
+// ya es de la orden siguiente. Tres fechas salen de ahí, y las tres sirven para algo distinto:
+//
+//   free      la última en que esperar sale GRATIS (el piso sigue siendo el mejor alcanzable)
+//   protect   la última que no baja del colchón   ← es la que hay que cumplir
+//   stockout  la última antes de quedarse en cero ← el borde del precipicio, no una recomendación
+//
+// El piso baja de forma monótona al atrasar la orden (la ventana crece y la llegada se corre), así
+// que un solo barrido lineal alcanza para las tres.
+function bpProtectPlan(rows, opts){
+  rows = Array.isArray(rows) ? rows : []; opts = opts || {};
+  var n = rows.length; if(!n) return null;
+  var DIA = 86400000;
+  var safety = Math.max(0, +opts.safetyCases || 0);
+  var lead   = Math.max(0, +opts.leadDays || 0);
+  var add    = Math.max(0, +opts.addCases || 0);
+  var start  = +opts.startCases || 0;
+  var hoy    = opts.today ? new Date(opts.today) : new Date();
+  var iso = function(d){ return d ? ((typeof dmISOLocal==='function') ? dmISOLocal(d) : d.toISOString().slice(0,10)) : null; };
+  var wkDate  = function(i){ var w = rows[i] && rows[i].wkISO; return w ? new Date(String(w)+'T12:00:00') : null; };
+  var orderBy = function(i){ var d = wkDate(i); return d ? new Date(d.getTime() - lead*DIA) : null; };
+  var dias    = function(d){ return d ? Math.round((d - hoy)/DIA) : null; };
+  // El piso si el pedido aterriza en la semana `land` (-1 = no ordenar nada).
+  var troughIf = function(land){
+    var st = start, min = Infinity, minWk = null;
+    for(var i=0;i<n;i++){
+      st += (+(rows[i].arrivals)||0) + ((i===land) ? add : 0) - (+(rows[i].demand)||0);
+      if(st < min){ min = st; minWk = rows[i].wkISO; }
+      if(i === land) break;
+    }
+    return { trough: min, troughWk: minWk };
+  };
+  // La primera semana a la que una orden puesta HOY todavía llega a tiempo.
+  var first = -1;
+  for(var i=0;i<n;i++){ var dl = dias(orderBy(i)); if(dl != null && dl >= 0){ first = i; break; } }
+  var noOrder = troughIf(-1);
+  if(first < 0) return { horizonShort:true, best:null, free:null, protect:null, stockout:null,
+                         noOrder:noOrder, safetyCases:Math.round(safety), floorUnavoidable:true };
+  var pack = function(i){ if(i < 0) return null; var t = troughIf(i), ob = orderBy(i);
+    return { landsWk:rows[i].wkISO, orderBy:iso(ob), daysLeft:dias(ob),
+             trough:Math.round(t.trough), troughWk:t.troughWk }; };
+  var best = troughIf(first);
+  var free = first, protect = -1, stockout = -1;
+  for(var j=first;j<n;j++){
+    var t = troughIf(j);
+    if(t.trough >= best.trough - 0.5) free = j;   // media caja de tolerancia: es redondeo, no holgura
+    if(t.trough >= safety) protect = j;
+    if(t.trough > 0)       stockout = j;
+  }
+  return { horizonShort:false, best:pack(first), free:pack(free),
+           protect:(protect>=0)?pack(protect):null, stockout:(stockout>=0)?pack(stockout):null,
+           noOrder:noOrder, safetyCases:Math.round(safety),
+           floorUnavoidable:(best.trough < safety) };
+}
 function invmProductArrivals(p, origin){
   var out={};
   var orders=(typeof getOrders==='function')?getOrders():[];
@@ -16864,7 +16927,10 @@ function invmRunway(p, origin, weeks, opts){
       var cover=(d>0)? Math.max(0,stock)/d : 0;
       if(cover>peak){ peak=cover; peakWk=wk; }
       if(dip===null && stock<=0) dip=i;
-      rows.push({ i:i, wk:wk, arrived:inc, hypoSale:extra, stock:Math.max(0,stock), cover:cover });
+      // `stock` va recortado en cero porque dibuja las barras; `raw` y `demand` son para la cuenta,
+      // que necesita ver cuánto se hunde de verdad y cuánto sale cada semana.
+      rows.push({ i:i, wk:wk, arrived:inc, hypoSale:extra, stock:Math.max(0,stock), raw:stock,
+                  demand:d+extra, cover:cover });
     }
     var sumIn=Object.keys(hypoIn).reduce(function(t,k){ return t+(hypoIn[k]||0); },0);
     var sumOut=Object.keys(hypoOut).reduce(function(t,k){ return t+(hypoOut[k]||0); },0);
@@ -17054,6 +17120,28 @@ function invmBuySuggestion(p, origin, opts){
                      .map(function(w){ return { win:+w, orderBy:byWin[w].orderBy, buy:byWin[w].buy,
                                                 offset:byWin[w].offset, far:byWin[w].far }; })
                      .sort(function(a,b){ return a.win-b.win; });
+    // ── La misma lógica que ginger, sobre la proyección de este producto ─────────────────────────
+    // El `offset` de arriba divide una cobertura plana: sabe cuántas semanas de producto hay, no en
+    // qué semana cae el pozo. Con algo grande llegando en cinco semanas, la cobertura se ve sana y
+    // el hueco de la semana que viene no aparece. Esto recorre la proyección real.
+    var prot=null;
+    try{
+      var RW=invmRunway(p, origin, 26, {whatif:_wi});
+      if(RW && RW.rows && RW.rows.length){
+        prot=bpProtectPlan(
+          RW.rows.map(function(r){ return { wkISO:r.wk, arrivals:+r.arrived||0, demand:+r.demand||0 }; }),
+          { startCases:(RW.start!=null?RW.start:(s.availCases||0)),
+            safetyCases:(s.safetyWks||0)*now.demand, leadDays:lead, addCases:now.buy||0 });
+      }
+    }catch(e){}
+    // La fecha que se muestra pasa a ser la que protege. La cuenta plana queda de respaldo para
+    // cuando no hay proyección (sin modelo, sin semanas), nunca por encima de ella.
+    if(prot && prot.protect && prot.protect.orderBy){
+      now.orderBy = prot.protect.orderBy;
+      now.offset  = prot.protect.daysLeft;
+    } else if(prot && prot.floorUnavoidable){
+      now.orderBy = addD(0); now.offset = 0;      // ni ordenando hoy se salva: es ahora
+    }
     var fit=null; try{ fit=invmWindowFit(p, origin); }catch(e){}
     // Cada eslabón de la cuenta, para que la pantalla pueda mostrarla entera y sea auditable.
     var rrLbs=rateFor(win)||0;
@@ -17062,7 +17150,7 @@ function invmBuySuggestion(p, origin, opts){
                 leadWks:s.leadWks||0, safetyWks:s.safetyWks||0, targetWks:s.targetWks||0,
                 serviceLevel:s.serviceLevel, cv:s.cv||0, shrinkPct:s.shrinkPct||0,
                 supply:supply, needed:(s.targetWks||0)*now.demand };
-    return { fit:fit, steps:steps, whatif:_wi, hypoIn:hypoIn, hypoOut:hypoOut,
+    return { fit:fit, steps:steps, protect:prot, whatif:_wi, hypoIn:hypoIn, hypoOut:hypoOut,
              p:p, label:s.label||p, origin:origin, caseLb:cl, supplier:best.name||'', mode:best.mode||'',
              leadDays:lead, avail:s.availCases||0, incoming:incoming, excluded:s.excludedCases||0,
              demand:now.demand, cover:now.cover, buy:now.buy, orderBy:now.orderBy, offset:now.offset,
@@ -17098,6 +17186,33 @@ function invmBuySuggestionHTML(p, origin, opts){
         : (' &mdash; less than the '+g.leadDays+' days it takes to arrive')) : '')
     + ' &middot; '+esc(g.supplier)+' takes '+g.leadDays+' days'+(g.mode?(' by '+esc(g.mode)):'')
     + (g.excluded>0?(' &middot; '+f(g.excluded)+' excluded cases left out'):'');
+  // ── Las mismas tres fechas que ginger ─────────────────────────────────────────────────────────
+  // Este producto llegaba por otro camino —una cobertura plana dividida por la demanda— que sabe
+  // cuántas semanas de producto hay pero no en qué semana cae el pozo. Ahora recorre la proyección,
+  // igual que el Buy Planner, y muestra lo mismo.
+  var plan='', P=g.protect||null;
+  if(P && !P.horizonShort){
+    var wkc=function(c){ return (g.demand>0)?((Math.round(c/g.demand*10)/10).toFixed(1)+'w'):''; };
+    var li=function(col,txt){ return '<div style="display:flex;gap:7px;line-height:1.5;margin-top:3px">'
+      + '<span style="color:'+col+';font-weight:700;flex:0 0 auto">&#9679;</span><span>'+txt+'</span></div>'; };
+    var body='';
+    if(P.floorUnavoidable && P.best){
+      body += li('#DC2626','<b>Order now.</b> Even today&rsquo;s order bottoms out at <b>'+f(P.best.trough)+'</b> cases ('
+        + wkc(P.best.trough)+') in '+esc(P.best.troughWk)+' &mdash; under your '+f(P.safetyCases)+'-case buffer. '
+        + 'Nothing can land before that dip.');
+    } else {
+      if(P.free && P.protect && P.free.orderBy !== P.protect.orderBy)
+        body += li('var(--gray-400)','<b>Free until '+esc(P.free.orderBy)+'.</b> Ordering earlier changes nothing &mdash; '
+          + 'the dip lands at '+f(P.best.trough)+' cases either way.');
+      if(P.protect)
+        body += li('var(--jlz)','<b>Order by '+esc(P.protect.orderBy)+'</b> ('+P.protect.daysLeft+'d) to stay above your '
+          + f(P.safetyCases)+'-case buffer. Lowest you touch: <b>'+f(P.protect.trough)+'</b> cases ('+wkc(P.protect.trough)+') in '+esc(P.protect.troughWk)+'.');
+      if(P.stockout && P.protect && P.stockout.orderBy !== P.protect.orderBy)
+        body += li('#DC2626','<b>'+esc(P.stockout.orderBy)+' is the edge</b>, not a target: that one lands the week you hit zero.');
+    }
+    if(body) plan='<div style="margin-top:7px;padding:7px 10px;border-radius:6px;font-family:var(--fm);font-size:11px;'
+      + 'background:var(--white);border:1px solid '+(P.floorUnavoidable?'#FECACA':'var(--gray-200)')+';color:var(--gray-600)">'+body+'</div>';
+  }
   var spread = g.others.length
     ? ('<div style="margin-top:6px;font-size:10.5px;color:var(--gray-500);font-family:var(--fm)">On the '+g.win+'-week sales rate. Other reads: '
         + g.others.map(function(o){ return o.win+'wk &rarr; '+(o.buy>0?(f(o.buy)+' cs '+(o.offset<0?'now':('by '+esc(o.orderBy)))):'covered'); }).join(' &middot; ')
@@ -17237,7 +17352,7 @@ function invmBuySuggestionHTML(p, origin, opts){
        + '</div>'
        + '<div style="font-size:14px;line-height:1.5;color:var(--gray-800);font-family:var(--fb)">'+head+'</div>'
        + '<div style="margin-top:3px;font-size:11.5px;color:var(--gray-500);font-family:var(--fm);line-height:1.5">'+why+'</div>'
-       + runway + mathRows + spread + fitLine + lumpyLine + trendLine + '</div>';
+       + plan + runway + mathRows + spread + fitLine + lumpyLine + trendLine + '</div>';
 }
 // ── Sugerencia de compra para ginger-Perú ──────────────────────────────────────────────────────
 // No usa la fórmula genérica: ginger-Perú guarda su stock en OTRO store (`bpInvState`, no
@@ -17262,31 +17377,51 @@ function bpGingerSuggestionHTML(){
   // El propio plan lo confirma por dos caminos: plazo de mar + 37 días = 2026-11-23, que es la fecha
   // de quiebre; y el plazo de AIRE + sus 13 días da esa misma fecha. Los dos plazos están anclados al
   // mismo aterrizaje — es lo que los hace plazos. Sin plazo no hay nada que esperar: cuenta desde hoy.
-  var lands='';
-  try{ var l=(sea&&sea.date)?new Date(sea.date):new Date();
-       l.setDate(l.getDate()+Math.round((R.leadWks||0)*7)); lands=iso(l); }catch(e){}
+  // ── El titular va anclado a la fecha que PROTEGE ──────────────────────────────────────────────
+  // Antes apuntaba al quiebre: ordenar ahí aterrizaba el contenedor la semana en que el stock es
+  // cero. El plazo que sirve es el último que no baja del colchón en ninguna semana de espera.
+  var P=d.protect||null, prot=(P&&P.protect)||null;
+  var plazoISO = prot ? prot.orderBy : (sea?iso(sea.date):null);
+  var plazoDias= prot ? prot.daysLeft : dias;
+  var lands = prot ? prot.landsWk : '';
+  if(!prot){ try{ var l=(sea&&sea.date)?new Date(sea.date):new Date();
+                  l.setDate(l.getDate()+Math.round((R.leadWks||0)*7)); lands=iso(l); }catch(e){} }
+  var ya = (P && P.floorUnavoidable);
   var head='Buy <b>'+R.containers+'</b> container'+(R.containers>1?'s':'')+' &middot; ~<b>'+f(R.netCases)+'</b> cases'
-    + (sea? (' &middot; order by <b>'+iso(sea.date)+'</b>'+(dias!=null?(' &middot; in '+dias+'d'):'')) : '')
+    + (ya ? ' &middot; order <b>now</b>'
+          : (plazoISO ? (' &middot; order by <b>'+plazoISO+'</b>'+(plazoDias!=null?(' &middot; in '+plazoDias+'d'):'')) : ''))
     + (lands? (' &middot; lands <b>'+lands+'</b>') : '');
+  if(ya) tone={bg:'#FEF2F2',bd:'#FECACA',fg:'#991B1B'};
   var why=n2(d.coverage)+' weeks of cover from '+f(d.stockCases)+' cases on hand'
     + ' &middot; sea takes '+n2(R.leadWks)+' weeks'
     + (air&&air.daysLeft!=null?(' &middot; by air you have until '+iso(air.date)+' ('+air.daysLeft+'d)'):'');
-  // ── La fecha con la que se planifica, no la de no quebrar ─────────────────────────────────────
-  // El plazo del titular aterriza el día que el stock llega a CERO: cumplirlo es no quedarse sin
-  // producto, con cero margen. Esta otra aterriza cuando tocás el colchón, que es lo que el colchón
-  // existe para evitar, y es el criterio que ya usan los otros cuatro productos.
-  var ss=d.safetySeaDeadline, buffer='';
-  if(ss && ss.daysLeft!=null){
-    var tarde=(ss.daysLeft<0), colW=(d.weeklyDemand>0)?n2((R.ssCases||0)/d.weeklyDemand):null;
-    buffer='<div style="margin-top:6px;padding:6px 9px;border-radius:6px;font-family:var(--fm);'
-      + 'font-size:11px;line-height:1.55;background:'+(tarde?'#FEF2F2':'var(--white)')
-      + ';border:1px solid '+(tarde?'#FECACA':'var(--gray-200)')+';color:'+(tarde?'#991B1B':'var(--gray-600)')+'">'
-      + (tarde
-          ? ('&#9888; To keep your '+(colW?colW+'-week ':'')+'buffer you should have ordered by <b>'+iso(ss.date)
-             +'</b> &mdash; '+Math.abs(ss.daysLeft)+'d ago.')
-          : ('Plan to <b>'+iso(ss.date)+'</b> ('+ss.daysLeft+'d), not to the date above: that one lands the week you hit <b>zero</b>. '
-             + 'This one lands when you touch your '+(colW?colW+'-week ':'')+'buffer of '+f(R.ssCases)+' cases &mdash; which is what the buffer is for.'))
-      + '</div>';
+  // ── Las tres fechas, y para qué sirve cada una ────────────────────────────────────────────────
+  // Esperar no cuesta nada hasta cierto día —el pozo cae ANTES de que cualquier orden nueva pueda
+  // llegar— y a partir de ahí cada semana se paga en cobertura. Ver las tres juntas es lo que
+  // convierte "ordená tal día" en una decisión y no en una orden a ciegas.
+  var buffer='';
+  if(P && !P.horizonShort){
+    var wk=function(c){ return (d.weeklyDemand>0)?(n2(c/d.weeklyDemand)+'w'):''; };
+    var li=function(col,txt){ return '<div style="display:flex;gap:7px;line-height:1.5;margin-top:3px">'
+      + '<span style="color:'+col+';font-weight:700;flex:0 0 auto">&#9679;</span><span>'+txt+'</span></div>'; };
+    var body='';
+    if(ya){
+      body += li('#DC2626','<b>Order now.</b> Even ordering today you bottom out at <b>'+f(P.best.trough)+'</b> cases ('
+        + wk(P.best.trough)+') in '+P.best.troughWk+' &mdash; under your '+f(P.safetyCases)+'-case buffer. '
+        + 'Nothing you order can land before that dip.');
+    } else {
+      if(P.free && prot && P.free.orderBy !== prot.orderBy)
+        body += li('var(--gray-400)','<b>Free until '+P.free.orderBy+'.</b> Ordering any earlier changes nothing &mdash; '
+          + 'the dip lands at '+f(P.best.trough)+' cases either way, before anything new could arrive.');
+      if(prot)
+        body += li('var(--jlz)','<b>Order by '+prot.orderBy+'</b> ('+prot.daysLeft+'d) to stay above your '
+          + f(P.safetyCases)+'-case buffer. Lowest you touch: <b>'+f(prot.trough)+'</b> cases ('+wk(prot.trough)+') in '+prot.troughWk+'.');
+      if(P.stockout && prot && P.stockout.orderBy !== prot.orderBy)
+        body += li('#DC2626','<b>'+P.stockout.orderBy+' is the edge</b>, not a target: that one lands the week you hit zero, '
+          + 'after touching '+f(P.stockout.trough)+' cases.');
+    }
+    if(body) buffer='<div style="margin-top:7px;padding:7px 10px;border-radius:6px;font-family:var(--fm);font-size:11px;'
+      + 'background:var(--white);border:1px solid '+(ya?'#FECACA':'var(--gray-200)')+';color:var(--gray-600)">'+body+'</div>';
   }
   var row=function(h,op,res){
     return '<tr><td style="padding:2px 10px 2px 0;color:var(--gray-400);white-space:nowrap">'+(h||'')+'</td>'
@@ -18512,12 +18647,6 @@ function renderBuyPlanner() {
   const deadlineTarget  = stockoutTarget || safetyDipTarget;
   const seaDeadline = computeDeadline(deadlineTarget, lt.sea_total);
   const airDeadline = computeDeadline(deadlineTarget, lt.air_total);
-  // El plazo de arriba apunta al QUIEBRE: ordenar ahí aterriza justo el día que llegás a cero, sin
-  // margen. El que se usa para planificar es este otro, anclado a tocar el colchón — que es como ya
-  // funcionan los otros cuatro productos (`runway = cobertura − colchón` en invmBuySuggestion).
-  // Solo tiene sentido mostrarlo cuando cae en una semana distinta a la del quiebre.
-  const safetySeaDeadline = (safetyDipTarget && (!stockoutTarget || safetyDipTarget.weekNum !== stockoutTarget.weekNum))
-    ? computeDeadline(safetyDipTarget, lt.sea_total) : null;
   // Compact digest consumed by the Home command center (renderHome) —
   // Home mirrors these numbers instead of duplicating planner logic.
   window._bpDigest = {
@@ -18525,7 +18654,7 @@ function renderBuyPlanner() {
     snapDateStr, snapAgeDays,
     shortfall: deadlineTarget ? { weekNum: deadlineTarget.weekNum, date: deadlineTarget.weekStartDate } : null,
     safetyDip: safetyDipTarget ? { weekNum: safetyDipTarget.weekNum, date: safetyDipTarget.weekStartDate } : null,
-    seaDeadline, airDeadline, safetySeaDeadline,
+    seaDeadline, airDeadline,
   };
 
   // ── Quiet-account panel: who is held out of the plan + Out/Half/Full toggle ──
@@ -18867,6 +18996,18 @@ function renderBuyPlanner() {
     // tiene su propia aritmética acá (merma por tiempo, cadencia, order-up-to) distinta de la fórmula
     // genérica de los otros cuatro; si el Simulator la re-derivara, habría dos respuestas para la
     // misma pregunta al lado una de otra.
+    // El plan de protección sale de las MISMAS filas que se dibujan arriba — no de una cobertura
+    // plana— así que ve el pozo que hay antes de que aterrice lo que ya está comprado. Arranca del
+    // `startingStock` de la primera fila para reproducir exactamente la tabla, sin recalcularla.
+    try{
+      if(window._bpDigest && rows.length){
+        window._bpDigest.protect = bpProtectPlan(
+          rows.map(function(r){ return { wkISO: dmISOLocal(new Date(r.weekStartDate)),
+                                         arrivals: +r.arrivalCases||0, demand: +r.demand||0 }; }),
+          { startCases: +rows[0].startingStock||0, safetyCases: ssCases,
+            leadDays: lt.sea_total, addCases: grossCasesPerContainer*Math.max(1,recContainers) });
+      }
+    }catch(e){}
     try{ if(window._bpDigest) window._bpDigest.rec = {
       containers:recContainers, netCases:recNetCases, netNeeded:netNeeded,
       orderUpTo:orderUpToCases, projAtArrival:projAtArrival, coverWks:recCoverWks,
