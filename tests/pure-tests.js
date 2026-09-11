@@ -2608,6 +2608,39 @@ group('Los repacks van en su propia tabla, y se pueden ordenar');
      ord('received',1).slice(-1)==='D' && ord('received',-1).slice(-1)==='D');
   check('por defecto, FEFO', invmSortLots(lots,{key:'fefo',dir:1}).map(function(l){ return l.lot; }).join(''), 'BACD');
   check('no muta el arreglo original', lots.map(function(l){ return l.lot; }).join(''), 'ABCD');
+
+  // ── Por valor: donde esta la plata ───────────────────────────────────────────────────────────
+  // El lote mas caro no es el mas grande ni el mas viejo. 20 cajas a $90 pesan mas que 50 a $30.
+  var conPrecio=[ { lot:'A', cases:50,  avgCost:30 },   // 1.500
+                  { lot:'B', cases:20,  avgCost:90 },   // 1.800
+                  { lot:'C', cases:700, avgCost:1  } ]; //   700
+  check('por valor, de mayor a menor',
+        invmSortLots(conPrecio,{key:'value',dir:-1}).map(function(l){ return l.lot; }).join(''), 'BAC');
+  check('y no es lo mismo que por cajas',
+        invmSortLots(conPrecio,{key:'cases',dir:-1}).map(function(l){ return l.lot; }).join(''), 'CAB');
+  check('ginger usa landed cuando no hay avgCost',
+        invmSortLots([{lot:'X',cases:10,landed:5},{lot:'Y',cases:10,landed:9}],{key:'value',dir:-1})
+          .map(function(l){ return l.lot; }).join(''), 'YX');
+
+  // ── El filtro por antiguedad ─────────────────────────────────────────────────────────────────
+  // Ordenar dice que mirar primero; filtrar dice que NO quiero ver ahora. Con 15 filas, dejar solo
+  // lo que pasa de 30 dias es la diferencia entre revisar el inventario y escanearlo.
+  var conEdad=[ { lot:'nuevo', stored:5 }, { lot:'medio', stored:31 },
+                { lot:'viejo', stored:62 }, { lot:'sinFecha', stored:null } ];
+  var ver=function(min){ return invmFilterLots(conEdad,min).map(function(l){ return l.lot; }).join(','); };
+  check('sin filtro, todos',      ver(0),  'nuevo,medio,viejo,sinFecha');
+  check('30+ deja fuera al nuevo',ver(30), 'medio,viejo,sinFecha');
+  check('45+ deja solo el viejo', ver(45), 'viejo,sinFecha');
+  // Un lote sin fecha NO tiene edad conocida: esconderlo seria decidir por el, y es justo el que hay
+  // que completar. Se queda siempre, en cualquier filtro.
+  ok('el lote sin fecha nunca se esconde',
+     ver(30).indexOf('sinFecha')>-1 && ver(45).indexOf('sinFecha')>-1);
+  check('no muta el original', conEdad.length, 4);
+  // La edad sale de `stored` si esta, y si no de la fecha.
+  bpDaysSince = function(){ return 40; };
+  check('sin stored, la edad sale de received', invmLotAgeDays({ received:'2026-08-01' }), 40);
+  check('con stored, manda stored',             invmLotAgeDays({ stored:7, received:'2026-08-01' }), 7);
+  check('sin nada, edad desconocida',           invmLotAgeDays({}), null);
 })();
 
 group('invmIsWLot — el patrón del número de lote es la definición');

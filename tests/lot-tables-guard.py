@@ -92,6 +92,23 @@ if _fd and 'new Date' not in _fd.group(1):
 else:
     bad('invmFmtDate construye un Date: al oeste de Greenwich mostrara el dia anterior')
 
+# ── Los controles tienen que VERSE ──────────────────────────────────────────────────────────────
+# Las columnas ordenaban al clickearlas y nada en pantalla lo decia. Un control que no se ve no
+# existe: Juan pidio "filtros que permitan organizar la informacion" sobre algo que ya funcionaba.
+for fn, b in [('invmRenderProduct', m.group(1) if m else ''), ('invmLots', m2.group(1) if m2 else '')]:
+    if 'invmLotControlsHTML' in b: ok('%s muestra la barra de orden y filtro' % fn)
+    else: bad('%s no muestra la barra: los controles vuelven a ser invisibles' % fn)
+    if 'invmFilterLots' in b: ok('%s aplica el filtro por antiguedad' % fn)
+    else: bad('%s no aplica el filtro' % fn)
+    if 'hidden by the' in b: ok('%s dice cuantos lotes escondio' % fn)
+    else: bad('%s esconde lotes en silencio' % fn)
+
+_fl = re.search(r'function invmFilterLots\(lots, minAge\)\{(.*?)\n\}', src, re.S)
+if _fl and re.search(r'd\s*==\s*null\s*\|\|', _fl.group(1)):
+    ok('un lote sin fecha nunca se esconde por antiguedad')
+else:
+    bad('el filtro esconde los lotes sin fecha: son justo los que hay que completar')
+
 print()
 if fails:
     print('  %d problema(s) en las tablas de lotes' % len(fails)); sys.exit(1)
