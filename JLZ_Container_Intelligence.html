@@ -17379,16 +17379,17 @@ function invmBuySuggestionHTML(p, origin, opts){
         + esc(P.best.troughWk)+' &mdash; under your '+f(P.safetyCases)+'-case buffer. Nothing can land before that dip.', true);
     } else if(P.protect){
       accion = caja('Order by', P.protect.orderBy, P.protect.daysLeft,
-        'Keeps you above your '+f(P.safetyCases)+'-case buffer. The lowest you touch is <b>'+f(P.protect.trough)+'</b> cases ('
-        + wkc(P.protect.trough)+'), the week of '+esc(P.protect.troughWk)+'.',
+        'Order by this date and your stock never drops below your safety level of '+f(P.safetyCases)+' cases. '
+        + 'The lowest it gets is <b>'+f(P.protect.trough)+'</b> cases, the week of '+esc(P.protect.troughWk)+'.',
         (P.protect.daysLeft!=null && P.protect.daysLeft<=7));
     }
     if(P.free && P.protect && P.free.orderBy !== P.protect.orderBy)
-      ctx.push('Waiting costs you nothing until <b>'+esc(P.free.orderBy)+'</b> &mdash; ordering before that changes nothing, '
-        + 'the dip lands at '+f(P.best.trough)+' cases either way.');
+      ctx.push('There is no benefit to ordering before <b>'+esc(P.free.orderBy)+'</b>. Your stock bottoms out at '
+        + f(P.best.trough)+' cases either way &mdash; that low point is the week of '+esc(P.best.troughWk)
+        + ', before anything you order now could arrive.');
     if(P.stockout && P.protect && P.stockout.orderBy !== P.protect.orderBy)
-      ctx.push('It is too late after <b>'+esc(P.stockout.orderBy)+'</b>: an order placed then lands the week you hit zero. '
-        + 'That is the edge, not a target.');
+      ctx.push('Do not order later than <b>'+esc(P.stockout.orderBy)+'</b>. An order placed that late arrives the week '
+        + 'your stock reaches zero, after dropping to '+f(P.stockout.trough)+' cases.');
     plan = accion + (ctx.length
       ? ('<div style="margin-top:6px;font-family:var(--fm);font-size:10.5px;color:var(--gray-500);line-height:1.55">'
          + ctx.map(function(t){ return '<div style="margin-top:2px">'+t+'</div>'; }).join('') + '</div>')
@@ -17650,16 +17651,18 @@ function bpGingerSuggestionHTML(src){
         + esc(P.best.troughWk)+' &mdash; under your '+f(P.safetyCases)+'-case buffer. Nothing you order can land before that dip.', true);
     } else if(!escalonado && prot){
       accion = caja('Order by', prot.orderBy, prot.daysLeft,
-        'Keeps you above your '+f(P.safetyCases)+'-case buffer. The lowest you touch is <b>'+f(prot.trough)+'</b> cases ('
-        + wk(prot.trough)+'), the week of '+esc(prot.troughWk)+'.', (prot.daysLeft!=null && prot.daysLeft<=7));
+        'Order by this date and your stock never drops below your safety level of '+f(P.safetyCases)+' cases. '
+        + 'The lowest it gets is <b>'+f(prot.trough)+'</b> cases, the week of '+esc(prot.troughWk)+'.',
+        (prot.daysLeft!=null && prot.daysLeft<=7));
     }
     // Contexto: nunca arranca con una fecha, para que no se confunda con la de arriba.
     if(P.free && prot && P.free.orderBy !== prot.orderBy)
-      ctx.push('Waiting costs you nothing until <b>'+esc(P.free.orderBy)+'</b> &mdash; ordering before that changes nothing, '
-        + 'the dip lands at '+f(P.best.trough)+' cases either way.');
+      ctx.push('There is no benefit to ordering before <b>'+esc(P.free.orderBy)+'</b>. Your stock bottoms out at '
+        + f(P.best.trough)+' cases either way &mdash; that low point is the week of '+esc(P.best.troughWk)
+        + ', before anything you order now could arrive.');
     if(P.stockout && prot && P.stockout.orderBy !== prot.orderBy)
-      ctx.push('It is too late after <b>'+esc(P.stockout.orderBy)+'</b>: an order placed then lands the week you hit zero, '
-        + 'after touching '+f(P.stockout.trough)+' cases. That is the edge, not a target.');
+      ctx.push('Do not order later than <b>'+esc(P.stockout.orderBy)+'</b>. A container ordered that late arrives the week '
+        + 'your stock reaches zero, after dropping to '+f(P.stockout.trough)+' cases.');
     buffer = accion + (ctx.length
       ? ('<div style="margin-top:6px;font-family:var(--fm);font-size:10.5px;color:var(--gray-500);line-height:1.55">'
          + ctx.map(function(t){ return '<div style="margin-top:2px">'+t+'</div>'; }).join('') + '</div>')

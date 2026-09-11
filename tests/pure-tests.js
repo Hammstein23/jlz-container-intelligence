@@ -2012,8 +2012,8 @@ group('La linea de compra de ginger · ordenar en el plazo no llega el mismo dia
   ok('y ya NO por la del quiebre',                 hp.indexOf('order by <b>'+iso(37)+'</b>')<0);
   ok('aterriza donde dice el plan',                hp.indexOf('lands <b>'+iso(67)+'</b>')>-1);
   ok('cuantifica el piso que se toca',             hp.indexOf('<b>1,263</b> cases')>-1);
-  ok('nombra el colchon en cajas',                 hp.indexOf('866-case buffer')>-1);
-  ok('y dice que el borde aterriza en el cero',    hp.indexOf('the week you hit zero')>-1);
+  ok('nombra el colchon en cajas, sin jerga',      hp.indexOf('safety level of 866 cases')>-1);
+  ok('y dice que pasa si se ordena tarde',         hp.indexOf('your stock reaches zero')>-1);
 
   // ── UNA sola fecha se lee como accion ────────────────────────────────────────────────────────
   // Las tres lineas arrancaban con una fecha y todas parecian accionables: "Free until 26-sep" en
@@ -2023,10 +2023,18 @@ group('La linea de compra de ginger · ordenar en el plazo no llega el mismo dia
         || hp.indexOf('>Order by</div>')>-1);
   ok('y las otras dos ya no empiezan con una fecha',
         hp.indexOf('>Free until '+iso(16))<0 && hp.indexOf('>'+iso(37)+' is the edge')<0);
-  ok('esperar sale gratis, dicho como prosa',  hp.indexOf('Waiting costs you nothing until')>-1);
-  ok('con su fecha',                           hp.indexOf(iso(16))>-1);
-  ok('el borde dicho como limite, no como meta', hp.indexOf('It is too late after')>-1);
-  ok('y se declara que no es una meta',        hp.indexOf('not a target')>-1);
+  // ── Nada que interpretar: cada linea dice que hacer o que no ─────────────────────────────────
+  // "Free until" se leia como "sin costo" y no decia POR QUE. Juan: "no entiendo lo de gratis".
+  // En esta app la regla numero uno es que la UI se entienda sin explicacion.
+  ok('la linea temprana dice que no hay beneficio', hp.indexOf('no benefit to ordering before')>-1);
+  ok('con su fecha',                                hp.indexOf(iso(16))>-1);
+  ok('y explica POR QUE no lo hay',                 hp.indexOf('before anything you order now could arrive')>-1);
+  ok('diciendo el numero que no cambia',            hp.indexOf('bottoms out at 2,157 cases either way')>-1);
+  ok('la linea tardia es una instruccion',          hp.indexOf('Do not order later than')>-1);
+  ok('y dice que pasa si la cruzas',                hp.indexOf('reaches zero')>-1);
+  ok('ya no se usa la palabra "free"',              hp.indexOf('Free until')<0);
+  ok('ni la metafora del borde',                    hp.indexOf('is the edge')<0 && hp.indexOf('not a target')<0);
+  ok('y el rotulo de accion no habla de "buffer"',  hp.indexOf('never drops below your safety level')>-1);
 
   // Cuando el pozo cae antes de que cualquier orden pueda llegar, no hay plazo que valga.
   window._bpDigest.protect.floorUnavoidable = true;
