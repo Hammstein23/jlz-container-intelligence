@@ -36,7 +36,7 @@ var _PRISTINO_NOMBRES = [
   // `mtoCasesPerWeek` clavado en 0 hacia fallar seis checks de su propio grupo, tres grupos despues.
   'PRODUCTS','invmProductModel','invmRunRateLbs','invmStockableWeekly','prodInvFor',
   'prodCommittedTotal','mtoCasesPerWeek','dsWindow','_ordOrigin','directShipTotal','invmOriginsFor',
-  'invmRunway','bpProtectPlan'
+  'invmRunway','bpProtectPlan','invmOrderCases'
 ];
 var _PRISTINO = {};
 _PRISTINO_NOMBRES.forEach(function(n){ try { _PRISTINO[n] = eval(n); } catch (e) {} });
@@ -1610,10 +1610,13 @@ group('invmBuySuggestion · cuánto comprar, cuándo ordenar, cuándo llega');
   ok('trae el plan de proteccion', !!gp.protect && !gp.protect.horizonShort);
   check('la fecha limite ya no sale de la cuenta plana', gp.orderBy, menos(WK[8],10));
   check('esperar es gratis solo hasta la primera llegada posible', gp.protect.free.landsWk, WK[2]);
-  // Aca la sugerencia es no comprar nada (hay 1.000 cajas para un objetivo de 343). Aun asi el
-  // pedido que se SIMULA es una orden de verdad —la que devuelve al objetivo— porque con cero la
-  // pregunta degenera en "la curva baja", que baja siempre.
-  check('con compra cero el plan sigue contestando', gp.buy, 0);
+  // ── La cantidad se mide EN LA FECHA EN QUE LLEGA, no hoy ─────────────────────────────────────
+  // Hoy hay 1.000 cajas para un objetivo de 343: mirado contra la posicion de hoy, "comprar 0". Pero
+  // el pedido aterriza en WK[8], y para entonces van a quedar 200 — ahi faltan 143. Decir 0 mientras
+  // la fecha dice "ordena" era la contradiccion que esto cierra.
+  check('la cantidad no sale de la posicion de hoy', gp.buy, 143);
+  check('se mide contra lo proyectado a la llegada', gp.protect.protect.stockAtLanding, 200);
+  check('que es objetivo menos eso', gp.buy, Math.ceil(3.4286*100 - 200));
   check('el borde del precipicio cae despues', gp.protect.stockout.landsWk, WK[9]);
   ok('y el borde es posterior al plazo que protege', gp.protect.stockout.orderBy > gp.protect.protect.orderBy);
   ok('el piso del plazo que protege respeta el colchon', gp.protect.protect.trough >= gp.protect.safetyCases);
@@ -1676,7 +1679,20 @@ group('El numero de compra es UNO solo · el panel y la sugerencia no pueden dis
 
   // ── Y el otro camino tiene que dar el MISMO numero ────────────────────────────────────────────
   var g = invmBuySuggestion('turmeric','Fiji');
-  check('la sugerencia compra lo mismo que el panel', g.buy, s.orderCases);
+  // ── Un solo numero en pantalla, y se mide en la fecha en que el pedido ENTRA ──────────────────
+  // `s.orderCases` compara la posicion de HOY contra el objetivo; es el respaldo para cuando no hay
+  // proyeccion. Con proyeccion manda la proyeccion, y las TRES pantallas la leen por el mismo
+  // productor. Que los dos numeros difieran no es una contradiccion: contestan preguntas distintas
+  // y solo uno se muestra. Quien lo garantiza es one-buy-number-guard.py.
+  // El ancla es `protect` cuando hay una fecha que salva el colchon, y `best` cuando ya no la hay
+  // (aca no la hay: 300 cs/semana contra 260 de oferta, se acaba antes de que nada pueda llegar).
+  var ancla=function(x){ return (x.protect && x.protect.protect) ? x.protect.protect : x.protect.best; };
+  check('el productor unico es el de la sugerencia', invmOrderCases('turmeric','Fiji'), g.buy);
+  ok('sale de la proyeccion, no de la posicion de hoy', !!(g.protect && ancla(g)));
+  check('y ya no hay fecha que salve el colchon', g.protect.floorUnavoidable, true);
+  check('objetivo menos lo proyectado a la llegada', g.buy,
+        Math.max(0, Math.ceil(s.targetWks*g.demand - ancla(g).stockAtLanding)));
+  ok('el respaldo mira otra cosa, y por eso no coincide', s.orderCases !== g.buy);
   check('y sobre la misma demanda semanal', Math.round(g.demand*1000)/1000, Math.round(s.weeklyCasesBuy*1000)/1000);
   check('sobre la misma oferta', g.avail + g.incoming, s.posCases);
   check('y el mismo objetivo', Math.round(g.targetWks*10000)/10000, Math.round(s.targetWks*10000)/10000);
@@ -1688,7 +1704,9 @@ group('El numero de compra es UNO solo · el panel y la sugerencia no pueden dis
   var go = invmBuySuggestion('turmeric','Fiji');
   check('el panel toma el numero escrito a mano', so.weeklyCasesBuy, 50);
   check('la sugerencia tambien', Math.round(go.demand*1000)/1000, 50);
-  check('y siguen dando la misma compra', go.buy, so.orderCases);
+  check('y el productor unico sigue dando uno solo', invmOrderCases('turmeric','Fiji'), go.buy);
+  check('medido tambien en la fecha de llegada', go.buy,
+        Math.max(0, Math.ceil(so.targetWks*go.demand - ancla(go).stockAtLanding)));
   // Un numero escrito a mano no depende de la ventana: las cuatro lecturas dicen lo mismo.
   var distintas = go.others.filter(function(o){ return o.buy !== go.buy; });
   check('escrito a mano, las cuatro ventanas coinciden', distintas.length, 0);

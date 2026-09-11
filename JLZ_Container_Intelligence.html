@@ -16291,13 +16291,17 @@ function bpProtectPlan(rows, opts){
   // desde la semana cero hacía gritar "ordená ya" en productos con cobertura de sobra, solo porque
   // esta semana cerraba un poco baja.
   var troughIf = function(land, from){
-    var st = start, min = Infinity, minWk = null; from = from || 0;
+    var st = start, min = Infinity, minWk = null, atLanding = start; from = from || 0;
     for(var i=0;i<n;i++){
+      // Lo que hay JUSTO ANTES de que entre el pedido, para poder medir la cantidad ahí y no hoy.
+      // Misma definición que el `projAtArrival` del Buy Planner de ginger (`startingStock` de la
+      // semana de llegada), para que las cinco líneas midan la cantidad con la misma vara.
+      if(i === land) atLanding = st;
       st += (+(rows[i].arrivals)||0) + ((i===land) ? add : 0) - (+(rows[i].demand)||0);
       if(i >= from && st < min){ min = st; minWk = rows[i].wkISO; }
       if(i === land) break;
     }
-    return { trough: min, troughWk: minWk };
+    return { trough: min, troughWk: minWk, atLanding: atLanding };
   };
   // La primera semana a la que una orden puesta HOY todavía llega a tiempo.
   var first = -1;
@@ -16307,7 +16311,8 @@ function bpProtectPlan(rows, opts){
                          noOrder:noOrder, safetyCases:Math.round(safety), floorUnavoidable:true };
   var pack = function(i,from){ if(i < 0) return null; var t = troughIf(i,from||0), ob = orderBy(i);
     return { landsWk:rows[i].wkISO, orderBy:iso(ob), daysLeft:dias(ob),
-             trough:Math.round(t.trough), troughWk:t.troughWk }; };
+             trough:Math.round(t.trough), troughWk:t.troughWk,
+             stockAtLanding:Math.round(t.atLanding) }; };
   // `best`/`free` se miden sobre TODO el horizonte: de ahí sale que esperar no cueste nada cuando el
   // pozo ya cayó. `protect`/`stockout` se miden desde `first`, que es lo único que una orden nueva
   // puede cambiar.
@@ -16490,10 +16495,12 @@ function invmProjectionHTML(s){
       + ' \u00b7 the current week only consumes what is still ahead of that count.</div>';
   }
   // verdict — aligned with the KPI status so the two never contradict.
+  // Tercera pantalla que dice "cuánto comprar": va por el mismo productor que las otras dos.
+  var _vOrd = (typeof invmOrderCases==='function') ? invmOrderCases(s.p, s.origin) : (s.orderCases||0);
   var verdict, vcls;
   if(firstShort===null){
     vcls='ok'; verdict='<b>Covered for '+N+' weeks.</b> On-hand'+(hasArr?' + incoming':'')+' never drops below safety ('+f(safetyCases)+' cs). No action.';
-  } else if(!(s.orderCases>0)){
+  } else if(!(_vOrd>0)){
     // on-hand is above target now, but the drawdown will reach the reorder point later
     vcls='ok';
     verdict='<b>On track.</b> On-hand is above target now; cover reaches the reorder point around <b>'+lbl(weeks[firstShort].wkISO)+'</b>. Reorder then — no action yet.';
@@ -16503,7 +16510,7 @@ function invmProjectionHTML(s){
     var orderByISO=weeks[orderByIdx].wkISO;
     vcls=(s.status==='ur')?'ur':'re';
     verdict='<b>'+((s.status==='ur')?'Urgent.':'Reorder.')+'</b> Drops below safety ('+f(safetyCases)+' cs) on <b>'+lbl(shortWk.wkISO)+'</b> (week +'+firstShort+'). '
-      +'Lead '+f1(s.leadWks)+' wk → place the order by <b>'+lbl(orderByISO)+'</b> at the latest. Suggested: <b>'+f(s.orderCases)+' cs</b> to reach target.';
+      +'Lead '+f1(s.leadWks)+' wk → place the order by <b>'+lbl(orderByISO)+'</b> at the latest. Suggested: <b>'+f(_vOrd)+' cs</b> to reach target.';
   }
   // ── PAST WEEKS (collapsible, closed by default) — mirrors the ginger Buy Planner block ──────────
   // Only verifiable figures: what left the warehouse and what actually landed. Stock is reconstructed
@@ -16648,7 +16655,6 @@ function invmRenderProduct(p){
                 : (s.demandOverride!=null ? 'manual · <a href="javascript:invmProdClearDemand(\''+p+'\')" style="color:var(--jlz)">use run-rate</a>' : '◆ live run-rate · 13 wk'+oScope);
   var covTxt = s.weeklyLbs>0 ? f1(s.coverWks)+' <small>wk</small>' : '—';
   var tgtTxt = (s.weeklyLbs>0 && s.leadWks>0) ? f1(s.targetWks)+' <small>wk</small>' : '—';
-  var ordTxt = s.weeklyLbs>0 ? f(s.orderCases)+' <small>cs</small>' : '—';
   var cvTxt = (s.nWeeks>1) ? (Math.round(s.cv*100)+'% ('+s.nWeeks+' wk)') : 'insufficient history';
   var supNames = esc((s.supList&&s.supList.map(function(x){return x.name;}).join(', '))||'—');
   var supOrigins = esc((s.supList&&s.supList.map(function(x){return x.origin;}).filter(function(v,i,a){return a.indexOf(v)===i;}).join(' / '))||'');
@@ -16722,6 +16728,7 @@ function invmRenderProduct(p){
 }
 // ── Analysis block (assumptions + KPIs + formula) — shared by the Buy Planner product view.
 function invmAnalysisHTML(s){
+  var _ord = (typeof invmOrderCases==='function') ? invmOrderCases(s.p, s.origin) : (s.orderCases||0);
   var f=function(n){ return Math.round(n||0).toLocaleString('en-US'); };
   var f1=function(n){ return (!isFinite(n))?'∞':(Math.round((n||0)*10)/10).toFixed(1); };
   var esc=(typeof libEsc==='function')?libEsc:function(x){ return String(x==null?'':x); };
@@ -16731,7 +16738,7 @@ function invmAnalysisHTML(s){
                 : (s.demandOverride!=null ? 'manual · <a href="javascript:invmProdClearDemand(\''+s.p+'\')" style="color:var(--jlz)">use run-rate</a>' : (s.directShipCases>0 ? ('◆ stock-buy run-rate · '+(s.win||13)+' wk') : ('◆ live run-rate · '+(s.win||13)+' wk')));
   var covTxt = s.weeklyLbs>0 ? f1(s.coverWks)+' <small>wk</small>' : '—';
   var tgtTxt = (s.weeklyLbs>0 && s.leadWks>0) ? f1(s.targetWks)+' <small>wk</small>' : '—';
-  var ordTxt = s.weeklyLbs>0 ? f(s.orderCases)+' <small>cs</small>' : '—';
+  var ordTxt = s.weeklyLbs>0 ? f(_ord)+' <small>cs</small>' : '—';
   var cvTxt = (s.nWeeks>1) ? (Math.round(s.cv*100)+'% ('+s.nWeeks+' wk)') : 'insufficient history';
   var supNames = esc((s.supList&&s.supList.map(function(x){return x.name;}).join(', '))||'—');
   var supOrigins = esc((s.supList&&s.supList.map(function(x){return x.origin;}).filter(function(v,i,a){return a.indexOf(v)===i;}).join(' / '))||'');
@@ -16754,7 +16761,7 @@ function invmAnalysisHTML(s){
       + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Available to sell<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Available · free to sell</span><span class="jlz-td">What\'s truly free to sell now: physical lots on hand, minus expected shrink, minus orders already sold but not yet shipped (committed, current week).</span><span class="jlz-tf">= on-hand × (1 − shrink%) − committed</span></span></span></div><div class="big">'+f(s.availCases)+' <small>cs</small></div><div class="note">'+availNote+'</div></div>'
       + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Current cover<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Current cover</span><span class="jlz-td">How many weeks your free stock lasts at the current sales pace.</span><span class="jlz-tf">= Available ÷ weekly demand</span></span></span></div><div class="big">'+covTxt+'</div><div class="note">available ÷ demand/wk</div></div>'
       + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Target cover<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Target cover</span><span class="jlz-td">Weeks of stock you want to hold before reordering: supplier lead time plus a safety buffer for demand swings.</span><span class="jlz-tf">= lead + safety (z × CV × √lead)</span></span></span></div><div class="big">'+tgtTxt+'</div><div class="note">lead '+f1(s.leadWks)+' + safety '+f1(s.safetyWks)+'</div></div>'
-      + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Suggested order<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Suggested order</span><span class="jlz-td">Cases to buy now to reach target cover, counting what is already bought and on the way. Zero if you are already above target.</span><span class="jlz-tf">= (target cover × wk demand) − (available + incoming)</span></span></span></div><div class="big" style="color:'+(s.orderCases>0?'var(--jlz)':'var(--gray-400)')+'">'+ordTxt+'</div><div><span class="ipv-st '+stCls+'">'+stTxt+'</span></div></div>'
+      + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Suggested order<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Suggested order</span><span class="jlz-td">Cases to buy now to reach target cover, counting what is already bought and on the way. Zero if you are already above target.</span><span class="jlz-tf">= (target cover × wk demand) − (available + incoming)</span></span></span></div><div class="big" style="color:'+(_ord>0?'var(--jlz)':'var(--gray-400)')+'">'+ordTxt+'</div><div><span class="ipv-st '+stCls+'">'+stTxt+'</span></div></div>'
     + '</div>';
   if(s.weeklyLbs>0 && s.leadWks>0){
     html += '<div class="ipv-formula">'
@@ -16765,7 +16772,7 @@ function invmAnalysisHTML(s){
       + (s.incomingCases>0
           ? ('<b>position</b> = '+f(s.availCases)+' free + '+f(s.incomingCases)+' already on the way = <b>'+f(s.posCases)+' cs</b> &middot; <b>'+f1(s.coverPosWks)+' wk</b> of cover<br>')
           : '')
-      + '<b>order</b> = max(0, target×demand &minus; position) &divide; '+f(s.caseLb)+' lb = <b>'+f(s.orderCases)+' cs</b>'
+      + '<b>order</b> = max(0, target×demand &minus; position) &divide; '+f(s.caseLb)+' lb = <b>'+f(_ord)+' cs</b>'
       + '</div>';
   } else if(!s.hasModel){
     html += '<div class="ipv-formula" style="color:var(--amber-700);border-color:var(--amber-200);background:var(--amber-50)">No sales loaded to compute demand / target. Load the sales report (Demand tab) or set weekly demand manually above.</div>';
@@ -17080,6 +17087,17 @@ function invmWindowFit(p, origin, testWeeks){
 // La ventana del run-rate cambia la respuesta más que cualquier otra variable — en ginger, 3
 // semanas contra 13 movía el "ordenar antes de" tres semanas. Por eso la sugerencia usa la ventana
 // activa pero muestra el rango de las otras: la decisión es de Juan, el número no la esconde.
+// ── "Cuánto comprar" tiene UN productor ─────────────────────────────────────────────────────────
+// `invmProductStats.orderCases` mide sobre la posición de HOY: no ve la proyección, así que no sabe
+// en qué semana cae el pozo ni cuánto vas a tener el día que el pedido entra. Queda de respaldo para
+// cuando no hay modelo. Todo lo que muestre cajas a comprar pasa por acá — el KPI de Inventory y la
+// tarjeta del Simulator incluidos— o vuelven los dos números que se contradicen en pantallas
+// distintas, que es el defecto que esta auditoría existe para cerrar.
+function invmOrderCases(p, origin){
+  try{ var g=invmBuySuggestion(p, origin); if(g && g.buy!=null) return g.buy; }catch(e){}
+  try{ var st=invmProductStats(p, origin); return (st && st.orderCases)||0; }catch(e){}
+  return 0;
+}
 function invmBuySuggestion(p, origin, opts){
   try{
     var _wi=!!(opts&&opts.whatif);
@@ -17130,40 +17148,52 @@ function invmBuySuggestion(p, origin, opts){
     var ovrLbs=(s.demandOverride!=null && s.demandOverride>0) ? s.demandOverride*cl : null;
     var rateFor=function(w){ return (ovrLbs!=null)?ovrLbs:invmRunRateLbs(m,w); };
     var byWin={ 3:one(rateFor(3)), 6:one(rateFor(6)), 13:one(rateFor(13)), 26:one(rateFor(26)) };
+    // ── Las cuatro lecturas se deciden con la MISMA vara ─────────────────────────────────────────
+    // La proyección (arranque y llegadas) no depende de la ventana; solo la demanda. Se arma una vez
+    // y se corre por ventana, así el spread de abajo no queda calculado de otra manera que el
+    // titular — que fue el error que esta tarjeta existe para no cometer.
+    var RW=null; try{ RW=invmRunway(p, origin, 26, {whatif:_wi}); }catch(e){}
+    var planFor=function(dCases, buyPlano){
+      if(!RW || !RW.rows || !RW.rows.length || !(dCases>0)) return null;
+      var upTo=(s.targetWks||0)*dCases;
+      try{
+        return bpProtectPlan(
+          RW.rows.map(function(r){ return { wkISO:r.wk, arrivals:+r.arrived||0,
+                                            demand:dCases + (+r.hypoSale||0) }; }),
+          { startCases:(RW.start!=null?RW.start:(s.availCases||0)),
+            safetyCases:(s.safetyWks||0)*dCases, leadDays:lead,
+            addCases:Math.max(buyPlano||0, Math.ceil(upTo)) });
+      }catch(e){ return null; }
+    };
+    // ── La cantidad se mide EN LA FECHA EN QUE LLEGA, no hoy ─────────────────────────────────────
+    // Antes la cantidad comparaba la posición de HOY contra el objetivo y la fecha salía de recorrer
+    // las semanas: dos preguntas distintas en la misma tarjeta, y se contradecían. Turmeric decía
+    // "comprar 0" y "ordenar mañana" a la vez — ciertas por separado, ilegibles juntas. Ahora las dos
+    // salen del mismo punto, como ya hacía el Buy Planner de ginger (`orderUpTo − projAtArrival`).
+    var applyPlan=function(o){
+      if(!o) return null;
+      var pl=planFor(o.demand, o.buy); if(!pl) return null;
+      var vivo=!!(pl.protect && pl.protect.orderBy);
+      var ancla=vivo?pl.protect:((pl.floorUnavoidable && pl.best)?pl.best:null);
+      if(!ancla) return pl;
+      var upTo=(s.targetWks||0)*o.demand;
+      o.orderBy=vivo?ancla.orderBy:addD(0);
+      o.offset =vivo?ancla.daysLeft:0;
+      o.far    =o.offset>180;
+      o.buy    =Math.max(0, Math.ceil(upTo-(ancla.stockAtLanding||0)));
+      o.landsWk=ancla.landsWk; o.stockAtLanding=ancla.stockAtLanding; o.orderUpTo=upTo;
+      return pl;
+    };
+    var planWin={};
+    Object.keys(byWin).forEach(function(w){ planWin[w]=applyPlan(byWin[w]); });
     var win=s.win||13;
     var now=byWin[win]||byWin[13]||byWin[3]; if(!now) return null;
+    var prot=planWin[win]||null;
     now.safetyWks=s.safetyWks||0;
     var others=Object.keys(byWin).filter(function(w){ return +w!==win && byWin[w]; })
                      .map(function(w){ return { win:+w, orderBy:byWin[w].orderBy, buy:byWin[w].buy,
                                                 offset:byWin[w].offset, far:byWin[w].far }; })
                      .sort(function(a,b){ return a.win-b.win; });
-    // ── La misma lógica que ginger, sobre la proyección de este producto ─────────────────────────
-    // El `offset` de arriba divide una cobertura plana: sabe cuántas semanas de producto hay, no en
-    // qué semana cae el pozo. Con algo grande llegando en cinco semanas, la cobertura se ve sana y
-    // el hueco de la semana que viene no aparece. Esto recorre la proyección real.
-    var prot=null;
-    try{
-      var RW=invmRunway(p, origin, 26, {whatif:_wi});
-      if(RW && RW.rows && RW.rows.length){
-        prot=bpProtectPlan(
-          RW.rows.map(function(r){ return { wkISO:r.wk, arrivals:+r.arrived||0, demand:+r.demand||0 }; }),
-          { startCases:(RW.start!=null?RW.start:(s.availCases||0)),
-            safetyCases:(s.safetyWks||0)*now.demand, leadDays:lead,
-            // Aunque hoy no haya que comprar nada, la orden que se simula es una orden DE VERDAD:
-            // la que te devuelve al objetivo. Con cero no agregaba nada y la pregunta degeneraba en
-            // "la curva baja" — que baja siempre.
-            addCases:Math.max(now.buy||0, Math.ceil((s.targetWks||0)*now.demand)) });
-      }
-    }catch(e){}
-    // La fecha que se muestra pasa a ser la que protege. La cuenta plana queda de respaldo para
-    // cuando no hay proyección (sin modelo, sin semanas), nunca por encima de ella.
-    if(prot && prot.protect && prot.protect.orderBy){
-      now.orderBy = prot.protect.orderBy;
-      now.offset  = prot.protect.daysLeft;
-    } else if(prot && prot.floorUnavoidable){
-      now.orderBy = addD(0); now.offset = 0;      // ni ordenando hoy se salva: es ahora
-    }
-    var fit=null; try{ fit=invmWindowFit(p, origin); }catch(e){}
     // Cada eslabón de la cuenta, para que la pantalla pueda mostrarla entera y sea auditable.
     var rrLbs=rateFor(win)||0;
     var steps={ rrLbs:rrLbs, rrCases:rrLbs/cl, infl:infl,
@@ -17171,6 +17201,9 @@ function invmBuySuggestion(p, origin, opts){
                 leadWks:s.leadWks||0, safetyWks:s.safetyWks||0, targetWks:s.targetWks||0,
                 serviceLevel:s.serviceLevel, cv:s.cv||0, shrinkPct:s.shrinkPct||0,
                 supply:supply, needed:(s.targetWks||0)*now.demand };
+    if(now.landsWk){ steps.landsWk=now.landsWk; steps.stockAtLanding=now.stockAtLanding;
+                     steps.orderUpTo=now.orderUpTo; }
+    var fit=null; try{ fit=invmWindowFit(p, origin); }catch(e){}
     return { fit:fit, steps:steps, protect:prot, whatif:_wi, hypoIn:hypoIn, hypoOut:hypoOut,
              p:p, label:s.label||p, origin:origin, caseLb:cl, supplier:best.name||'', mode:best.mode||'',
              leadDays:lead, avail:s.availCases||0, incoming:incoming, excluded:s.excludedCases||0,
@@ -17262,9 +17295,21 @@ function invmBuySuggestionHTML(p, origin, opts){
       + row('Target', n2(S.leadWks)+' wk lead ('+g.leadDays+' days)', n2(S.leadWks)+' wk')
       + row('', '+ safety at '+n2(S.serviceLevel)+'% service, swing '+n2(S.cv), n2(S.safetyWks)+' wk')
       + row('', '= cover to hold', '<b>'+n2(S.targetWks)+' wk</b>')
-      + row('Decision', n2(S.targetWks)+' wk &times; '+n2(g.demand)+' cs/wk', n2(S.needed)+' cs needed')
-      + row('', '&minus; '+n2(S.supply)+' you already have',
-            '<b style="color:'+(falta>0?'var(--jlz)':'var(--gray-700)')+'">'+(falta>0?('short '+n2(falta)+' &rarr; buy '+g.buy):('over by '+n2(-falta)+' &rarr; buy nothing'))+'</b>')
+      // ── La cantidad se decide en la fecha en que ENTRA, no hoy ────────────────────────────────
+      // Si hay proyección, la cuenta que se muestra es la que realmente se usó: cuánto vas a tener
+      // el día que el pedido aterriza, y cuánto falta para el objetivo desde ahí. Mostrar
+      // "objetivo − lo que tengo HOY" mientras el número sale de otra cuenta era el desglose
+      // decorativo que esta tarjeta existe para no ser.
+      + ((S.stockAtLanding!=null)
+          ? ( row('At '+esc(S.landsWk||''), 'what you are projected to have when it lands', n2(S.stockAtLanding)+' cs')
+            + row('Order up to', n2(S.targetWks)+' wk &times; '+n2(g.demand)+' cs/wk', n2(S.orderUpTo)+' cs')
+            + row('Decision', '&minus; '+n2(S.stockAtLanding)+' you will already have by then',
+                  '<b style="color:'+(g.buy>0?'var(--jlz)':'var(--gray-700)')+'">'
+                  + (g.buy>0 ? ('buy '+f(g.buy)+' cs')
+                             : ('over by '+n2(S.stockAtLanding-S.orderUpTo)+' &rarr; buy nothing'))+'</b>') )
+          : ( row('Decision', n2(S.targetWks)+' wk &times; '+n2(g.demand)+' cs/wk', n2(S.needed)+' cs needed')
+            + row('', '&minus; '+n2(S.supply)+' you already have',
+                  '<b style="color:'+(falta>0?'var(--jlz)':'var(--gray-700)')+'">'+(falta>0?('short '+n2(falta)+' &rarr; buy '+g.buy):('over by '+n2(-falta)+' &rarr; buy nothing'))+'</b>') ))
       + '</table>';
   }
   // ── La pista, dibujada ────────────────────────────────────────────────────────────────────────
