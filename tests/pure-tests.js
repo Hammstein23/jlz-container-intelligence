@@ -2553,6 +2553,28 @@ check('"All" no filtra nada',
 //     factura como venta interna a JLZ Produce Manufacturing), así que R−S da 0 y borraría stock real.
 // Cargar el NETO en vez del BRUTO fue el bug que dejó el ginger en 1.165 cuando eran 2.250:
 // el committed se restaría dos veces. Ver [[inventory-one-convention]].
+group('Las fechas se leen mes/dia/año, siempre');
+// Juan: "tienes que poner siempre primero mes, dia, año. Eso es importantisimo, no podemos fallar".
+// Y hay una trampa clasica debajo: `new Date('2026-09-17')` se interpreta como UTC medianoche y al
+// oeste de Greenwich devuelve el dia ANTERIOR. En una fecha de recepcion eso corre los dias en
+// camara y con ellos la merma. Por eso se formatea por string, sin construir un Date.
+(function(){
+  check('mes/dia/año',            invmFmtDate('2026-09-17'), '09/17/2026');
+  check('el primero del mes',     invmFmtDate('2026-01-01'), '01/01/2026');
+  check('fin de año',             invmFmtDate('2026-12-31'), '12/31/2026');
+  // El caso que delata un Date mal construido: al oeste de Greenwich daria el dia anterior.
+  check('no se corre un dia',     invmFmtDate('2026-03-01'), '03/01/2026');
+  check('aunque venga con hora',  invmFmtDate('2026-09-17T00:00:00Z'), '09/17/2026');
+  // Nada que mostrar es cadena vacia, no "NaN/NaN/NaN" ni "Invalid Date".
+  check('sin fecha, nada',        invmFmtDate(''), '');
+  check('null, nada',             invmFmtDate(null), '');
+  check('undefined, nada',        invmFmtDate(undefined), '');
+  check('basura, nada',           invmFmtDate('ayer'), '');
+  check('formato ya en US, nada', invmFmtDate('09/17/2026'), '');
+  // No usa Date: si alguien lo reescribe con `new Date(...)`, vuelve el corrimiento.
+  ok('no construye un Date', String(invmFmtDate).indexOf('new Date') < 0);
+})();
+
 group('Los repacks van en su propia tabla, y se pueden ordenar');
 // Estaban mezclados con los lotes del proveedor: turmeric 3 de 8, garlic 2 de 6, ginger-Peru 11 de
 // 15. Son cosas distintas —el repack ya cambio de presentacion y son las cajas que ya tienen dueño—

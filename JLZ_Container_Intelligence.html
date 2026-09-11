@@ -14964,6 +14964,9 @@ function invmCompute(){
     return { id:id, po: rp ? String(rp.lot||rp.po||id) : String(L.o.jlzPo||id),
       sup: rp ? (rp.supplier||'Repack') : (L.o.supplier||'?'), mode:L.mode, repack: !!rp,
       stored:L.stored, cases:L.cases, directShip:L.directShip||0, lbs:L.lbs, landed:L.landed,
+      // La fecha de la que ya salía `stored`; sin exponerla, la tabla mostraba los días en cámara
+      // pero no desde cuándo — y es el dato que Juan cruza contra WholesaleWare.
+      received: rp ? (rp.received||'') : ((typeof bpEtaOf==='function' && L.o) ? (bpEtaOf(L.o)||'') : ''),
       addManual:(st.rows[id] && st.rows[id].days!=null)?st.rows[id].days:null, expDays:shelf-L.stored,
       downgraded: !!(L.o && L.o.downgraded) };
   }).filter(Boolean);
@@ -15068,6 +15071,7 @@ function invmLots(m,t){
       '<td class="l"><span class="invm-po">'+l.po+'</span>'+(l.directShip>0?'<br><span style="font-size:9px;font-family:var(--fm);color:#6d28d9;background:#ede9fe;padding:1px 5px;border-radius:99px;white-space:nowrap" title="Sold port → customer, never entered the warehouse — not counted as stock or shrink">'+invmF(l.directShip)+' cs direct-shipped</span>':'')+'</td>'+
       '<td class="l"><span class="invm-supn">'+l.sup+'</span></td>'+
       '<td class="l"><span class="invm-mc '+l.mode+'">'+(l.mode==='repack'?'REPACK':(l.mode==='air'?'AIR':'SEA'))+'</span></td>'+
+      '<td class="invm-muted">'+(invmFmtDate(l.received)||'&mdash;')+'</td>'+
       '<td>'+l.stored+'d</td><td class="invm-muted">in '+l.expDays+'d</td>'+
       '<td><input class="invm-cin" type="number" value="'+l.cases+'" onchange="invmSetCases(\''+l.id+'\',this.value)"></td>'+
       '<td>'+addCell+'</td><td><b>'+Math.round(l.total)+'d</b></td>'+
@@ -15087,11 +15091,11 @@ function invmLots(m,t){
     return '<div class="invm-lead" style="margin-top:14px"><b>'+titulo+'</b> &middot; <span style="font-weight:400;color:var(--gray-500)">'+nota+'</span></div>'
       + '<div class="invm-card"><div class="invm-tw"><table class="invm-table"><thead><tr>'
       + '<th class="l">PO</th><th class="l">Supplier</th><th class="l">Mode</th>'
-      + _thO('stored','Stored') + '<th>Expires</th>' + _thO('cases','Cases')
+      + _thO('received','Received') + _thO('stored','Stored') + '<th>Expires</th>' + _thO('cases','Cases')
       + '<th>+Days</th><th>Total</th><th>Cover</th><th>Shrink %</th><th>At risk</th><th>Margin</th><th class="l">Zone</th><th></th>'
       + '</tr></thead><tbody>'
       + ord.map(_fila).join('')
-      + '<tr class="invm-tot"><td class="l" colspan="3">Total</td><td>'+edad+'d</td><td></td><td>'+invmF(cs)+'</td><td></td><td></td><td></td><td>'+(cs?(at/cs*100).toFixed(1):'0')+'%</td><td>'+invmF(at)+' cs</td><td colspan="3"></td></tr>'
+      + '<tr class="invm-tot"><td class="l" colspan="4">Total</td><td>'+edad+'d</td><td></td><td>'+invmF(cs)+'</td><td></td><td></td><td></td><td>'+(cs?(at/cs*100).toFixed(1):'0')+'%</td><td>'+invmF(at)+' cs</td><td colspan="3"></td></tr>'
       + '</tbody></table></div></div>';
   };
   var _rep=m.lots.filter(function(l){ return !!l.repack; });
@@ -16301,6 +16305,16 @@ function invmProdAddLot(p){ var st=prodInvState(); if(!st[p]) st[p]={serviceLeve
 // Dos señales que coinciden siempre (verificado en 155 lotes de dos exports): el lote matchea /^W\d/
 // Y el vendedor es JLZ Produce Manufacturing. Se pide UNA de las dos y se avisa si discrepan, para
 // no perder un repack porque el proveedor vino escrito distinto.
+// ── Las fechas se leen mes/día/año, siempre ─────────────────────────────────────────────────────
+// Se formatea por STRING, sin construir un Date: `new Date('2026-09-17')` se interpreta como UTC
+// medianoche y al oeste de Greenwich sale el día ANTERIOR. Es el mismo error que ya costó caro con
+// las llaves de semana (por eso existe dmISOLocal), y en una fecha de recepción cambia los días en
+// cámara y con ellos la merma. Acá no hay Date que pueda correrse.
+function invmFmtDate(v){
+  var t=String(v==null?'':v).slice(0,10);
+  var m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(t);
+  return m ? (m[2]+'/'+m[3]+'/'+m[1]) : '';
+}
 function invmIsRepackLot(l){
   if(!l) return false;
   try{ if(typeof invmIsWLot==='function' && invmIsWLot(l.lot)) return true; }catch(e){}
@@ -17017,7 +17031,8 @@ function invmRenderProduct(p){
         + '<td style="'+td+';color:var(--gray-800);'+strike+'">'+esc(l.lot)+'</td>'
         + '<td style="'+td+';color:var(--gray-700)">'+esc(l.origin)+'</td>'
         + '<td style="'+td+';color:var(--gray-700)">'+esc(l.supplier)+'</td>'
-        + '<td style="padding:6px 14px;border-bottom:1px solid var(--gray-100)"><input type="date" value="'+esc(l.received||'')+'" onchange="invmProdSetLotReceived(\''+p+'\','+idx+',this.value)" style="'+dinp+'"></td>'
+        + '<td style="padding:6px 14px;border-bottom:1px solid var(--gray-100)"><input type="date" lang="en-US" value="'+esc(l.received||'')+'" title="'+(invmFmtDate(l.received)||'no received date')+'" onchange="invmProdSetLotReceived(\''+p+'\','+idx+',this.value)" style="'+dinp+'">'
+          + (l.received?('<div style="margin-top:2px;font-size:10px;color:var(--gray-400);font-family:var(--fm)">'+invmFmtDate(l.received)+'</div>'):'')+'</td>'
         + '<td style="'+td+';text-align:right">'+ageBadge(storedOf(l))+'</td>'
         + '<td style="padding:6px 14px;border-bottom:1px solid var(--gray-100);text-align:right"><input type="number" step="1" value="'+(parseFloat(l.cases)||0)+'" onchange="invmProdSetLotCases(\''+p+'\','+idx+',this.value)" style="width:60px;text-align:right;font-family:var(--fm);font-size:11.5px;border:1px solid var(--gray-200);border-radius:5px;padding:2px 6px;color:var(--gray-900);'+strike+'"></td>'
         + '<td style="'+td+';text-align:right;color:var(--gray-700);'+strike+'">'+f((parseFloat(l.cases)||0)*s.caseLb)+'</td>'
