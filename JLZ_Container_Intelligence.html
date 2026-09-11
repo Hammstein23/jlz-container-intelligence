@@ -12030,8 +12030,10 @@ function hybridSalesForWeek(wk, salesDemand, model, product, extraOrders, origin
   // dueño antes de llegar. Antes esto salía del flag por cliente (retirado); ahora sale de las órdenes
   // marcadas — misma protección, sin etiquetar al cliente para siempre. Garlic 2026-09-03: Whole Foods
   // con 140 cs committed metía +82 cajas fantasma y un "Buy 111" de producto que nunca pasa por cámara.
+  // Idem: acá se decide si el committed de la semana cuenta como salida de cámara, así que solo se
+  // excluye lo que NUNCA entra. Lo reempacado entra y sale — su committed es demanda real de esa semana.
   var _hpMto = (function(){ try{ return (typeof mtoByCustomer === 'function')
-                   ? (mtoByCustomer(_hp, (typeof dmWindow === 'function') ? dmWindow(_hp) : 13) || {}) : {}; }
+                   ? (mtoByCustomer(_hp, (typeof dmWindow === 'function') ? dmWindow(_hp) : 13, {crossDockOnly:true}) || {}) : {}; }
                  catch(e){ return {}; } })();
   var _hpDS = function(cust){ return Object.prototype.hasOwnProperty.call(_hpMto, cust); };
   // La tasa por cliente tiene que usar la MISMA ventana que la base que mandó el caller; si no, el
@@ -12109,17 +12111,31 @@ function _mutateOrderDirectShip(po, fn) {
   saveOrders(all);
   return all[i].directShip;
 }
-function addDirectShip(po, customer, cases) {
+// ── Dos maneras de comprar para un cliente ──────────────────────────────────────────────────────
+// CRUZADO: del puerto al cliente, nunca entra al almacén. (Sol-ti / turmeric)
+// REEMPACADO: entra, se reempaca y sale. (Whole Foods / garlic) Se compró para ellos igual —el lead
+// de Christopher Ranch son 3 días, así que no hace falta tener stock esperándolos— pero las cajas SÍ
+// pasan por la cámara. Las dos salen del run-rate; solo el cruzado sale además de las llegadas.
+function addDirectShip(po, customer, cases, viaWarehouse) {
   var n = Math.round(Number(cases) || 0);
   if(!po || !customer || n <= 0) return getDirectShip(po);
-  return _mutateOrderDirectShip(po, function(list){ list.push({ customer: String(customer), cases: n }); });
+  return _mutateOrderDirectShip(po, function(list){
+    var e = { customer: String(customer), cases: n };
+    if(viaWarehouse) e.viaWarehouse = true;
+    list.push(e);
+  });
 }
 function removeDirectShip(po, idx) {
   return _mutateOrderDirectShip(po, function(list){ if(idx >= 0 && idx < list.length) list.splice(idx, 1); });
 }
-// Σ direct-ship cases for a container (Buy Planner / Inventory free-stock use this).
+// Σ de las cajas que NO entran al almacén. Es lo que se descuenta de las llegadas: lo reempacado sí
+// llega, así que no va acá — descontarlo haría desaparecer mercadería que de verdad entra a cámara.
 function directShipTotal(po) {
-  return getDirectShip(po).reduce(function(s, d){ return s + (d.cases || 0); }, 0);
+  return getDirectShip(po).reduce(function(s, d){ return s + ((d && d.viaWarehouse) ? 0 : (d.cases || 0)); }, 0);
+}
+// Σ de TODO lo comprado para un cliente, entre o no al almacén. Es lo que ya tiene dueño.
+function mtoEarmarkedTotal(po) {
+  return getDirectShip(po).reduce(function(s, d){ return s + ((d && d.cases) || 0); }, 0);
 }
 
 // ── OPEN-ORDERS IMPORT — auto-populate committed[] (Frente B0.5) ────────
@@ -13626,7 +13642,8 @@ function ordAddBoughtFor(){
   // El nombre tiene que existir tal cual en las ventas del producto: se compara letra por letra
   // contra el modelo de demanda. Si no matchea, la marca queda huérfana y en silencio.
   if(ordBoughtForCustomers(o.product || 'ginger').indexOf(c) < 0) return;
-  addDirectShip(o.jlzPo, c, n);
+  var rp = !!((document.getElementById('ord-bf-repack') || {}).checked);
+  addDirectShip(o.jlzPo, c, n, rp);
   ordAfterBoughtForChange();
 }
 function ordRemoveBoughtFor(i){
@@ -13838,6 +13855,10 @@ function buildOrderViewMode(o) {
               return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--gray-100)">'
                 + '<div style="flex:1"><b style="font-size:12.5px">' + esc(d.customer) + '</b>'
                 + '<span style="font-family:var(--fm);font-size:11px;color:var(--gray-500);margin-left:8px">' + (d.cases||0) + ' cs</span>'
+                // Las dos marcas sacan al cliente del run-rate; solo el cruzado saca además la llegada.
+                + (d.viaWarehouse
+                    ? '<span style="font-family:var(--fm);font-size:9px;font-weight:700;color:#b45309;background:#FFFBEB;border:1px solid #FDE68A;padding:1px 6px;border-radius:99px;margin-left:8px;white-space:nowrap">REPACKED HERE &middot; arrives, then ships</span>'
+                    : '<span style="font-family:var(--fm);font-size:9px;font-weight:700;color:#6d28d9;background:#ede9fe;border:1px solid #ddd6fe;padding:1px 6px;border-radius:99px;margin-left:8px;white-space:nowrap">CROSS-DOCK &middot; never enters</span>')
                 + (netted ? '' : '<div style="font-size:10.5px;color:var(--gray-500);margin-top:2px;line-height:1.45">'
                     + 'Counted as earmarked supply. The matching discount on ' + esc(d.customer) + '&apos;s demand '
                     + 'is not switched on yet, so for now the plan still stocks for these cases.</div>')
@@ -13861,12 +13882,17 @@ function buildOrderViewMode(o) {
                   + '</select>';
               })()
           +   '<input id="ord-bf-cases" type="number" min="1" placeholder="cs" style="width:74px;height:30px;padding:0 8px;border:1px solid var(--gray-200);border-radius:6px;font-size:12px;font-family:var(--fm)">'
+          +   '<label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--gray-600);white-space:nowrap;cursor:pointer" title="The cases arrive at the warehouse, get repacked and ship out. They still come off the run-rate — you buy them when the customer orders — but they DO count as an arrival.">'
+          +     '<input id="ord-bf-repack" type="checkbox" style="margin:0"> repacked here</label>'
           +   (ordBoughtForCustomers(prod).length
                 ? '<button onclick="ordAddBoughtFor()" style="height:30px;padding:0 12px;border:1px solid var(--jlz);background:var(--jlz);color:#fff;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Add</button>'
                 : '')
           + '</div>'
           + '<div style="font-size:10.5px;color:var(--gray-400);margin-top:7px;line-height:1.5">'
-          +   'Earmarked cases arrive into the warehouse but are already spoken for, so they do not count as free stock in the Buy Planner, the Simulator or Inventory.</div>'
+          +   'Earmarked cases are already spoken for, so they never count as free stock. '
+          +   '<b>Cross-dock</b> goes supplier &rarr; customer and is not counted as an arrival either. '
+          +   '<b>Repacked here</b> does arrive, gets repacked and ships out &mdash; so it counts as an arrival and as that week&rsquo;s demand, '
+          +   'but it still comes off the run-rate: you buy it when they order, so no stock waits for it.</div>'
           + '</div></div>';
       })()
 
@@ -15815,7 +15841,11 @@ function mtoOrdersByCustomer(prod, weeks){
   return out;
 }
 
-function mtoByCustomer(prod, weeks){
+// `opts.crossDockOnly` deja solo las cuentas cuya mercadería NUNCA entra al almacén. Se usa para la
+// DEMANDA: lo reempacado sí sale de la cámara esa semana, así que su committed tiene que contar. Sin
+// esa distinción, las 210 cajas de Whole Foods entrarían al stock y no saldrían nunca.
+function mtoByCustomer(prod, weeks, opts){
+  var _cdOnly = !!(opts && opts.crossDockOnly);
   var w = Math.max(1, weeks || 13);
   var caseLb = (typeof productCaseLb === 'function') ? productCaseLb(prod) : 30;
   var ords = (typeof getOrders === 'function') ? getOrders() : [];
@@ -15840,6 +15870,7 @@ function mtoByCustomer(prod, weeks){
     if(since && wk < since) return;
     o.directShip.forEach(function(ds){
       if(!ds || !ds.customer) return;
+      if(_cdOnly && ds.viaWarehouse) return;
       marked[ds.customer] = (marked[ds.customer] || 0) + (+ds.cases || 0);
     });
   });
@@ -16706,9 +16737,11 @@ function invmCommittedByWeek(p, origin, fromWk){
   // entera caía en STOCKOUT desde ahí (−455 cajas y bajando) por mercadería que nunca toca la
   // cámara. Misma regla y misma fuente que `hybridSalesForWeek` (`_hpDS`), que ya lo hacía bien —
   // este era el camino que faltaba.
+  // Solo lo CRUZADO: lo reempacado sí sale de la cámara esa semana y su committed tiene que contar,
+  // o las cajas entran al stock y no salen nunca.
   var _mtoCust={};
   try{ _mtoCust=(typeof mtoByCustomer==='function')
-        ? (mtoByCustomer(p,(typeof dmWindow==='function')?dmWindow(p):13)||{}) : {}; }catch(e){}
+        ? (mtoByCustomer(p,(typeof dmWindow==='function')?dmWindow(p):13,{crossDockOnly:true})||{}) : {}; }catch(e){}
   all=all.filter(function(c){ return !Object.prototype.hasOwnProperty.call(_mtoCust, c.customer); });
   if(origin && origin!=='all'){
     var tagged=all.filter(function(c){ return _cmOriginFor(c); });
@@ -16780,12 +16813,15 @@ function invmDirectShipOrdersHTML(p, origin){
       if(!ds.length) return;
       var tot=ds.reduce(function(t,x){ return t+(+x.cases||0); },0);
       if(!(tot>0)) return;
+      var cruz=ds.reduce(function(t,x){ return t+((x&&x.viaWarehouse)?0:(+x.cases||0)); },0);
+      var reemp=tot-cruz;
       var eta=String(o.arrivalActual||o.arrivalEstimated||o.etaActual||o.etaEstimated||'').slice(0,10);
       var pend=(o.status==='Contracted'||o.status==='In Transit');
       if(pend) enCamino+=tot; else if(eta && eta>=_dsDesde()) llegadas+=tot;
       if(!pend && !(eta && eta>=_dsDesde())) return;          // histórico viejo: no llena la pantalla
       var propio=Math.max(0,(parseFloat(o.cases)||0)-tot);
       filas.push({ po:String(o.jlzPo||o.id||'—'), estado:o.status, eta:eta, cajas:tot, propio:propio,
+                   como:(reemp&&cruz)?'both':(reemp?'repack':'cross'),
                    clientes:ds.map(function(x){ return (x.customer||x.name||'?')+(ds.length>1?(' '+f(x.cases)):''); }).join(', '),
                    pend:pend, tarde:(pend && eta && eta<hoy) });
     });
@@ -16796,19 +16832,23 @@ function invmDirectShipOrdersHTML(p, origin){
     var tasa=0; try{ tasa=(typeof mtoCasesPerWeek==='function')?mtoCasesPerWeek(p,(typeof dmWindow==='function')?dmWindow(p):13):0; }catch(e){}
     return '<div style="margin:14px 0 8px;border:1px solid var(--gray-200);border-left:3px solid #7c3aed;border-radius:8px;overflow:hidden">'
       + '<div style="padding:8px 12px;background:var(--gray-50)">'
-        + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.07em;font-weight:700;color:#7c3aed;font-family:var(--fb)">Bought for a customer &middot; never enters the warehouse</div>'
+        + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.07em;font-weight:700;color:#7c3aed;font-family:var(--fb)">Bought for a customer</div>'
         + '<div style="margin-top:2px;font-size:11px;font-family:var(--fm);color:var(--gray-500);line-height:1.5">'
-        + 'You are buying and shipping this, port to customer. It is not in the projection above and not in the buy plan &mdash; '
-        + 'those cases never sit in the cooler.' + (tasa>0?(' Running at about <b>'+f(tasa)+' cases a week</b>.'):'') + '</div>'
+        + 'You buy this when the customer orders, so no stock waits for it &mdash; none of it is in the buy plan. '
+        + '<b>Cross-dock</b> never reaches the cooler. <b>Repacked here</b> arrives, gets repacked and ships out, '
+        + 'so it shows up in the projection above as both an arrival and that week&rsquo;s demand.'
+        + (tasa>0?(' Running at about <b>'+f(tasa)+' cases a week</b>.'):'') + '</div>'
       + '</div>'
       + '<table style="width:100%;border-collapse:collapse">'
-      + '<thead><tr><th style="'+th+'">PO</th><th style="'+th+'">For</th>'
+      + '<thead><tr><th style="'+th+'">PO</th><th style="'+th+'">For</th><th style="'+th+'">How</th>'
         + '<th style="'+th+';text-align:right">Cases</th><th style="'+th+'">Arrives</th><th style="'+th+'">Status</th></tr></thead><tbody>'
       + filas.map(function(r){
           var col=r.tarde?'#DC2626':(r.pend?'var(--gray-800)':'var(--gray-400)');
           return '<tr style="border-top:1px solid var(--gray-100)">'
             + '<td style="'+td+';color:'+col+'"><b>'+esc(r.po)+'</b></td>'
-            + '<td style="'+td+'">'+esc(r.clientes)+(r.propio>0?(' <span style="color:var(--gray-400)">(+'+f(r.propio)+' to the warehouse)</span>'):'')+'</td>'
+            + '<td style="'+td+'">'+esc(r.clientes)+(r.propio>0?(' <span style="color:var(--gray-400)">(+'+f(r.propio)+' free stock)</span>'):'')+'</td>'
+            + '<td style="'+td+';color:'+(r.como==='cross'?'#6d28d9':'#b45309')+'">'
+              + (r.como==='cross'?'cross-dock':(r.como==='repack'?'repacked here':'mixed'))+'</td>'
             + '<td style="'+td+';text-align:right;font-weight:700">'+f(r.cajas)+'</td>'
             + '<td style="'+td+';color:var(--gray-500)">'+(r.eta?esc(r.eta):'&mdash;')+'</td>'
             + '<td style="'+td+';color:'+col+'">'+esc(r.estado)+(r.tarde?' &middot; past its date':'')+'</td></tr>'; }).join('')

@@ -1790,7 +1790,8 @@ group('Lo comprado para un cliente se VE, aunque no entre a camara');
 
   var h = invmDirectShipOrdersHTML('turmeric','Fiji');
   ok('arma el cuadro',                         h.length>0);
-  ok('dice que no entra a camara',             h.indexOf('never enters the warehouse')>-1);
+  ok('dice que se compro para un cliente',     h.indexOf('Bought for a customer')>-1);
+  ok('y que no hay stock esperandolo',         h.indexOf('no stock waits for it')>-1);
   ok('muestra la orden contra-orden',          h.indexOf('P-SOLTI')>-1);
   ok('con su cliente',                         h.indexOf('Sol-ti')>-1);
   ok('y su fecha de llegada',                  h.indexOf(iso(6))>-1);
@@ -1800,19 +1801,89 @@ group('Lo comprado para un cliente se VE, aunque no entre a camara');
   ok('pero no el historial viejo',             h.indexOf('P-ANTIGUA')<0);
   ok('suma lo que viene en camino',            h.indexOf('<b>700 cases</b> on the way for customers')>-1);
   ok('y lo ya entregado hace poco, aparte',    h.indexOf('700 already delivered in the last 13 weeks')>-1);
-  ok('y aclara que no esta en el plan de compra', h.indexOf('not in the buy plan')>-1);
+  ok('y aclara que no esta en el plan de compra', h.indexOf('none of it is in the buy plan')>-1);
+  ok('distingue cruzado de reempacado',          h.indexOf('cross-dock')>-1 && h.indexOf('Repacked here')>-1);
   ok('con la tasa semanal, para atarlo al panel', h.indexOf('233 cases a week')>-1);
 
   // Una orden PARTIDA: parte al cliente, parte a camara. Se dice cuanto va a cada lado.
   DS['P-STOCK'] = [{ customer:'Erewhon', cases:50 }];
   var hp = invmDirectShipOrdersHTML('turmeric','Fiji');
   ok('la orden partida aparece',          hp.indexOf('P-STOCK')>-1);
-  ok('y dice cuanto va a la camara',      hp.indexOf('(+100 to the warehouse)')>-1);
+  ok('y dice cuanto queda de stock libre', hp.indexOf('(+100 free stock)')>-1);
+  delete DS['P-STOCK'];
+
+  // ── Las dos maneras se distinguen en la tabla ────────────────────────────────────────────────
+  // Cruzado: del puerto al cliente, no entra. Reempacado: entra, se reempaca y sale. Las dos salen
+  // del run-rate; solo el cruzado sale ademas de las llegadas.
+  DS['P-SOLTI']=[{ customer:'Sol-ti', cases:700 }];
+  DS['P-STOCK']=[{ customer:'Whole Foods', cases:120, viaWarehouse:true }];
+  var hm = invmDirectShipOrdersHTML('turmeric','Fiji');
+  ok('marca la cruzada como cross-dock',   hm.indexOf('>cross-dock<')>-1);
+  ok('y la reempacada como repacked here', hm.indexOf('>repacked here<')>-1);
+  // Y la mitad que NO es para el cliente sigue siendo stock libre.
+  ok('lo no marcado queda como stock libre', hm.indexOf('(+30 free stock)')>-1);
   delete DS['P-STOCK'];
 
   // Sin ordenes contra-orden no se dibuja nada: un cuadro vacio es ruido.
   DS={};
   check('sin contra-orden, no hay cuadro', invmDirectShipOrdersHTML('turmeric','Fiji'), '');
+})();
+
+group('Reempacado vs cruzado: dos efectos que no van juntos');
+// Juan, sobre el garlic: "compramos esas 210 cajas y las reempacamos para el cliente... se compro
+// especificamente para eso, pero igual se hace un reempaque en el almacen. ¿Como lo manejamos?".
+// La marca vieja hacia DOS cosas a la vez: sacaba la llegada Y sacaba al cliente del run-rate. El
+// caso de Whole Foods necesita solo la segunda — las cajas SI entran a camara.
+(function(){
+  var hoy=new Date(), DIA=86400000;
+  var iso=function(n){ return dmISOLocal(new Date(hoy.getTime()+n*DIA)); };
+  // `mtoByCustomer` lee `o.directShip` de la ORDEN; `directShipTotal` pasa por getDirectShip. Los dos
+  // tienen que ver el MISMO arreglo, o el fixture prueba dos mundos distintos.
+  var marcas=[];
+  var poner=function(arr){ marcas.length=0; arr.forEach(function(x){ marcas.push(x); }); };
+  _ordProd   = function(o){ return o.product; };
+  _ordOrigin = function(o){ return o.origin; };
+  dmWindow   = function(){ return 6; };
+  productCaseLb = function(){ return 30; };
+  getOrders = function(){ return [
+    { product:'garlic', origin:'California', status:'Arrived', cases:140, jlzPo:'P-WF',
+      directShip:marcas, arrivalActual:iso(-7), arrivalEstimated:iso(-7) } ]; };
+  getDirectShip = function(po){ return String(po)==='P-WF' ? marcas : []; };
+  // El techo: nunca se descuenta mas de lo que ese cliente REALMENTE compro. Sin ventas cargadas
+  // mtoByCustomer devuelve {} y el test estaria midiendo el techo, no la marca.
+  _dmRawAll = [{ prod:'garlic', c:'Whole Foods', d:iso(-6), lbs:140*30 }];
+  var tiene=function(o,c){ return Object.prototype.hasOwnProperty.call(o||{}, c); };
+
+  // ── La llegada ────────────────────────────────────────────────────────────────────────────────
+  poner([{ customer:'Whole Foods', cases:140 }]);                      // cruzado
+  check('lo cruzado NO llega a camara', directShipTotal('P-WF'), 140);
+  poner([{ customer:'Whole Foods', cases:140, viaWarehouse:true }]);   // reempacado
+  check('lo reempacado SI llega a camara', directShipTotal('P-WF'), 0);
+  check('pero igual esta apartado',        mtoEarmarkedTotal('P-WF'), 140);
+
+  // ── El run-rate: las DOS salen ────────────────────────────────────────────────────────────────
+  // No hace falta tener stock esperando a ninguno: en los dos casos se compra cuando el cliente pide.
+  ok('el reempacado sale del run-rate', tiene(mtoByCustomer('garlic',6), 'Whole Foods'));
+  poner([{ customer:'Whole Foods', cases:140 }]);
+  ok('y el cruzado tambien',            tiene(mtoByCustomer('garlic',6), 'Whole Foods'));
+
+  // ── La demanda de la semana: solo el cruzado se excluye ───────────────────────────────────────
+  // Lo reempacado SALE de la camara esa semana. Si tambien se excluyera, las cajas entrarian al
+  // stock y no saldrian nunca — el stock quedaria inflado para siempre.
+  ok('el cruzado SI se excluye de la demanda',
+     tiene(mtoByCustomer('garlic',6,{crossDockOnly:true}), 'Whole Foods'));
+  poner([{ customer:'Whole Foods', cases:140, viaWarehouse:true }]);
+  ok('el reempacado NO se excluye de la demanda',
+     !tiene(mtoByCustomer('garlic',6,{crossDockOnly:true}), 'Whole Foods'));
+
+  // Una orden puede tener las dos cosas: parte cruzada, parte reempacada.
+  poner([{ customer:'Whole Foods', cases:100 },
+         { customer:'Whole Foods', cases:40, viaWarehouse:true }]);
+  check('la llegada solo descuenta lo cruzado', directShipTotal('P-WF'), 100);
+  check('y lo apartado es todo',                mtoEarmarkedTotal('P-WF'), 140);
+  ok('sigue fuera del run-rate',                tiene(mtoByCustomer('garlic',6), 'Whole Foods'));
+  ok('y sigue contando como demanda de esa semana',
+     tiene(mtoByCustomer('garlic',6,{crossDockOnly:true}), 'Whole Foods'));
 })();
 
 group('El contra-orden que se MUESTRA sale de la ventana con la que se NETEO');
