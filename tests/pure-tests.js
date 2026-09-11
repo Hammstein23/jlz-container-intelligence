@@ -36,7 +36,8 @@ var _PRISTINO_NOMBRES = [
   // `mtoCasesPerWeek` clavado en 0 hacia fallar seis checks de su propio grupo, tres grupos despues.
   'PRODUCTS','invmProductModel','invmRunRateLbs','invmStockableWeekly','prodInvFor',
   'prodCommittedTotal','mtoCasesPerWeek','dsWindow','_ordOrigin','directShipTotal','invmOriginsFor',
-  'invmRunway','bpProtectPlan','invmOrderCases'
+  'invmRunway','bpProtectPlan','invmOrderCases',
+  'mtoByCustomer','cmPlanEntries','cmCasesInBuyPack','hybridSalesForWeek'
 ];
 var _PRISTINO = {};
 _PRISTINO_NOMBRES.forEach(function(n){ try { _PRISTINO[n] = eval(n); } catch (e) {} });
@@ -1754,6 +1755,48 @@ group('En camino · el origen filtra, pero no puede hacer desaparecer carga');
   check('y sigue siendo de Peru cuando se pregunta por Peru', sum(invmProductArrivals('ginger','Peru')), 1320);
   check('un origen que no es de nadie NO desaparece', sum(invmProductArrivals('shallots','California')), 100);
   check('sin filtro de origen entra todo', sum(invmProductArrivals('ginger','all')), 1360);
+})();
+
+group('Un escenario puede sumar demanda, nunca borrarla');
+// Los escenarios del Simulator pasaban por el mismo acumulador que el committed real, y ese
+// acumulador mueve el "horizonte conocido" de cada cuenta. Un committed real si dice "se lo que
+// tiene en firme hasta la semana X"; una orden SUPUESTA para la semana 39 no dice nada sobre las
+// semanas del medio. Con 700 cs de Sol-ti puestas en la semana 39, el Simulator borraba el run-rate
+// propio de Sol-ti (185 cs) en TODAS las semanas previas y mostraba mas stock del que va a haber.
+(function(){
+  var W3='2026-09-14', W4='2026-09-21';
+  var modelo=function(){ return { customers:[
+    { c:'Sol-ti',  sporadic:true,  status:'active', rrCases:185 },
+    { c:'Pareja',  sporadic:false, status:'active', rrCases:400 } ] }; };
+  cmPlanEntries   = function(){ return []; };          // sin committed real: el horizonte no existe
+  mtoByCustomer   = function(){ return {}; };
+  dmWindow        = function(){ return 13; };
+  _cmProd         = function(c){ return c.product||'ginger'; };
+  cmCasesInBuyPack= function(c){ return c.cases||0; };
+  var base=736;
+  var hs=function(wk, extra){ return hybridSalesForWeek(wk, base, modelo(), 'ginger', extra||[]); };
+  var esc=[{ customer:'Sol-ti', wk:W4, cases:700 }];
+
+  check('sin escenario, la semana previa es la base', hs(W3, []), base);
+  check('con el escenario puesto en la SIGUIENTE semana, no cambia', hs(W3, esc), base);
+  ok('y no se le resta el run-rate del cliente', hs(W3, esc) > base - 185);
+
+  // En su propia semana si cuenta, y reemplaza el run-rate en vez de sumarse encima.
+  check('en su semana, reemplaza el run-rate del cliente', hs(W4, esc), base + 700 - 185);
+
+  // Cuanto mas lejos el escenario, mas semanas se vaciaban: ninguna se vacia ahora.
+  var lejos=[{ customer:'Sol-ti', wk:'2026-11-02', cases:700 }];
+  check('un escenario lejano no toca septiembre', hs(W3, lejos), base);
+  check('ni octubre',                             hs('2026-10-05', lejos), base);
+  check('y sigue contando donde esta',            hs('2026-11-02', lejos), base + 700 - 185);
+
+  // Una cuenta pareja suma solo el excedente sobre su propio run-rate, tambien en escenario.
+  var par=[{ customer:'Pareja', wk:W4, cases:500 }];
+  check('cuenta pareja: solo el excedente', hs(W4, par), base + Math.max(0, 500-400));
+  check('y por debajo de su run-rate no resta', hs(W4, [{customer:'Pareja', wk:W4, cases:100}]), base);
+
+  // Una cuenta que no esta en el modelo entra entera.
+  check('cuenta desconocida entra entera', hs(W4, [{customer:'Nueva', wk:W4, cases:300}]), base + 300);
 })();
 
 group('bpRowAtDate · la semana que CONTIENE la llegada, no la siguiente');

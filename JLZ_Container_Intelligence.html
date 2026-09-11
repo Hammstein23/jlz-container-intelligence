@@ -12016,7 +12016,7 @@ function hybridSalesForWeek(wk, salesDemand, model, product, extraOrders, origin
   var custs = (model && model.customers) || null;
   if (!custs) return null;   // no model → caller falls back to legacy max()
   // committed for THIS week per customer, and each customer's LAST committed week (its "known horizon")
-  var comThis = {}, comLast = {};
+  var comThis = {}, comLast = {}, hypThis = {};
   var _hp = product || 'ginger';
   // ── Direct-ship NUNCA es demanda de stock ────────────────────────────────────────────────────────
   // Esas cuentas despachan puerto → cliente y no tocan el almacén. El caller ya las saca de la base
@@ -12056,10 +12056,23 @@ function hybridSalesForWeek(wk, salesDemand, model, product, extraOrders, origin
     if (_hpOrg && typeof _cmOriginFor === 'function'){ var _o = _cmOriginFor(c); if (_o && _o !== _hpOrg) return; }
     _acc(c.customer, c.wk, cmCasesInBuyPack(c, _hp));   // en el pack de compra: se compara contra el run-rate
   });
-  // Extra (hypothetical) orders — Simulator scenarios — netted IDENTICALLY to committed: for an
-  // order-driven account a scenario order REPLACES its run-rate that week (no double-count); a
-  // steady account adds only the excess. Real committed callers pass nothing, so the plan is untouched.
-  (extraOrders || []).forEach(function(c){ if (c) _acc(c.customer, c.wk, c.cases); });
+  // ── Un escenario suma en SU semana; no corre el horizonte conocido ─────────────────────────────
+  // Netea igual que un committed real: para una cuenta que compra por orden, la orden supuesta
+  // REEMPLAZA su run-rate esa semana (no se suman); una cuenta pareja suma solo el excedente.
+  //
+  // Lo que NO hace —y hacía— es mover el "horizonte conocido". Un committed real sí dice "sé lo que
+  // esta cuenta tiene en firme hasta la semana X"; una orden SUPUESTA para la semana 39 no dice nada
+  // sobre lo que va a pedir de acá a allá. Cuando movía el horizonte, un escenario BORRABA la
+  // demanda base de ese cliente en todas las semanas previas: con 700 cs de Sol-ti puestas en la
+  // semana 39, el Simulator restaba 207 cajas por semana desde hoy hasta ahí —el run-rate propio de
+  // Sol-ti— y mostraba más stock del que va a haber. Cuanto más lejos el escenario, más semanas
+  // vaciadas. Un escenario tiene que poder SUMAR demanda sin poder borrarla.
+  (extraOrders || []).forEach(function(c){
+    if (!c || !c.customer || !c.wk) return;
+    if (c.wk !== wk) return;                       // solo cuenta en su propia semana
+    comThis[c.customer] = (comThis[c.customer] || 0) + (+c.cases || 0);
+    hypThis[c.customer] = 1;                       // y ahí sí reemplaza el run-rate, como un committed
+  });
   var adj = 0, seen = {};
   custs.forEach(function(c){
     if (!c || !c.c) return;
@@ -12071,7 +12084,7 @@ function hybridSalesForWeek(wk, salesDemand, model, product, extraOrders, origin
       // known demand → use it, drop the smeared average (0 in the weeks it didn't order). BEYOND the
       // horizon (no more orders on file) the average RESUMES — it will order again, so we keep the
       // run-rate (conservative: avoids under-buying for its eventual return).
-      if (last && wk <= last) adj += (cm - rr);   // known: committed replaces the average
+      if ((last && wk <= last) || hypThis[c.c]) adj += (cm - rr);   // known: committed replaces the average
       // else: beyond horizon → keep baseline run-rate (adj += 0)
     } else {
       adj += Math.max(0, cm - rr);                 // steady: excess over run-rate only
