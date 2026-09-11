@@ -1819,6 +1819,57 @@ group('bpRowAtDate · la semana que CONTIENE la llegada, no la siguiente');
   check('y ahi el stock es el de esa semana', bpRowAtDate(rows, d('2026-10-17').getTime()).startingStock, 900);
 })();
 
+group('bpOrderSchedule · una fecha por contenedor, no todas la misma');
+// `bpProtectPlan` contesta "la ultima fecha para LA orden" y asume que todo aterriza junto. Con dos
+// contenedores eso los amontonaba en la misma semana — no por decision, sino porque la cuenta
+// contestaba con una sola fecha. Cada semana que el segundo se corre es una semana menos en camara.
+(function(){
+  var W=[], c=new Date('2026-09-07T12:00:00');
+  for(var i=0;i<20;i++){ W.push(dmWeekKey(c)); c=new Date(c.getTime()+7*86400000); }
+  var rows=W.map(function(w){ return { wkISO:w, arrivals:0, demand:100 }; });
+  // Stock suficientemente ajustado para que muerda el COLCHON, no el horizonte: con 3.000 cajas y
+  // 100 por semana no se toca el colchon en 20 semanas y todo se va al final, que no prueba nada.
+  var O={ startCases:1500, safetyCases:200, leadDays:14, perOrder:500, count:2,
+          today:'2026-09-10T12:00:00' };
+  var s=bpOrderSchedule(rows,O);
+  check('agenda los dos', s.length, 2);
+  ok('y no el mismo dia',        s[0].orderBy !== s[1].orderBy);
+  ok('el segundo va despues',    s[1].orderBy > s[0].orderBy);
+  ok('el segundo aterriza despues', s[1].landsWk > s[0].landsWk);
+  check('cada uno lleva su cantidad', s[0].cases, 500);
+  check('y estan numerados', s[0].n+'-'+s[1].n, '1-2');
+  // Los dos respetan el colchon: es la restriccion, no una preferencia.
+  ok('el primero no baja del colchon', s[0].trough >= O.safetyCases);
+  ok('el segundo tampoco',             s[1].trough >= O.safetyCases);
+
+  // Lo mas TARDE posible: el primero esta en la ultima fecha que respeta el colchon mirando desde hoy.
+  var solo=bpProtectPlan(rows, { startCases:1500, safetyCases:200, leadDays:14, addCases:500,
+                                 today:'2026-09-10T12:00:00' });
+  check('el primero esta en su ultima fecha posible', s[0].landsWk, solo.protect.landsWk);
+  ok('y el segundo cae despues de que aterriza el primero', s[1].landsWk > s[0].landsWk);
+
+  // Un solo contenedor sigue dando una sola fecha.
+  check('con uno solo, una sola entrada', bpOrderSchedule(rows, Object.assign({},O,{count:1})).length, 1);
+  check('sin contenedores, nada',         bpOrderSchedule(rows, Object.assign({},O,{count:0})).length, 0);
+  check('sin filas, nada',                bpOrderSchedule([], O).length, 0);
+
+  // Tres se reparten, no se amontonan.
+  var tres=bpOrderSchedule(rows, Object.assign({},O,{count:3}));
+  check('agenda los tres', tres.length, 3);
+  ok('cada uno mas tarde que el anterior',
+     tres[0].orderBy < tres[1].orderBy && tres[1].orderBy < tres[2].orderBy);
+
+  // Si ya es tarde de verdad —ni ordenando hoy se salva el colchon— lo dice, en vez de inventar una
+  // fecha que no salva nada. (Con 150 de arranque y 100 por semana NO es tarde: el pedido llega a
+  // tiempo desde la primera semana alcanzable; el pozo de las dos primeras semanas es inevitable y
+  // se reporta aparte, no como urgencia.)
+  var noEsTarde=bpOrderSchedule(rows, Object.assign({},O,{startCases:150}));
+  ok('un pozo inevitable NO es una urgencia', noEsTarde.length>0 && noEsTarde[0].late === false);
+  var seco=W.map(function(w){ return { wkISO:w, arrivals:0, demand:400 }; });
+  var tarde=bpOrderSchedule(seco, Object.assign({},O,{startCases:150}));
+  ok('pero cuando ni ordenando hoy alcanza, lo marca', tarde.length>0 && tarde[0].late === true);
+})();
+
 group('bpContainerPlan · cuantos contenedores, y por que ese numero');
 // Vivia dentro de renderBuyPlanner. El Simulator tiene que contestar lo MISMO sobre SUS datos —con
 // los escenarios cargados— y dos copias de esta cuenta terminarian dando dos numeros.

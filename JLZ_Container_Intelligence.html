@@ -16314,6 +16314,49 @@ function bpRowAtDate(rows, ms){
   }
   return out || rows[0];
 }
+// ── Cuándo cada contenedor, no todos el mismo día ───────────────────────────────────────────────
+// `bpProtectPlan` contesta "¿cuál es la última fecha para LA orden?" y asume que todo aterriza junto.
+// Cuando la respuesta son dos contenedores o más, eso deja de ser una fecha y pasa a ser un
+// calendario: amontonarlos en la misma semana no es una decisión, es un efecto de cómo está escrita
+// la cuenta. Acá cada uno se agenda contra una proyección que YA incluye a los anteriores, así el
+// segundo se corre solo hasta donde puede sin bajar del colchón — y cada semana que se corre es una
+// semana menos de mercadería en cámara.
+//
+// Greedy y lo más tarde posible: es el orden correcto para este problema porque atrasar nunca mejora
+// la protección (el piso solo puede bajar al esperar), así que la última fecha que respeta el colchón
+// es también la más barata. No hay un óptimo escondido más adelante que este barrido se pierda.
+function bpOrderSchedule(rows, opts){
+  opts = opts || {};
+  var n = Math.max(0, Math.floor(+opts.count || 0));
+  if(!n || !Array.isArray(rows) || !rows.length) return [];
+  var per = Math.max(1, +opts.perOrder || 1);
+  var work = rows.map(function(r){ return { wkISO:r.wkISO, arrivals:(+r.arrivals||0), demand:(+r.demand||0) }; });
+  var out = [], desde = 0, st = +opts.startCases || 0;
+  for(var k=0;k<n;k++){
+    var sub = work.slice(desde);
+    if(!sub.length) break;
+    // El contenedor k se decide sobre lo que queda DESPUÉS de que aterrizó el k−1, arrancando del
+    // stock que va a haber en ese momento. Medirlo desde hoy no dice nada: el pozo que el primero ya
+    // tapó sigue ahí en la serie y la fecha del segundo se va al final del horizonte sin significar
+    // nada. Y arranca la semana SIGUIENTE: dos contenedores el mismo día es justo lo que se quiere
+    // evitar — si aun así no alcanza, la entrada sale marcada `late` y la pantalla lo dice.
+    var pl = bpProtectPlan(sub, { startCases:st, safetyCases:opts.safetyCases,
+                                  leadDays:opts.leadDays, addCases:per, today:opts.today });
+    if(!pl || pl.horizonShort) break;
+    var vivo = !!(pl.protect && pl.protect.orderBy);
+    var ancla = vivo ? pl.protect : pl.best;
+    if(!ancla) break;
+    out.push({ n:k+1, landsWk:ancla.landsWk, orderBy:ancla.orderBy, daysLeft:ancla.daysLeft,
+               trough:ancla.trough, troughWk:ancla.troughWk, cases:per, late:!vivo });
+    var idx = -1;
+    for(var i=desde;i<work.length;i++){ if(work[i].wkISO===ancla.landsWk){ idx=i; break; } }
+    if(idx < 0) break;
+    for(var j=desde;j<=idx;j++){ st += (work[j].arrivals||0) + ((j===idx)?per:0) - (work[j].demand||0); }
+    desde = idx + 1;
+    if(desde >= work.length) break;
+  }
+  return out;
+}
 function bpContainerPlan(o){
   o = o || {};
   var dem = +o.weeklyDemand || 0, per = Math.max(1, +o.perContainer || 1);
@@ -17525,10 +17568,36 @@ function bpGingerSuggestionHTML(src){
   if(!prot){ try{ var l=(sea&&sea.date)?new Date(sea.date):new Date();
                   l.setDate(l.getDate()+Math.round((R.leadWks||0)*7)); lands=iso(l); }catch(e){} }
   var ya = (P && P.floorUnavoidable);
+  // ── Con dos contenedores o más, la respuesta es un CALENDARIO ─────────────────────────────────
+  // Amontonarlos en la misma semana no era una decisión: era un efecto de que la cuenta contestaba
+  // con una sola fecha. Cada semana que el segundo se corre es una semana menos en cámara, y el
+  // calendario los pone lo más tarde que el colchón permite.
+  var SCH=(Array.isArray(d.schedule) && d.schedule.length>1) ? d.schedule : null;
+  var escalonado = !!(SCH && SCH.some(function(x){ return x.orderBy!==SCH[0].orderBy; }));
   var head='Buy <b>'+R.containers+'</b> container'+(R.containers>1?'s':'')+' &middot; ~<b>'+f(R.netCases)+'</b> cases'
-    + (ya ? ' &middot; order <b>now</b>'
-          : (plazoISO ? (' &middot; order by <b>'+plazoISO+'</b>'+(plazoDias!=null?(' &middot; in '+plazoDias+'d'):'')) : ''))
-    + (lands? (' &middot; lands <b>'+lands+'</b>') : '');
+    + (escalonado
+        ? (' &middot; <b>not all at once</b> &middot; first by <b>'+esc(SCH[0].orderBy)+'</b>, last by <b>'+esc(SCH[SCH.length-1].orderBy)+'</b>')
+        : (ya ? ' &middot; order <b>now</b>'
+              : (plazoISO ? (' &middot; order by <b>'+plazoISO+'</b>'+(plazoDias!=null?(' &middot; in '+plazoDias+'d'):'')) : ''))
+          + (lands? (' &middot; lands <b>'+lands+'</b>') : ''));
+  var cal='';
+  if(escalonado){
+    cal='<div style="margin-top:7px;border:1px solid var(--gray-200);border-radius:6px;overflow:hidden">'
+      + '<div style="padding:5px 9px;background:var(--gray-50);font-size:9.5px;text-transform:uppercase;'
+      + 'letter-spacing:.05em;font-weight:700;color:var(--gray-500);font-family:var(--fb)">Order schedule</div>'
+      + '<table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11px">'
+      + SCH.map(function(x,i){
+          var sep=(i>0)?Math.round((new Date(x.orderBy+'T12:00:00')-new Date(SCH[i-1].orderBy+'T12:00:00'))/86400000):0;
+          return '<tr style="border-top:1px solid var(--gray-100)">'
+            + '<td style="padding:5px 9px;color:var(--gray-400);white-space:nowrap">#'+x.n+'</td>'
+            + '<td style="padding:5px 9px;white-space:nowrap">order by <b>'+esc(x.orderBy)+'</b>'
+              + (x.late?' <span style="color:#DC2626">(overdue)</span>':(' <span style="color:var(--gray-400)">('+x.daysLeft+'d)</span>'))
+              + (sep>0?('<span style="color:var(--gray-400)"> &middot; '+sep+'d after the previous</span>'):'')+'</td>'
+            + '<td style="padding:5px 9px;color:var(--gray-500);white-space:nowrap">lands '+esc(x.landsWk)+'</td>'
+            + '<td style="padding:5px 9px;text-align:right;color:var(--gray-500);white-space:nowrap">floor '+f(x.trough)+' cs</td>'
+            + '</tr>'; }).join('')
+      + '</table></div>';
+  }
   if(ya) tone={bg:'#FEF2F2',bd:'#FECACA',fg:'#991B1B'};
   var why=n2(d.coverage)+' weeks of cover from '+f(d.stockCases)+' cases on hand'
     + ' &middot; sea takes '+n2(R.leadWks)+' weeks'
@@ -17592,7 +17661,7 @@ function bpGingerSuggestionHTML(src){
       + (_conEsc ? 'with your simulated orders' : 'from the Buy Planner &mdash; real data only') + '</div>'
     + '<div style="font-size:14px;line-height:1.5;color:var(--gray-800);font-family:var(--fb)">'+head+'</div>'
     + '<div style="margin-top:3px;font-size:11.5px;color:var(--gray-500);font-family:var(--fm);line-height:1.5">'+why+'</div>'
-    + buffer + math + fit + '</div>';
+    + cal + buffer + math + fit + '</div>';
 }
 
 function simRenderProduct(p){
@@ -19164,6 +19233,12 @@ function renderBuyPlanner() {
                                          arrivals: +r.arrivalCases||0, demand: +r.demand||0 }; }),
           { startCases: +rows[0].startingStock||0, safetyCases: ssCases,
             leadDays: lt.sea_total, addCases: grossCasesPerContainer*Math.max(1,recContainers) });
+        // Y el calendario: una fecha por contenedor, no todas la misma.
+        window._bpDigest.schedule = bpOrderSchedule(
+          rows.map(function(r){ return { wkISO: dmISOLocal(new Date(r.weekStartDate)),
+                                         arrivals: +r.arrivalCases||0, demand: +r.demand||0 }; }),
+          { startCases:+rows[0].startingStock||0, safetyCases:ssCases, leadDays:lt.sea_total,
+            perOrder:grossCasesPerContainer, count:recContainers });
       }
     }catch(e){}
     // La tarjeta del Buy Planner sale de ESTOS datos: sin escenarios. La del Simulator sale de los
@@ -23226,9 +23301,13 @@ function simRenderProjection(realOrders, hypoOrders) {
                   .map(function(r){ return { wkISO:r.wkISO, arrivals:r.arrivals, demand:r.demand }; }),
         { startCases:_simProjRows[0].startingStock, safetyCases:_ssC, leadDays:_lead,
           addCases:_cpS.netCases });
+      var _schS=bpOrderSchedule(_simProjRows.filter(function(r){ return !!r.wkISO; })
+                  .map(function(r){ return { wkISO:r.wkISO, arrivals:r.arrivals, demand:r.demand }; }),
+        { startCases:_simProjRows[0].startingStock, safetyCases:_ssC, leadDays:_lead,
+          perOrder:_cpS.perContainer, count:_cpS.containers });
       window._simDigest = { scenario:true, stockCases:stockCasesGross, weeklyDemand:weeklyDemand,
         salesDemand:salesDemand, coverage:(weeklyDemand>0?stockCasesGross/weeklyDemand:0),
-        safety:safety, protect:_plS,
+        safety:safety, protect:_plS, schedule:_schS,
         rec:{ containers:_cpS.containers, netCases:_cpS.netCases, netNeeded:_cpS.netNeeded,
               orderUpTo:_cpS.orderUpTo, projAtArrival:_cpS.projAtArrival, coverWks:_cpS.coverWks,
               leadWks:_cpS.leadWks, cadence:_cpS.cadence, ssCases:_cpS.ssCases,
