@@ -16265,6 +16265,57 @@ function invmProdToggleLotExcl(p,i){ var st=prodInvState(); if(st[p]&&st[p].lots
 function invmProdRemoveLot(p,i){ var st=prodInvState(); if(st[p]&&st[p].lots){ st[p].lots.splice(i,1); prodInvSave(st); invmReRender(); } }
 function invmProdAddLot(p){ var st=prodInvState(); if(!st[p]) st[p]={serviceLevel:95,demandOverride:null,lots:[]}; if(!st[p].lots) st[p].lots=[]; var sup=(PRODUCTS[p]&&PRODUCTS[p].suppliers&&PRODUCTS[p].suppliers[0])||{}; st[p].lots.push({lot:'NEW',origin:sup.origin||'',supplier:sup.name||'',cases:0,avgCost:0,received:''}); prodInvSave(st); invmReRender(); }
 // FEFO order: oldest received first (soonest-expiring, since a product's lots share one shelf life). Undated lots go last.
+// ── Un repack no es un lote de proveedor ────────────────────────────────────────────────────────
+// Son cajas que ya reempacaste (marca River Road, vendedor JLZ Produce Manufacturing): siguen en
+// cámara, solo cambiaron de presentación, y en la práctica son las que ya tienen dueño. Mezclarlas
+// con los lotes que te mandó el proveedor hace ilegible la tabla — turmeric tiene 3 de 8, garlic 2
+// de 6, ginger-Perú 11 de 15.
+// Dos señales que coinciden siempre (verificado en 155 lotes de dos exports): el lote matchea /^W\d/
+// Y el vendedor es JLZ Produce Manufacturing. Se pide UNA de las dos y se avisa si discrepan, para
+// no perder un repack porque el proveedor vino escrito distinto.
+function invmIsRepackLot(l){
+  if(!l) return false;
+  try{ if(typeof invmIsWLot==='function' && invmIsWLot(l.lot)) return true; }catch(e){}
+  return /manufactur/i.test(String(l.supplier||''));
+}
+// ── Orden de la tabla de lotes ──────────────────────────────────────────────────────────────────
+// Por defecto FEFO (lo más viejo primero, que es el orden en que hay que moverlo). Juan puede
+// ordenar por fecha de recepción, días en cámara o cajas, en los dos sentidos. Se guarda por
+// producto y por dispositivo: es una preferencia de lectura, no un dato.
+var INVM_LOTSORT_LS='jlz_lot_sort_v1';
+function invmLotSort(p){
+  try{ var o=JSON.parse(localStorage.getItem(INVM_LOTSORT_LS)||'{}');
+       var v=o&&o[p]; if(v && v.key) return { key:v.key, dir:(v.dir===1?1:-1) }; }catch(e){}
+  return { key:'fefo', dir:1 };
+}
+function invmSetLotSort(p, key){
+  var cur=invmLotSort(p);
+  var nxt={ key:key, dir:(cur.key===key ? -cur.dir : (key==='fefo' ? 1 : -1)) };
+  try{ var o=JSON.parse(localStorage.getItem(INVM_LOTSORT_LS)||'{}'); o[p]=nxt;
+       localStorage.setItem(INVM_LOTSORT_LS, JSON.stringify(o)); }catch(e){}
+  if(typeof invmReRender==='function') invmReRender(); else if(typeof renderInventory==='function') renderInventory();
+}
+function invmSortLots(lots, sort){
+  lots=Array.isArray(lots)?lots.slice():[];
+  var k=(sort&&sort.key)||'fefo', d=(sort&&sort.dir===-1)?-1:1;
+  if(k==='fefo') return (typeof invmFefoSort==='function')?invmFefoSort(lots):lots;
+  var dias=function(l){ try{ return (l&&l.received && typeof bpDaysSince==='function')?bpDaysSince(l.received):null; }catch(e){ return null; } };
+  var val=function(l){
+    if(k==='cases')    return parseFloat(l&&l.cases)||0;
+    if(k==='stored')   return dias(l);
+    if(k==='received') return (l&&l.received)?String(l.received):null;
+    return null;
+  };
+  return lots.sort(function(a,b){
+    var va=val(a), vb=val(b);
+    // Los que no tienen el dato van SIEMPRE al final, se ordene como se ordene: son los que hay que
+    // completar, no los primeros ni los últimos según el sentido.
+    if(va==null && vb==null) return 0;
+    if(va==null) return 1;
+    if(vb==null) return -1;
+    if(va<vb) return -d; if(va>vb) return d; return 0;
+  });
+}
 function invmFefoSort(lots){ return lots.slice().sort(function(a,b){ var ra=(a&&a.received)||'', rb=(b&&b.received)||''; if(ra&&rb) return ra<rb?-1:(ra>rb?1:0); if(ra&&!rb) return -1; if(!ra&&rb) return 1; return 0; }); }
 // Incoming supply per product+origin from the Fase 1 Orders pipeline (Contracted / In Transit), by arrival week.
 // ── Los orígenes que el producto PUEDE tener, no solo los que hoy tienen lote ────────────────────
@@ -16867,35 +16918,63 @@ function invmRenderProduct(p){
       + '<div class="ipv-kpi"><div class="lbl">Lots</div><div class="big">'+s.lots.length+'</div><div class="note">excl. W / vLot</div></div>'
       + '<div class="ipv-kpi"><div class="lbl">Inventory value</div><div class="big" style="font-size:20px">$'+f(s.costVal)+'</div><div class="note">at avg cost</div></div>'
     + '</div>';
-  // lots table — FEFO (oldest received first) + storage days, ginger-style aging.
+  // ── DOS tablas: lo que mandó el proveedor, y lo que vos reempacaste ──────────────────────────
+  // Estaban mezcladas y son cosas distintas: el repack ya cambió de presentación y en la práctica
+  // son las cajas que ya tienen dueño. Con turmeric 3 de 8 y ginger-Perú 11 de 15, leer la tabla
+  // pedía saberse de memoria cuál lote era cuál. Y el pie decía "Total (excl. W / vLot lots)"
+  // cuando los W SÍ estaban sumados — mentía desde que cambió la convención el 2026-09-08.
   var thL='text-align:left;font-family:var(--fb);font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-400);font-weight:700;padding:8px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-200)';
   var thR=thL.replace('text-align:left','text-align:right');
   var td='padding:9px 14px;border-bottom:1px solid var(--gray-100)';
-  var fefo=(typeof invmFefoSort==='function')?invmFefoSort(s.lots):s.lots;
   var storedOf=function(l){ return (l&&l.received)?((typeof bpDaysSince==='function')?bpDaysSince(l.received):0):null; };
-  var oldest=0, sumAge=0, sumC=0, undated=0;
-  fefo.forEach(function(l){ if(l&&l.excluded) return; var d=storedOf(l); var c=parseFloat(l.cases)||0; if(d==null){ undated++; } else { if(d>oldest) oldest=d; sumAge+=d*c; sumC+=c; } });
-  var avgAge=sumC>0?Math.round(sumAge/sumC):null;
   var ageBadge=function(d){ if(d==null) return '<span style="color:var(--gray-300)">—</span>'; var c=(d>=45)?'#b91c1c':(d>=30)?'#b45309':'var(--gray-700)'; return '<span style="color:'+c+';font-weight:700">'+d+'d</span>'; };
   var dinp='font-family:var(--fm);font-size:10.5px;border:1px solid var(--gray-200);border-radius:5px;padding:2px 5px;color:var(--gray-700)';
-  html += '<div class="card" style="background:var(--white);border:1px solid var(--gray-200);border-radius:10px;overflow:hidden;margin-bottom:14px">'
-    + '<div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--gray-100)"><span style="font-size:12px;font-weight:700;color:var(--jlz);text-transform:uppercase;letter-spacing:.05em">Lots on hand — '+esc(s.label)+oScope+' <span style="font-weight:500;color:var(--gray-400);text-transform:none;letter-spacing:0">· FEFO</span></span>'
-      + '<button onclick="invmProdAddLot(\''+p+'\')" style="font-family:var(--fb);font-size:11px;font-weight:600;padding:5px 11px;border:1px solid var(--gray-200);border-radius:6px;background:var(--white);color:var(--gray-600);cursor:pointer">+ Add lot</button></div>'
-    + '<div style="padding:9px 14px;font-size:11px;color:var(--gray-600);font-family:var(--fm);border-bottom:1px solid var(--gray-100);background:var(--gray-50)">Oldest first (soonest to move) · avg age <b>'+(avgAge==null?'—':avgAge+'d')+'</b> · oldest <b>'+(oldest?oldest+'d':'—')+'</b>'+(undated?(' · <span style="color:var(--amber-700)">'+undated+' lot(s) missing received date</span>'):'')+(s.excludedCases>0?(' · <span style="color:var(--amber-700)">'+f(s.excludedCases)+' cs excluded from plan</span>'):'')+'</div>';
-  if(s.lots.length){
-    html += '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11.5px"><thead><tr>'
-      + '<th style="'+thL+'">Lot</th><th style="'+thL+'">Origin</th><th style="'+thL+'">Supplier</th><th style="'+thL+'">Received</th><th style="'+thR+'">Stored</th>'
-      + '<th style="'+thR+'">Cases</th><th style="'+thR+'">Lbs</th><th style="'+thR+'">Cost/cs</th>'
+  var sort=(typeof invmLotSort==='function')?invmLotSort(p):{key:'fefo',dir:1};
+  var flecha=function(k){ return (sort.key===k) ? (sort.dir===1?' &#9650;':' &#9660;') : ''; };
+  var thOrd=function(k,label,der){
+    var act=(sort.key===k);
+    return '<th style="'+(der?thR:thL)+';cursor:pointer;-webkit-user-select:none;user-select:none'+(act?';color:var(--jlz)':'')+'"'
+      + ' onclick="invmSetLotSort(\''+p+'\',\''+k+'\')" title="Sort by '+label+'">'+label+flecha(k)+'</th>'; };
+
+  var esRepack=function(l){ return (typeof invmIsRepackLot==='function') ? invmIsRepackLot(l) : false; };
+  var repacks=s.lots.filter(esRepack), prov=s.lots.filter(function(l){ return !esRepack(l); });
+
+  var tabla=function(lots, titulo, nota, conAgregar){
+    var orden=(typeof invmSortLots==='function')?invmSortLots(lots,sort):lots;
+    var oldest=0,sumAge=0,sumC=0,undated=0,cs=0;
+    orden.forEach(function(l){ if(l&&l.excluded) return; var d=storedOf(l), c=parseFloat(l.cases)||0;
+      cs+=c; if(d==null){ undated++; } else { if(d>oldest) oldest=d; sumAge+=d*c; } });
+    orden.forEach(function(l){ if(!(l&&l.excluded)){ var d=storedOf(l); if(d!=null) sumC+=(parseFloat(l.cases)||0); } });
+    var avgAge=sumC>0?Math.round(sumAge/sumC):null;
+    var h='<div class="card" style="background:var(--white);border:1px solid var(--gray-200);border-radius:10px;overflow:hidden;margin-bottom:14px">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--gray-100)">'
+        + '<span style="font-size:12px;font-weight:700;color:var(--jlz);text-transform:uppercase;letter-spacing:.05em">'+titulo
+        + ' <span style="font-weight:500;color:var(--gray-400);text-transform:none;letter-spacing:0">· '+nota+'</span></span>'
+      + (conAgregar?('<button onclick="invmProdAddLot(\''+p+'\')" style="font-family:var(--fb);font-size:11px;font-weight:600;padding:5px 11px;border:1px solid var(--gray-200);border-radius:6px;background:var(--white);color:var(--gray-600);cursor:pointer">+ Add lot</button>'):'')
+      + '</div>'
+      + '<div style="padding:9px 14px;font-size:11px;color:var(--gray-600);font-family:var(--fm);border-bottom:1px solid var(--gray-100);background:var(--gray-50)">'
+        + (sort.key==='fefo' ? 'Oldest first (soonest to move)' : ('Sorted by '+({received:'received date',stored:'days stored',cases:'cases'}[sort.key]||sort.key)+', '+(sort.dir===1?'oldest / smallest first':'newest / largest first')))
+        + ' · <b>'+f(cs)+'</b> cs · avg age <b>'+(avgAge==null?'—':avgAge+'d')+'</b> · oldest <b>'+(oldest?oldest+'d':'—')+'</b>'
+        + (undated?(' · <span style="color:var(--amber-700)">'+undated+' lot(s) missing received date</span>'):'')+'</div>';
+    // Un solo punto de salida: con dos `return` que cierran la tarjeta, el chequeo estático de divs
+    // cuenta dos cierres para una apertura y da falso negativo. Ese chequeo vale, así que se respeta.
+    var cuerpo='';
+    if(!orden.length) cuerpo='<div style="padding:26px;text-align:center;color:var(--gray-300);font-size:12px">No lots.</div>';
+    else {
+    cuerpo='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-family:var(--fm);font-size:11.5px"><thead><tr>'
+      + '<th style="'+thL+'">Lot</th><th style="'+thL+'">Origin</th><th style="'+thL+'">Supplier</th>'
+      + thOrd('received','Received',false) + thOrd('stored','Stored',true) + thOrd('cases','Cases',true)
+      + '<th style="'+thR+'">Lbs</th><th style="'+thR+'">Cost/cs</th>'
       + '<th style="background:var(--gray-50);border-bottom:1px solid var(--gray-200)"></th></tr></thead><tbody>';
-    fefo.forEach(function(l){
-      var idx=s.allLots.indexOf(l);   // true index in the store (list may be origin-filtered / re-sorted)
+    orden.forEach(function(l){
+      var idx=s.allLots.indexOf(l);
       var exc=!!(l&&l.excluded);
       var rowStyle=exc?'background:repeating-linear-gradient(45deg,var(--gray-50),var(--gray-50) 5px,#fff 5px,#fff 10px)':'';
       var strike=exc?'text-decoration:line-through;color:var(--gray-400) !important;':'';
       var exBtn=exc
         ? '<button onclick="invmProdToggleLotExcl(\''+p+'\','+idx+')" title="Count this lot in the plan again" style="border:1px solid var(--amber-200);background:var(--amber-50);color:var(--amber-700);border-radius:5px;font-family:var(--fm);font-size:9px;font-weight:700;padding:2px 6px;cursor:pointer;white-space:nowrap">excluded ✕</button>'
         : '<button onclick="invmProdToggleLotExcl(\''+p+'\','+idx+')" title="Exclude from Buy Planner / Simulator (keeps the record, subtracts from planned on-hand)" style="border:1px solid var(--gray-200);background:var(--white);color:var(--gray-400);border-radius:5px;font-family:var(--fm);font-size:9px;font-weight:600;padding:2px 6px;cursor:pointer;white-space:nowrap">exclude</button>';
-      html += '<tr style="'+rowStyle+'">'
+      cuerpo += '<tr style="'+rowStyle+'">'
         + '<td style="'+td+';color:var(--gray-800);'+strike+'">'+esc(l.lot)+'</td>'
         + '<td style="'+td+';color:var(--gray-700)">'+esc(l.origin)+'</td>'
         + '<td style="'+td+';color:var(--gray-700)">'+esc(l.supplier)+'</td>'
@@ -16907,15 +16986,23 @@ function invmRenderProduct(p){
         + '<td style="'+td+';text-align:right;white-space:nowrap">'+exBtn+' <button onclick="invmProdRemoveLot(\''+p+'\','+idx+')" title="Remove" style="border:none;background:none;color:var(--gray-300);cursor:pointer;font-size:15px;line-height:1;vertical-align:middle">×</button></td>'
         + '</tr>';
     });
-    html += '<tr><td colspan="5" style="padding:9px 14px;background:var(--gray-50);font-weight:700;color:var(--gray-900)">Total (excl. W / vLot lots)</td>'
-      + '<td style="padding:9px 14px;background:var(--gray-50);text-align:right;font-weight:700;color:var(--gray-900)">'+f(s.onHandCases)+'</td>'
-      + '<td style="padding:9px 14px;background:var(--gray-50);text-align:right;font-weight:700;color:var(--gray-900)">'+f(s.onHandLbs)+'</td>'
+    cuerpo += '<tr><td colspan="5" style="padding:9px 14px;background:var(--gray-50);font-weight:700;color:var(--gray-900)">'+titulo+' — total</td>'
+      + '<td style="padding:9px 14px;background:var(--gray-50);text-align:right;font-weight:700;color:var(--gray-900)">'+f(cs)+'</td>'
+      + '<td style="padding:9px 14px;background:var(--gray-50);text-align:right;font-weight:700;color:var(--gray-900)">'+f(cs*s.caseLb)+'</td>'
       + '<td colspan="2" style="padding:9px 14px;background:var(--gray-50)"></td></tr>';
-    html += '</tbody></table></div>';
-  } else {
-    html += '<div style="padding:26px;text-align:center;color:var(--gray-300);font-size:12px">No lots. Use <b>+ Add lot</b> or the Sales Desk snippet.</div>';
-  }
-  html += '</div>';
+    cuerpo+='</tbody></table></div>';
+    }
+    return h+cuerpo+'</div>';
+  };
+
+  html += tabla(prov, 'Supplier lots — '+esc(s.label)+oScope, 'what the grower shipped you'
+      + (s.excludedCases>0?(' · '+f(s.excludedCases)+' cs excluded from plan'):''), true);
+  if(repacks.length)
+    html += tabla(repacks, 'Repacked — River Road', 'already repacked by JLZ Produce Manufacturing · same cases, new presentation', false);
+  // Los dos totales tienen que reconstruir el on-hand del panel, o la tabla dice una cosa y el plan otra.
+  html += '<div style="margin:-6px 0 14px;font-size:11px;font-family:var(--fm);color:var(--gray-500)">'
+    + 'Both tables are physically in the cooler and both count toward the <b>'+f(s.onHandCases)+' cs</b> on hand. '
+    + 'The repacked ones are the cases that already changed presentation.</div>';
   html += '<div style="font-size:11.5px;color:var(--gray-600);background:var(--sky-50,#eff6ff);border:1px solid var(--sky-200,#bfdbfe);border-radius:8px;padding:11px 13px">'
     + '<b style="color:var(--sky-700,#1d4ed8)">Update on-hand:</b> tell me "update the '+esc(s.label)+' inventory" and I\'ll generate a <b>Sales Desk</b> snippet (Floor Count, excl. W/vLot lots) to paste in the console — same as the Monday ginger routine. <b>Received date</b> = the PO\'s scheduled delivery date (WholesaleWare → Purchase Orders); it drives storage days + FEFO. Set it per lot above or I\'ll pull it with the update.</div>';
   return html;

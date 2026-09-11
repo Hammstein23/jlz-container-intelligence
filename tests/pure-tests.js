@@ -37,7 +37,7 @@ var _PRISTINO_NOMBRES = [
   'PRODUCTS','invmProductModel','invmRunRateLbs','invmStockableWeekly','prodInvFor',
   'prodCommittedTotal','mtoCasesPerWeek','dsWindow','_ordOrigin','directShipTotal','invmOriginsFor',
   'invmRunway','bpProtectPlan','invmOrderCases',
-  'mtoByCustomer','cmPlanEntries','cmCasesInBuyPack','hybridSalesForWeek','getDirectShip'
+  'mtoByCustomer','cmPlanEntries','cmCasesInBuyPack','hybridSalesForWeek','getDirectShip','bpDaysSince'
 ];
 var _PRISTINO = {};
 _PRISTINO_NOMBRES.forEach(function(n){ try { _PRISTINO[n] = eval(n); } catch (e) {} });
@@ -2553,6 +2553,41 @@ check('"All" no filtra nada',
 //     factura como venta interna a JLZ Produce Manufacturing), así que R−S da 0 y borraría stock real.
 // Cargar el NETO en vez del BRUTO fue el bug que dejó el ginger en 1.165 cuando eran 2.250:
 // el committed se restaría dos veces. Ver [[inventory-one-convention]].
+group('Los repacks van en su propia tabla, y se pueden ordenar');
+// Estaban mezclados con los lotes del proveedor: turmeric 3 de 8, garlic 2 de 6, ginger-Peru 11 de
+// 15. Son cosas distintas —el repack ya cambio de presentacion y son las cajas que ya tienen dueño—
+// y leer la tabla pedia saberse de memoria cual lote era cual.
+(function(){
+  var L=function(lot,sup){ return { lot:lot, supplier:sup }; };
+  check('un W-lot es repack',                 invmIsRepackLot(L('W2939A2674126','JLZ Produce Manufacturing')), true);
+  check('el lote del proveedor no',           invmIsRepackLot(L('2681771-0001','Christopher Ranch Vendor')), false);
+  // Las dos señales coinciden siempre, pero se pide UNA: si el proveedor viene escrito distinto el
+  // repack no se pierde, y al reves tampoco.
+  check('basta el patron del lote',           invmIsRepackLot(L('W2957A2686667','')), true);
+  check('basta el vendedor',                  invmIsRepackLot(L('2686667','JLZ Produce Manufacturing')), true);
+  check('minusculas tambien',                 invmIsRepackLot(L('2686667','jlz produce manufacturing')), true);
+  check('sin lote ni vendedor, no es repack', invmIsRepackLot(L('','')), false);
+  check('nada no revienta',                   invmIsRepackLot(null), false);
+
+  // ── El orden ────────────────────────────────────────────────────────────────────────────────
+  bpDaysSince = function(d){ return Math.round((new Date('2026-09-20T12:00:00')-new Date(d+'T12:00:00'))/86400000); };
+  var lots=[ { lot:'A', cases:50,  received:'2026-09-10' },
+             { lot:'B', cases:700, received:'2026-09-05' },
+             { lot:'C', cases:20,  received:'2026-09-15' },
+             { lot:'D', cases:100, received:null } ];
+  var ord=function(k,d){ return invmSortLots(lots,{key:k,dir:d}).map(function(l){ return l.lot; }).join(''); };
+  check('por cajas, de mayor a menor',  ord('cases',-1), 'BDAC');
+  check('y al reves',                   ord('cases',1),  'CADB');
+  check('por fecha, mas nueva primero', ord('received',-1), 'CABD');
+  check('por fecha, mas vieja primero', ord('received',1),  'BACD');
+  check('por dias en camara, mas viejo primero', ord('stored',-1), 'BACD');
+  // Lo que no tiene el dato va SIEMPRE al final: es lo que hay que completar, no lo primero ni lo ultimo.
+  ok('el lote sin fecha queda ultimo en los dos sentidos',
+     ord('received',1).slice(-1)==='D' && ord('received',-1).slice(-1)==='D');
+  check('por defecto, FEFO', invmSortLots(lots,{key:'fefo',dir:1}).map(function(l){ return l.lot; }).join(''), 'BACD');
+  check('no muta el arreglo original', lots.map(function(l){ return l.lot; }).join(''), 'ABCD');
+})();
+
 group('invmIsWLot — el patrón del número de lote es la definición');
 [['W2939A2674126',true],['W2811A2596556',true],['w2931a2667673',true],
  ['2523058-0001',false],['2639206-0001',false],['750925-8348',false],
