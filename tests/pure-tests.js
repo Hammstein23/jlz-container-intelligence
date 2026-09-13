@@ -3446,6 +3446,98 @@ group('C14 · la sub-línea de una llegada cuenta las MISMAS cajas que la celda'
   ok('y ese total NO es el bruto de las órdenes (1000+1000)', subLinea !== 2000);
 })();
 
+// ── C15 · La cola FIFO ya no hace esperar a un contenedor detrás de cajas compradas contra una orden de cliente, así que sus días en cámara, su shrink y el aviso PAST SHELF dejan de inflarse.
+// ═══ La cola FIFO no puede frenarse detrás de mercadería que ya tiene dueño ══════════════════════
+// El run-rate mide la demanda de TODOS LOS DEMÁS: lo comprado contra una orden de cliente —cruzado o
+// reempacado— está fuera de él por definición. Si esas cajas igual hacen cola, el contenedor que
+// viene detrás arranca a venderse (cajas ÷ run-rate) semanas más tarde, y la tabla le infla días en
+// cámara, shrink y el cartel PAST SHELF por un bloqueo que nunca existió — que es justo la señal que
+// empuja a saltear un embarque.
+group('FIFO: lo comprado contra orden no bloquea la cola');
+var _ffOut = '';
+document = { getElementById: function(id){
+  return (id === 'bp-fifo-block') ? { set innerHTML(v){ _ffOut = v; }, get innerHTML(){ return _ffOut; } } : null;
+} };
+var _ffOrd = {};
+findOrderForPo = function(po){ return _ffOrd[String(po)] || null; };
+dailyShrinkRate = 0.0044;
+_bpShrinkCalN   = 0;
+weeklyDemand    = 100;      // 100 cs/semana de demanda general
+stockCases      = 0;        // sin stock en mano: la cola arranca en el primer contenedor
+rows            = [];
+// Días en cámara que imprime la tabla, lote por lote: [stock actual, contenedor 1, contenedor 2].
+function _ffDays(ds){
+  _ffOrd = { MTO:{ jlzPo:'MTO', directShip:ds }, NEXT:{ jlzPo:'NEXT', directShip:[] } };
+  var hoy = new Date();
+  rows = [{ weekStartDate:hoy, arrivalOrders:[{ cases:210, order:_ffOrd.MTO }] },
+          { weekStartDate:hoy, arrivalOrders:[{ cases:100, order:_ffOrd.NEXT }] }];
+  bpRenderFifo();
+  var out = [], m, re = /(\d+) d<\/td>/g;
+  while ((m = re.exec(_ffOut)) !== null) out.push(parseInt(m[1], 10));
+  return out;
+}
+// Control: 210 cajas para stock SÍ tapan al contenedor de atrás (2,1 sem + 1 sem = 21,7 d).
+check('stock normal: el contenedor de atrás espera', _ffDays([])[2], 22);
+// Reempacado: las cajas entran a cámara, pero salen contra su propia orden en días.
+check('reempacado: el de atrás NO espera',
+      _ffDays([{ customer:'Whole Foods', cases:210, viaWarehouse:true }])[2], 7);
+// Cruzado: ni siquiera entra a cámara (ya andaba; queda de guardián).
+check('cruzado: el de atrás NO espera', _ffDays([{ customer:'Sol-ti', cases:210 }])[2], 7);
+// Y el bloque con dueño deja de acumular días de cámara que no vivió.
+check('el bloque reempacado no acumula días de cámara ajenos',
+      _ffDays([{ customer:'Whole Foods', cases:210, viaWarehouse:true }])[1], 0);
+
+// ── C16 · El run-rate ya no vuelve a contar en su última semana el committed de una cuenta reempacada cuyas ventas el histórico ya tenía descontadas.
+// ═══ El nowcast no re-inyecta lo comprado contra orden ══════════════════════
+// `mtoNetRows` ya le saca al histórico las ventas de las cuentas contra-orden (las DOS formas).
+// El nowcast completaba la última semana con `invmCommittedByWeek`, que solo filtra lo CRUZADO, así
+// que el committed de una cuenta REEMPACADA volvía a entrar: historia neta contra cola bruta, y el
+// run-rate —que dimensiona el colchón de TODOS los demás— subía por mercadería que ya tiene dueño.
+group('nowcast · el committed reempacado no vuelve al run-rate');
+var _ncWk  = function(off){ var d=new Date(); d.setDate(d.getDate()+off); return dmWeekKey(d); };
+var _ncISO = function(off){ var d=new Date(); d.setDate(d.getDate()+off);
+  return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); };
+var NCPREV = _ncWk(-7);
+var _ncRel = []; for (var _ncI = 9; _ncI >= 1; _ncI--) _ncRel.push({ week:_ncWk(-14-(_ncI-1)*7), lbs:3000 });
+var _ncModel = function(){
+  return { caseLb:30, wkCust:{}, weeklyReliable:_ncRel.slice(),
+           weekly:_ncRel.concat([{ week:NCPREV, lbs:1200 }]),
+           rateWeeks:_ncRel.map(function(w){ return w.week; }),
+           customers:[{ c:'WHOLE FOODS', rrCases:0, rr6Cases:0, rr3Cases:0, sporadic:false, ovr:{} }] };
+};
+dmWindow = function(){ return 6; };
+COMMITTED = [{ type:'inv', wk:NCPREV, customer:'WHOLE FOODS', cases:100, prod:'garlic', origin:'California' }];
+
+// A) Cuenta de STOCK: nada marcado en Orders. La semana se completa (facturado + reservado) y promedia.
+getOrders  = function(){ return []; };
+_dmRawAll  = [{ prod:'garlic', c:'WHOLE FOODS', d:_ncISO(-7), lbs:100*30 }];
+var NCA = nowcastProductModel(_ncModel(), 'garlic', 'California');
+check('una cuenta de stock sí completa la semana: (3000+3000+1200+3000)/3', NCA.runRate3, 3400);
+
+// B) La MISMA orden marcada como REEMPACADA (viaWarehouse:true). `mtoNetRows` ya sacó esas ventas del
+// histórico; si el nowcast igual completa con su committed, la resta se deshace sola.
+getOrders = function(){ return [{ jlzPo:'PO-REPACK', product:'garlic', status:'Arrived',
+  arrivalActual:_ncISO(-7),
+  directShip:[{ customer:'WHOLE FOODS', cases:100, viaWarehouse:true }] }]; };
+var NCB = nowcastProductModel(_ncModel(), 'garlic', 'California');
+check('lo reempacado no vuelve al run-rate por la cola', NCB.runRate3, 3000);
+ok('…y esa semana queda marcada prelim, no promediada', (NCB.rateWeeks||[]).indexOf(NCPREV) < 0);
+// La fila del cliente tiene que contar la misma historia que el agregado.
+var _ncRow = (NCB.customers||[]).filter(function(c){ return c.c === 'WHOLE FOODS'; })[0];
+check('la fila del cliente tampoco se infla con su orden', Math.round((_ncRow&&_ncRow.rr3Cases)||0), 0);
+
+// C) Contraste: CRUZADO. `invmCommittedByWeek` de producción ya lo filtra, así que el descuento de
+// arriba no puede sumarse encima — restarlo dos veces se comería el committed de los demás.
+getOrders = function(){ return [{ jlzPo:'PO-XDOCK', product:'garlic', status:'Arrived',
+  arrivalActual:_ncISO(-7),
+  directShip:[{ customer:'WHOLE FOODS', cases:100 }] }]; };
+var NCC = nowcastProductModel(_ncModel(), 'garlic', 'California');
+// OJO con el número: el harness stubea `invmCommittedByWeek` (choque conocido), y el stub NO filtra
+// lo cruzado. Lo que este check fija es que el descuento de arriba no se sume encima del filtro de
+// producción: si alguien lo generaliza a TODAS las cuentas contra-orden, esas cajas se restarían de un
+// `cbw` que nunca las tuvo y se comerían el committed de los demás clientes de la semana.
+check('lo cruzado no se descuenta dos veces (filtrarlo es trabajo de invmCommittedByWeek)', NCC.runRate3, 3400);
+
 // ═══ El entorno se limpia entre grupos ══════════════════════════════════════
 // Guardián del arreglo de arriba. Si alguien saca la restauración de `group()`, esto falla y
 // dice por qué — en vez de que un test futuro mida un stub ajeno y nadie se entere.

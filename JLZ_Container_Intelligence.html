@@ -16052,6 +16052,22 @@ function nowcastProductModel(m, p, origin){
   // orders in their own week via hybridSalesForWeek; they are simply not baked into the average.
   var odCust={};
   (Array.isArray(m.customers)?m.customers:[]).forEach(function(c){ if(c && c.c && c.sporadic) odCust[c.c]=1; });
+  // Lo REEMPACADO se compra contra orden igual que lo cruzado, y `mtoNetRows` ya le sacó al histórico
+  // las ventas de esas cuentas. Completar la cola con su committed le devuelve al run-rate justo lo que
+  // se acababa de restar: historia neta contra última semana bruta. `invmCommittedByWeek` filtra solo lo
+  // CRUZADO — ahí corresponde, esas cajas nunca entran a la cámara — así que la otra mitad sale de acá.
+  // Garlic: las 210 cajas de Whole Foods en 1 de 3 semanas promediadas eran +70 cs/wk de demanda de
+  // almacén que no existe. Las cuentas CRUZADAS no se suman a este descuento: ya no están en `cbw` y
+  // restarlas otra vez se comería el committed de los demás clientes de esa semana.
+  try{
+    if(typeof mtoByCustomer==='function'){
+      var _mtoW=(typeof dmWindow==='function')?dmWindow(p,origin):13;
+      var _mtoCd=mtoByCustomer(p,_mtoW,{crossDockOnly:true})||{};
+      Object.keys(mtoByCustomer(p,_mtoW)||{}).forEach(function(c){
+        if(!Object.prototype.hasOwnProperty.call(_mtoCd,c)) odCust[c]=1;
+      });
+    }
+  }catch(e){}
   if(Object.keys(odCust).length && typeof getCommitted==='function'){
     var odByWk={};
     cmPlanEntries().forEach(function(c){
@@ -19236,9 +19252,12 @@ function renderBuyPlanner() {
       (r.arrivalOrders||[]).forEach(function(a){
         lots.push({
           name: 'PO ' + (a.order && a.order.jlzPo != null ? a.order.jlzPo : '?'),
-          // Frente B: cross-dock direct-ship cases never age in the warehouse — exclude
-          // them from the FIFO aging denominator (they'd dilute the ~0.44%/day rate).
-          cases: Math.max(0, (a.cases || 0) - ((typeof directShipTotal === 'function' && a.order) ? directShipTotal(a.order.jlzPo) : 0)), cur:false,
+          // Frente B: lo comprado contra una orden de cliente no hace cola. El cruzado ni siquiera
+          // entra a cámara; el reempacado entra, pero sale contra su propia orden en días — no drena
+          // la demanda general. Y esta cola se camina al run-rate, que por definición excluye a los
+          // dos (mtoEarmarkedTotal): dejarlos adentro atrasa el sell-out del contenedor siguiente en
+          // (cajas con dueño / run-rate) semanas e infla sus días en cámara, su shrink y PAST SHELF.
+          cases: Math.max(0, (a.cases || 0) - ((typeof mtoEarmarkedTotal === 'function' && a.order) ? mtoEarmarkedTotal(a.order.jlzPo) : 0)), cur:false,
           arrWk: wkFromNow(r.weekStartDate), arrLabel: r.weekStartDate
         });
       });
