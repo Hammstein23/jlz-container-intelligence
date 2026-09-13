@@ -712,7 +712,10 @@ ok('sin las semanas no dibuja zonas de hover', !/cx-hit/.test(_spNo));
 var _lst=String(cxRenderList);
 ok('la columna Run-rate usa la ventana activa, no rrCases fijo', /_cxRr\(c\)/.test(_lst) && /_cxKey/.test(_lst));
 ok('y el encabezado dice qué ventana está mostrando', /_cxWin\+'w<\/span>/.test(_lst));
-ok('las cuentas direct-ship quedan marcadas en la lista', /DIRECT-SHIP/.test(_lst));
+// La marca cubre las DOS formas contra-orden (cruzado y reempacado acá), así que no puede decir
+// DIRECT-SHIP: eso afirma que la mercadería nunca pasa por el almacén, y el reempacado sí pasa.
+ok('las cuentas contra-orden quedan marcadas en la lista', /MADE TO ORDER<\/span>/.test(_lst));
+ok('…con el nombre del paraguas, no el de una sola forma', !/>DIRECT-SHIP</.test(_lst));
 ok('el tooltip busca su div por clase, no por closure', /querySelector\('\.cx-tip'\)/.test(String(cxWireSparkTip)));
 
 // ════ Customers · qué estoy mirando y qué significa ════════════════════════
@@ -3174,6 +3177,58 @@ check('un downgrade limpiado queda limpiado', M2[0].downgraded, 'false');
 var M3 = ordMergeLocalOnly([{ jlzPo: 'Y-003', cases: 400 }], [{ jlzPo: 'Y-003', cases: 400 }]);
 ok('una orden sana no inventa el flag', M3[0].downgraded === undefined);
 
+// ── C03 · Al cambiar de producto, el alta de committed vuelve a "From warehouse" y deja de tragarse las cajas en silencio.
+// ═══ C03 · el cross-dock de Ginger no puede quedarse pegado en los otros productos ═══
+// Juan elegía "Cross-dock from port" en Ginger, cambiaba el selector a Turmeric y cargaba
+// Sol-ti / 300 cs: el botón se veía habilitado, pero _dmcType seguía en 'direct' y el panel de
+// turmeric no dibuja el selector de contenedor, así que dmcAdd salía sin escribir nada. Las 300 cs
+// desaparecían sin aviso y esa semana del plan compraba de menos.
+group('C03 · el tipo de envío no se queda pegado al cambiar de producto');
+var _c03doc = document, _c03paint = '', _c03added = [];
+var _c03host = {
+  set innerHTML(v){ _c03paint = v; },
+  get innerHTML(){ return _c03paint; },
+  querySelector: function(sel){
+    if (sel === '#dmc-cont')  return null;                 // turmeric NO dibuja el picker de contenedor
+    if (sel === '#dmc-cust')  return { value:'Sol-ti' };
+    if (sel === '#dmc-cases') return { value:'300' };
+    if (sel === '#dmc-date')  return { value:'2026-09-14', disabled:false };
+    return { value:'', disabled:false, style:{}, addEventListener:function(){} };
+  },
+  querySelectorAll: function(){ return []; }
+};
+document = { getElementById: function(id){ return (id === 'dm-committed') ? _c03host : null; } };
+productFocus   = function(){ return 'turmeric'; };
+productLabel   = function(p){ return p; };
+getOrders      = function(){ return [{ jlzPo:'JLZ-901', product:'turmeric', status:'In Transit',
+                                       arrivalEstimated:'2026-10-05', supplier:'Fiji Co' }]; };
+_ordProd       = function(o){ return o.product || 'ginger'; };
+getCommitted   = function(){ return []; };
+libEsc         = function(s){ return String(s == null ? '' : s); };
+dmcCustomers   = function(){ return ['Sol-ti']; };
+dmcRenderChips = function(){};
+dmcApplyType   = function(){};
+addCommitted   = function(cust, wk, cases, prod){ _c03added.push({ cust:cust, wk:wk, cases:cases, prod:prod }); };
+
+var _dmcType = 'direct';                                   // venía de la solapa Ginger
+renderCommittedPanel({ customers:[{ c:'Sol-ti' }] });
+check('al dibujar turmeric el tipo vuelve a warehouse', _dmcType, 'inv');
+ok('y la pantalla no ofrece el selector de contenedor', _c03paint.indexOf('dmc-cont') < 0);
+ok('el botón Add queda habilitado', _c03paint.indexOf('disabled') < 0);
+
+// El alta de ese mismo panel tiene que escribir las 300 cs, no tragárselas.
+try { dmcAdd(); } catch(e) { /* el repintado del final toca paneles que este harness no monta */ }
+check('las 300 cs se graban como committed', (_c03added[0] || {}).cases, 300);
+check('...del producto que está en pantalla', (_c03added[0] || {}).prod, 'turmeric');
+check('...y del cliente elegido', (_c03added[0] || {}).cust, 'Sol-ti');
+
+// Ginger no cambia: sigue pudiendo elegir cross-dock.
+productFocus = function(){ return 'ginger'; };
+_dmcType = 'direct';
+renderCommittedPanel({ customers:[{ c:'Sol-ti' }] });
+check('en ginger el cross-dock se respeta', _dmcType, 'direct');
+document = _c03doc;
+
 // ── C04 · La marca "Bought for" deja de confirmarse como "Synced" y avisa que quedó solo en este dispositivo.
 // ════ C04 · "Bought for" no puede decir "Synced" por algo que no viaja ══════════════════════════
 // Las 25 columnas de replaceOrders (orderRows) no llevan `directShip`. Si ordAfterBoughtForChange
@@ -3188,6 +3243,189 @@ check('no dispara el push que no lleva la marca', _c04Push, 0);
 ok('avisa en pantalla que quedó solo en este dispositivo',
    _c04Bar.length === 1 && /this device/i.test(_c04Bar[0]));
 ok('y no lo anuncia como error de red', _c04Bar.length === 1 && /\| warn$/.test(_c04Bar[0]));
+
+// ── C05 · El badge de la lista de clientes pasa a decir MADE TO ORDER: deja de prometer que la mercaderia comprada contra orden nunca entra al almacen cuando en realidad se reempaca aca.
+// ════ Customers · el badge contra-orden nombra el paraguas, no el modo ═════
+// `_cxDS` sale de mtoByCustomer SIN crossDockOnly, así que también es verdadero para lo reempacado
+// acá. La palabra "DIRECT-SHIP" le prometía a Juan que esa mercadería nunca toca la cámara — y el
+// ajo de Whole Foods entra, se reempaca y sale a los pocos días. Misma palabra que dsLabelFor.
+group('Customers · el badge contra-orden no afirma el modo');
+
+var _c05iso = function(diasAtras){
+  var t = new Date(Date.now() - diasAtras*86400000), p = function(n){ return (n<10?'0':'')+n; };
+  return t.getFullYear()+'-'+p(t.getMonth()+1)+'-'+p(t.getDate());
+};
+
+getActiveProduct = function(){ return 'garlic'; };
+dmWindow         = function(){ return 13; };
+_ordProd         = function(o){ return o.product || 'ginger'; };
+getOrders        = function(){ return [{
+  jlzPo:'PO-C05', status:'Arrived', product:'garlic', arrivalActual:_c05iso(7),
+  directShip:[{ customer:'Whole Foods Market', cases:210, viaWarehouse:true }]   // repacked here
+}]; };
+_dmRawAll = [{ prod:'garlic', c:'Whole Foods Market', d:_c05iso(7), lbs:210*30 }];
+
+ok('el set que enciende el badge incluye la cuenta reempacada acá',
+   mtoByCustomer('garlic', 13)['Whole Foods Market'] > 0);
+ok('y el cruzado puro la deja afuera — o sea que NO es direct-ship',
+   mtoByCustomer('garlic', 13, {crossDockOnly:true})['Whole Foods Market'] == null);
+
+// Propio, porque un grupo anterior deja un document que solo conoce 'dm-week'.
+var _c05out = '';
+document = { getElementById: function(id){
+  return (id === 'cx-lb') ? { set innerHTML(v){ _c05out = v; }, get innerHTML(){ return _c05out; } }
+       : (id === 'cx-lh') ? { set innerHTML(v){}, get innerHTML(){ return ''; } } : null;
+} };
+cxEsc    = function(x){ return String(x); };
+cxInfo   = function(){ return ''; };
+cxFmtN   = function(n){ return String(Math.round(n)); };
+cxMgC    = function(){ return 'ok'; };
+cxMoney0 = function(n){ return '$'+Math.round(n); };
+cxTP     = { flat:'flat' };
+_cxState = { sel:null };
+qaPct    = function(){ return 100; };
+_dmModel = { caseLb:30, sparkWeeks:null, customers:[
+  { c:'Whole Foods Market', hasDetail:false, status:'active', days:3, sporadic:false,
+    dcN:1, trend:'flat', spark:[30,30,30], cad:7, vol:42 }
+] };
+cxFilteredSorted = function(){ return _dmModel.customers; };
+
+cxRenderList();
+ok('la cuenta contra-orden queda marcada en la lista', /cx-st ds/.test(_c05out));
+ok('el badge dice el paraguas: MADE TO ORDER', /MADE TO ORDER<\/span>/.test(_c05out));
+ok('y ya no afirma que la mercadería nunca entra al almacén', !/DIRECT-SHIP/.test(_c05out));
+
+// ── C06 · El vacío de "Bought to order" ahora manda a abrir la orden en Orders y cargarla en "Bought for", en vez de a un botón retirado el 2026-09-04.
+// ═══ El vacío de "Bought to order" tiene que nombrar un camino que exista ═══
+// El botón "not stock demand" se retiró el 2026-09-04 y el aviso del estado vacío siguió mandando a
+// buscarlo en las filas de clientes. Seguir un aviso desactualizado ya marcó de más una vez
+// (garlic·Whole Foods), así que acá se fija que el texto nombre el único camino vivo: abrir la orden
+// en Orders y cargarla en el panel "Bought for".
+group('Build-up — el vacío de "Bought to order" nombra un camino que existe');
+CASE_LB = 30;
+productFocus = function(){ return 'turmeric'; };
+dmWindow = function(){ return 6; };
+_dmOrigin = 'Fiji';
+PRODUCTS = { turmeric: { shrinkPct: 5 } };
+getCommitted = function(){ return []; };
+mtoCasesPerWeek = function(){ return 0; };
+mtoByCustomer = function(){ return {}; };          // nadie compra contra orden → sale el estado vacío
+var EWK = ['2026-07-20','2026-07-27','2026-08-03','2026-08-10','2026-08-17','2026-08-24'];
+var eCust = {}; EWK.forEach(function(w){ eCust[w] = { 'WHOLE FOODS': 30*20 }; });
+_dmModel = {
+  caseLb:30, rateWeeks:EWK, wkCust:eCust, nowcastWeeks:{},
+  runRate13:30*20, runRate6:30*20, runRate3:30*20,
+  customers:[{ c:'WHOLE FOODS', rrCases:20, rr6Cases:20, rr3Cases:20, sporadic:false }]
+};
+bpFutureWeeks = function(n){
+  var out = [], d = new Date('2026-08-24T12:00:00');
+  for (var i = 0; i < n; i++){ var x = new Date(d); x.setDate(x.getDate() + 7*i);
+    out.push({ weekStartISO:dmISOLocal(x), weekNum:35 + i }); }
+  return out;
+};
+hybridSalesForWeek = function(){ return 20; };
+
+renderBuildupPanel();
+var MTOEMPTY = _out;
+ok('se pintó el bloque "Bought to order"', /Bought to order/.test(MTOEMPTY));
+ok('el estado vacío está (no hay cuentas contra orden)', /None\./.test(MTOEMPTY));
+ok('ya no manda al botón retirado el 2026-09-04', MTOEMPTY.indexOf('not stock demand') < 0);
+ok('manda al panel "Bought for" de la orden', /Bought for/.test(MTOEMPTY));
+ok('…y dice en qué pantalla está esa orden', /Orders/.test(MTOEMPTY));
+
+// ── C07 · El contra-orden se muestra una sola vez por producto, en la línea de más volumen: el tile dejó de contar dos veces el de ginger y la tarjeta de Hawaii dejó de atribuirse el total del producto.
+// ════ El contra-orden se cuenta una sola vez por producto ═══════════════════
+// `mtoCasesPerWeek` no tiene dimensión de origen. Ginger tiene dos líneas (Perú y Hawaii), así que
+// sumar su tasa en cada una contaba el contra-orden DOS VECES en el tile "Made to order", y cada
+// tarjeta de origen mostraba el total del producto entero como si fuera suyo.
+group('El contra-orden va una sola vez por producto');
+
+DM_ACCENT={ginger:'#0d5026',garlic:'#b45309',shallots:'#7c3aed',turmeric:'#b42318'};
+productLabel=function(p){ return p; };
+productCaseLb=function(){ return 30; };
+dmRowOrigin=function(r){ return r.oitem||''; };
+dmWindow=function(){ return 3; };
+mtoNetRows=function(rows){ return rows; };
+nowcastProductModel=function(m){ return m; };
+invmProductStats=function(){ return {onHandCases:0}; };
+bpInvState=function(){ return {rows:{}}; };
+dmBuildModel=function(rows,_a,cl){
+  return { runRate3:30*cl, runRate6:30*cl, runRate13:30*cl, runRate26:30*cl,
+           weeklyReliable:[{lbs:30*cl},{lbs:30*cl},{lbs:30*cl}] };
+};
+// La tasa contra-orden del producto entero: la misma la pida quien la pida.
+mtoCasesPerWeek=function(p){ return p==='ginger' ? 120 : 0; };
+
+_dmRawAll=[];
+for(var _dw=0;_dw<6;_dw++){
+  var _dd=new Date(Date.UTC(2026,5,1)+_dw*7*86400000).toISOString().slice(0,10);
+  _dmRawAll.push({d:_dd, prod:'ginger', oitem:'Peru',   c:"Albert's Organics", lbs:800*30, units:800, type:'Sale'});
+  _dmRawAll.push({d:_dd, prod:'ginger', oitem:'Hawaii', c:"Albert's Organics", lbs:5*30,   units:5,   type:'Sale'});
+}
+
+check('el origen de más volumen encabeza', dmLineOrigins('ginger').join(','), 'Peru,Hawaii');
+var _lp=dmLineStats('ginger','Peru'), _lh=dmLineStats('ginger','Hawaii');
+check('la línea principal lo muestra entero', Math.round(_lp.ds), 120);
+check('la segunda línea NO se lo atribuye',   Math.round(_lh.ds), 0);
+// La regresión exacta: el tile suma línea por línea, así que con las dos en 120 decía 240.
+check('y el tile lo suma una sola vez',       Math.round(_lp.ds+_lh.ds), 120);
+
+// Un producto de un solo origen no pierde nada.
+mtoCasesPerWeek=function(p){ return p==='garlic' ? 74 : 0; };
+_dmRawAll.push({d:'2026-06-01', prod:'garlic', oitem:'California', c:'Whole Foods Market', lbs:100*30, units:100, type:'Sale'});
+check('con un solo origen se sigue mostrando', Math.round(dmLineStats('garlic','California').ds), 74);
+
+// ── C08 · En ajo, cúrcuma y chalotes, "Add committed order" ahora guarda la orden en vez de no hacer nada en silencio.
+// (El arreglo es la misma línea que C03 en renderCommittedPanel: los dos hallazgos eran un solo bug.)
+// ═══ El modo de envío pegado de ginger no puede tragarse una carga ══════════
+// El selector "How does it ship?" solo se dibuja para ginger, pero `_dmcType` es global y queda
+// pegado. Con el foco en ajo la pantalla no muestra ningún control (se lee "From warehouse") y sin
+// embargo dmcAdd tomaba la rama cross-dock, no encontraba #dmc-cont y se volvía en silencio: no
+// guardaba nada y no decía nada. El render tiene que normalizar el estado a lo que se ve.
+group('Committed en ajo: el modo pegado de ginger no se traga la carga');
+
+var _c08doc = document;
+var _c08added = [], _c08cross = [];
+
+libEsc            = function(s){ return String(s == null ? '' : s); };
+productLabel      = function(p){ return p; };
+productFocus      = function(){ return 'garlic'; };
+dmcCustomers      = function(){ return ['WHOLE FOODS MARKET']; };
+dmcRenderChips    = function(){};
+renderBuildupPanel = function(){};
+getOrders         = function(){ return []; };      // ningún contenedor de ajo en tránsito
+addCommitted      = function(customer, wk, cases, product, date){
+  _c08added.push({ customer:customer, wk:wk, cases:cases, product:product, date:date });
+};
+addDirectShip     = function(po, customer, cases){ _c08cross.push({ po:po, cases:cases }); };
+
+var _c08host = {
+  innerHTML: '',
+  _q: {},
+  querySelector: function(s){ return this._q[s] || null; },
+  querySelectorAll: function(){ return []; }
+};
+_c08host._q['#dmc-cust']  = { value: 'WHOLE FOODS MARKET' };
+_c08host._q['#dmc-cases'] = { value: '120' };
+_c08host._q['#dmc-date']  = { value: '2026-09-21' };
+_c08host._q['#dmc-add']   = { disabled: false, addEventListener: function(){} };
+document = { getElementById: function(id){ return (id === 'dm-committed') ? _c08host : null; } };
+
+_dmcType = 'direct';                               // lo dejó pegado la solapa de ginger
+renderCommittedPanel({ customers: [{ c:'WHOLE FOODS MARKET' }] });
+check('el render normaliza el modo a lo que la pantalla muestra', _dmcType, 'inv');
+ok('…y el botón no se dibuja deshabilitado sin explicación',
+   _c08host.innerHTML.indexOf('id="dmc-add" disabled') < 0);
+
+dmcAdd();
+check('“Add committed order” escribe la orden', _c08added.length, 1);
+check('…con el cliente elegido',   (_c08added[0]||{}).customer, 'WHOLE FOODS MARKET');
+check('…las cajas cargadas',       (_c08added[0]||{}).cases,    120);
+check('…el producto en foco',      (_c08added[0]||{}).product,  'garlic');
+check('…la semana del lunes de esa fecha', (_c08added[0]||{}).wk, '2026-09-21');
+check('…y NO por cross-dock: en ajo no hay selector de envío', _c08cross.length, 0);
+
+document = _c08doc;
 
 // ── C09 · Las llegadas de garlic y shallots vuelven a contar: el origen del proveedor y el del lote son el mismo bucket.
 

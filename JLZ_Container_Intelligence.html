@@ -27568,7 +27568,15 @@ function dmLineStats(p, o){
   var mean = function(a){ return a.length ? a.reduce(function(t,x){ return t+(x.lbs||0); },0)/a.length/cl : 0; };
   var prior = mean(ser.slice(Math.max(0, ser.length-2*win), Math.max(0, ser.length-win)));
   var ds = 0;
-  try{ if(typeof mtoCasesPerWeek === 'function') ds = mtoCasesPerWeek(p, (typeof dsWindow==='function')?dsWindow():26) || 0; }catch(e){}
+  // El contra-orden es un hecho del PRODUCTO, no del origen: las órdenes marcadas no dicen de qué
+  // origen salió la mercadería, y derivarlo del proveedor tampoco sirve (el de garlic dice
+  // "California (Gilroy)" y la venta dice "California", así que filtrar lo apagaría). Ginger tiene
+  // dos líneas —Perú y Hawaii—, así que sumar la misma tasa en cada una la contaba DOS VECES en el
+  // tile "Made to order" y además cada tarjeta de origen mostraba el total del producto entero como
+  // si fuera suyo. Va una sola vez, en la línea de más volumen (la que encabeza dmLineOrigins).
+  var dsMain = !o;
+  try{ dsMain = ((dmLineOrigins(p) || [])[0] || '') === (o || ''); }catch(e){}
+  try{ if(dsMain && typeof mtoCasesPerWeek === 'function') ds = mtoCasesPerWeek(p, (typeof dsWindow==='function')?dsWindow():26) || 0; }catch(e){}
   var onHand = 0;
   if(p === 'ginger' && o === 'Peru'){
     try{ var st = bpInvState();
@@ -27853,6 +27861,13 @@ function renderCommittedPanel(model) {
   var host = document.getElementById('dm-committed'); if(!host) return;
   var prod = (typeof productFocus === 'function') ? productFocus() : 'ginger';
   var isG = (prod === 'ginger');
+  // El selector "How does it ship?" se dibuja solo en ginger, pero _dmcType es global y nunca se
+  // reseteó al cambiar de producto: quedaba pegado en 'direct' en turmeric/garlic/shallots. Sin
+  // #dmc-cont en pantalla, dmcAdd salía sin escribir nada y las cajas comprometidas se perdían en
+  // silencio — esa semana quedaba sub-contada y el plan compraba de menos. Fuera de ginger siempre
+  // se vuelve a warehouse, que es lo único que ese formulario sabe cargar (el cross-dock de los
+  // otros cuatro se marca en el panel de la orden, "Bought for").
+  if(!isG) _dmcType = 'inv';
 
   var pl = (typeof productLabel === 'function') ? productLabel(prod) : prod;
   var m = model || (typeof _dmModel !== 'undefined' ? _dmModel : null);
@@ -28415,7 +28430,10 @@ function renderBuildupPanel(){
         + '</span>';
     }).join('');
   } else {
-    h += '<span style="font-size:11px;color:var(--gray-400)">None. Use the <i>not stock demand</i> button on a customer row to mark one.</span>';
+    // El aviso mandaba al botón "not stock demand", retirado el 2026-09-04: no existe en ninguna fila.
+    // Seguir un aviso desactualizado ya hizo daño una vez (garlic·Whole Foods), así que el vacío nombra
+    // el único camino vivo, y que sirve para los cinco productos: el panel "Bought for" de la orden.
+    h += '<span style="font-size:11px;color:var(--gray-400)">None. To mark one, open the order in <b>Orders</b> and add the customer under <b>Bought for</b>.</span>';
   }
   h += '</div>';
   h += '</div>';
@@ -28586,7 +28604,7 @@ function cxRenderList(){
     return '<tr class="'+(c.c===_cxState.sel?'sel':'')+'" data-c="'+cxEsc(c.c)+'">'
       + '<td class="l"><span class="cx-rank">'+(i+1)+'</span></td>'
       + '<td class="l"><span class="cx-nm">'+cxEsc(c.c)+'</span>'+stb+(c.sporadic?'<span class="cx-st od" title="Order-driven: buys sporadically. The plan uses its committed orders in the weeks it ordered, and resumes its run-rate beyond the last committed week — its average is not smeared across every week.">ORDER-DRIVEN</span>':'')
-      +(_cxDS(c.c)?'<span class="cx-st ds" title="Made to order: bought against a confirmed customer order, not from standing stock. It may pass through the warehouse or ship supplier \u2192 customer directly \u2014 either way JLZ carries no inventory risk. Real revenue, but NOT stock demand \u2014 it is excluded from the run-rate that drives the buy plan.">DIRECT-SHIP</span>':'')+dcb+'</td>'
+      +(_cxDS(c.c)?'<span class="cx-st ds" title="Made to order: bought against a confirmed customer order, not from standing stock. It may pass through the warehouse or ship supplier \u2192 customer directly \u2014 either way JLZ carries no inventory risk. Real revenue, but NOT stock demand \u2014 it is excluded from the run-rate that drives the buy plan.">MADE TO ORDER</span>':'')+dcb+'</td>'
       + '<td class="l">'+cxSpark(c.spark, m.sparkWeeks, m.caseLb||DM_CASE_LB, c.c)+' <span class="cx-pill '+c.trend+'">'+tr+'</span></td>'
       + '<td class="cx-num">'+(_cxRr(c)>=1?cxFmtN(_cxRr(c))+' cs':'\u2014')+'</td>'
       + '<td class="cx-num" style="font-size:11px;color:var(--gray-500)">'+(c.cad!=null?c.cad+'d':'\u2014')+'</td>'
