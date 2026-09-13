@@ -15923,6 +15923,35 @@ function mtoOrdersByCustomer(prod, weeks){
 // DEMANDA: lo reempacado sí sale de la cámara esa semana, así que su committed tiene que contar. Sin
 // esa distinción, las 210 cajas de Whole Foods entrarían al stock y no saldrían nunca.
 function mtoByCustomer(prod, weeks, opts){
+  // Con crossDockOnly la pregunta es QUIÉN es cruzado, no CUÁNTO netear del run-rate. Los que la hacen
+  // (stock libre, demanda de la semana, nowcast) solo miran si la cuenta está en el mapa, así que acá
+  // entra toda cuenta con una línea cruzada viva: la orden todavía sin llegar (lo normal es vender
+  // primero y embarcar después) y la que llegó sin factura en la ventana. Antes hacía falta la PO ya
+  // llegada Y ventas facturadas dentro de la ventana del toggle de Demand: mientras el contenedor de
+  // Sol-ti navegaba, sus 700 cs de turmeric-Fiji se restaban del stock libre, y pasar la ventana de
+  // 13 a 3 semanas volvía a hundirlo. Por eso el horizonte no baja de 13 semanas. La tasa sigue
+  // saliendo del cálculo de abajo (llegada + techo de ventas); quien entra solo como miembro vale 0.
+  if(opts && opts.crossDockOnly && !opts._soloTasa){
+    var _cdTasa = mtoByCustomer(prod, weeks, {crossDockOnly:true, _soloTasa:true}) || {};
+    var _cd = {}; for(var _cdk in _cdTasa) _cd[_cdk] = _cdTasa[_cdk];
+    var _cdDesde = null;
+    try{ _cdDesde = dmWeekKey(new Date(Date.now() - Math.max(13, weeks || 13) * 7 * 86400000)); }catch(e){}
+    var _cdD = function(x){ var m = String(x).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? new Date(+m[1], +m[2]-1, +m[3]) : null; };
+    ((typeof getOrders === 'function') ? (getOrders() || []) : []).forEach(function(o){
+      if(!o || o.status === 'Cancelled') return;
+      if(!Array.isArray(o.directShip) || !o.directShip.length) return;
+      if(((typeof _ordProd === 'function') ? _ordProd(o) : (o.product || 'ginger')) !== prod) return;
+      // Una PO vieja (llegada, o en tránsito que nadie cerró) no marca la cuenta para siempre: sus
+      // ventas de cámara dejarían de restarse y se compraría de menos.
+      var dt = _cdD(o.arrivalActual || o.arrivalEstimated || '');
+      if(dt && _cdDesde){ var fk = null; try{ fk = dmWeekKey(dt); }catch(e){} if(fk && fk < _cdDesde) return; }
+      o.directShip.forEach(function(ds){
+        if(!ds || !ds.customer || ds.viaWarehouse) return;
+        if(!Object.prototype.hasOwnProperty.call(_cd, ds.customer)) _cd[ds.customer] = 0;
+      });
+    });
+    return _cd;
+  }
   var _cdOnly = !!(opts && opts.crossDockOnly);
   var w = Math.max(1, weeks || 13);
   var caseLb = (typeof productCaseLb === 'function') ? productCaseLb(prod) : 30;
@@ -17003,7 +17032,32 @@ function invmProjectionHTML(s){
     var arr=arrivals[wkISO]||0, sc=scen[wkISO]||0; if(arr>0) hasArr=true; if(sc>0) hasScen=true;
     var commW=cbw[wkISO]||0;
     if(i===0 && hasCommWk){ Object.keys(cbw).forEach(function(k){ if(k<wkISO) commW+=cbw[k]; }); }   // overdue/backlog folds into now
-    var demW=hasCommWk ? Math.max(commW, weeklyCases) : weeklyCases;                                   // booked week uses its order; else run-rate
+    if(i===0 && hasCommWk){
+      // Lo REEMPACADO se SUMA a la demanda de stock; no compite con ella en el max(). `weeklyCases` ya
+      // viene neto de esas cuentas (mtoNetRows) y su contenedor sí entra en las llegadas, así que
+      // meter su committed en el max() con el run-rate borraba la demanda de todos los demás esa
+      // semana: garlic con 210 cs de Whole Foods contra 37 cs/wk consumía 210 en vez de 247, y el
+      // stock quedaba 37 cs alto de ahí en adelante. Mismo conjunto que el nowcast: contra-orden menos
+      // lo cruzado (lo cruzado ya no está en `cbw`). Mismos filtros que invmCommittedByWeek: semana en
+      // curso en adelante, producto y origen.
+      var _rpk={};
+      try{
+        if(typeof mtoByCustomer==='function' && typeof cmPlanEntries==='function'){
+          var _rpW=(typeof dmWindow==='function')?dmWindow(s.p,s.origin):13;
+          var _rpCd=mtoByCustomer(s.p,_rpW,{crossDockOnly:true})||{}, _rpC={}, _rpN=0;
+          Object.keys(mtoByCustomer(s.p,_rpW)||{}).forEach(function(c){
+            if(!Object.prototype.hasOwnProperty.call(_rpCd,c)){ _rpC[c]=1; _rpN++; } });
+          if(_rpN) cmPlanEntries().forEach(function(c){
+            if(!c || c.type!=='inv' || !c.wk || _cmProd(c)!==s.p || String(c.wk)<wkISO) return;
+            if(!Object.prototype.hasOwnProperty.call(_rpC, c.customer)) return;
+            if(s.origin && s.origin!=='all' && _cmOriginFor(c)!==s.origin) return;
+            _rpk[c.wk]=(_rpk[c.wk]||0)+(parseFloat(c.cases)||0);
+          });
+        }
+      }catch(e){ _rpk={}; }
+    }
+    var commR=hasCommWk ? Math.min(commW, (_rpk&&_rpk[wkISO])||0) : 0;
+    var demW=hasCommWk ? Math.max(commW-commR, weeklyCases)+commR : weeklyCases;                                   // booked week uses its order; else run-rate
     // ── La semana del CONTEO se consume solo por lo que le queda ────────────────────────────────
     // Mismo bug que tenía el Buy Planner de ginger: estos cuatro también se cargan a mitad de semana
     // (el mismo /lunes), así que descontar la semana COMPLETA desde esa foto cuenta dos veces los días
@@ -17156,17 +17210,16 @@ function invmProjectionHTML(s){
     +'<div style="display:flex;gap:16px;align-items:center;padding:11px 14px;border-bottom:1px solid var(--gray-100);flex-wrap:wrap;background:var(--gray-50)">'
       +'<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-family:var(--fb);font-weight:600">On-hand</div><div style="font-size:17px;font-weight:700;color:var(--gray-700);font-family:var(--fm)">'+f(s.onHandCases)+'<span style="font-size:10px;color:var(--gray-400);font-weight:400"> cs</span></div>'
         +((s.excludedCases>0)?('<div style="font-size:9px;color:var(--amber-700);font-family:var(--fm)">+'+f(s.excludedCases)+' excluded</div>'):'')+'</div>'
-      // Shrink step — without it, none of the figures above match the projection's first Starting stock.
-      +((s.shrinkPct>0)?('<div style="color:var(--gray-300);font-size:18px;font-weight:300">&minus;</div>'
-        +'<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-family:var(--fb);font-weight:600">Shrink '+f1(s.shrinkPct)+'%</div>'
-        +'<div style="font-size:17px;font-weight:700;color:var(--amber-700);font-family:var(--fm)">'+f(s.onHandCases-s.effOnHandCases)+'<span style="font-size:10px;color:var(--gray-400);font-weight:400"> cs</span></div>'
-        +'<div style="font-size:9px;color:var(--gray-400);font-family:var(--fm)">&rarr; '+f(s.effOnHandCases)+' usable</div></div>'):'')
+      // Shrink step — NO va en la cadena. `availCases` = on-hand - committed: la merma se cobra del
+      // lado de la DEMANDA (invmProductStats). Restarla acá armaba "500 - 25 - 20 = 480", una cuenta que
+      // no cierra y que manda a buscar a la cámara 25 cajas que nadie descontó. Donde la proyección SÍ
+      // arranca del físico con merma (hasCommWk), la nota de la derecha dice de dónde sale ese número.
       +'<div style="color:var(--gray-300);font-size:18px;font-weight:300">&minus;</div>'
       +'<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-family:var(--fb);font-weight:600">Committed</div><div style="font-size:17px;font-weight:700;color:#7c3aed;font-family:var(--fm)">'+f(s.committedCases)+'<span style="font-size:10px;color:var(--gray-400);font-weight:400"> cs</span></div></div>'
       +'<div style="color:var(--gray-300);font-size:18px;font-weight:300">=</div>'
       +'<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--jlz);font-family:var(--fb);font-weight:600">Available to sell</div><div style="font-size:17px;font-weight:700;color:var(--jlz);font-family:var(--fm)">'+f(s.availCases)+'<span style="font-size:10px;color:var(--gray-400);font-weight:400"> cs</span></div></div>'
       +'<div style="margin-left:auto;font-size:10px;color:var(--gray-400);max-width:230px;line-height:1.45">'+(hasCommWk
-          ? ('Projection starts at <b style="color:var(--gray-600)">'+f(s.effOnHandCases)+' cs</b> (usable on-hand) and books committed in its own week.')
+          ? ('Projection starts at <b style="color:var(--gray-600)">'+f(s.effOnHandCases)+' cs</b> ('+((s.shrinkPct>0)?(f(s.onHandCases)+' on-hand less '+f1(s.shrinkPct)+'% shrink'):'on-hand')+') and books committed in its own week.')
           : ('Projection starts at <b style="color:var(--gray-600)">'+f(s.availCases)+' cs</b> (available).'))+'</div>'
     +'</div>'
     + histHtml
@@ -17311,8 +17364,17 @@ function invmRenderProduct(p){
   if(repacks.length)
     html += tabla(repacks, 'Repacked — River Road', 'already repacked by JLZ Produce Manufacturing · same cases, new presentation', false);
   // Los dos totales tienen que reconstruir el on-hand del panel, o la tabla dice una cosa y el plan otra.
+  // Con el filtro de antigüedad prendido, los totales de arriba suman solo los lotes visibles. Si el pie
+  // no dice cuántas cajas quedaron afuera, promete un on-hand que las dos tablas no reconstruyen.
+  var _visCs=s.onHandCases;
+  if(minAge && typeof invmFilterLots==='function'){
+    _visCs=0;
+    invmFilterLots(s.lots,minAge).forEach(function(l){ if(!(l&&l.excluded)) _visCs+=parseFloat(l.cases)||0; });
+  }
+  var _escCs=Math.round(Math.max(0,s.onHandCases-_visCs));
   html += '<div style="margin:-6px 0 14px;font-size:11px;font-family:var(--fm);color:var(--gray-500)">'
     + 'Both tables are physically in the cooler and both count toward the <b>'+f(s.onHandCases)+' cs</b> on hand. '
+    + (_escCs>0?('<span style="color:var(--amber-700)">The '+minAge+'+ days filter is hiding <b>'+f(_escCs)+' cs</b> in newer lots, so the totals above add up to '+f(_visCs)+' cs, not '+f(s.onHandCases)+'.</span> '):'')
     + 'The repacked ones are the cases that already changed presentation.</div>';
   html += '<div style="font-size:11.5px;color:var(--gray-600);background:var(--sky-50,#eff6ff);border:1px solid var(--sky-200,#bfdbfe);border-radius:8px;padding:11px 13px">'
     + '<b style="color:var(--sky-700,#1d4ed8)">Update on-hand:</b> tell me "update the '+esc(s.label)+' inventory" and I\'ll generate a <b>Sales Desk</b> snippet (Floor Count, excl. W/vLot lots) to paste in the console — same as the Monday ginger routine. <b>Received date</b> = the PO\'s scheduled delivery date (WholesaleWare → Purchase Orders); it drives storage days + FEFO. Set it per lot above or I\'ll pull it with the update.</div>';
@@ -17350,7 +17412,7 @@ function invmAnalysisHTML(s){
         + '<div style="margin-top:2px;color:var(--gray-500)">Total business ≈ <b>'+f(s.weeklyCases+s.directShipCases)+' cs/wk</b> <span style="color:var(--gray-400)">· both on the '+(s.win||13)+'-wk window</span></div>'
       + '</div>') : '')
     + '<div class="ipv-kpis">'
-      + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Available to sell<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Available · free to sell</span><span class="jlz-td">What\'s truly free to sell now: physical lots on hand, minus expected shrink, minus orders already sold but not yet shipped (committed, current week).</span><span class="jlz-tf">= on-hand × (1 − shrink%) − committed</span></span></span></div><div class="big">'+f(s.availCases)+' <small>cs</small></div><div class="note">'+availNote+'</div></div>'
+      + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Available to sell<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Available · free to sell</span><span class="jlz-td">What\'s truly free to sell now: physical lots on hand, minus expected shrink, minus orders already sold but not yet shipped (committed: this week and any later week already booked).</span><span class="jlz-tf">= on-hand × (1 − shrink%) − committed</span></span></span></div><div class="big">'+f(s.availCases)+' <small>cs</small></div><div class="note">'+availNote+'</div></div>'
       + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Current cover<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Current cover</span><span class="jlz-td">How many weeks your free stock lasts at the current sales pace.</span><span class="jlz-tf">= Available ÷ weekly demand</span></span></span></div><div class="big">'+covTxt+'</div><div class="note">available ÷ demand/wk</div></div>'
       + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Target cover<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Target cover</span><span class="jlz-td">Weeks of stock you want to hold before reordering: supplier lead time plus a safety buffer for demand swings.</span><span class="jlz-tf">= lead + safety (z × CV × √lead)</span></span></span></div><div class="big">'+tgtTxt+'</div><div class="note">lead '+f1(s.leadWks)+' + safety '+f1(s.safetyWks)+'</div></div>'
       + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Suggested order<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Suggested order</span><span class="jlz-td">Cases to buy now to reach target cover, counting what is already bought and on the way. Zero if you are already above target.</span><span class="jlz-tf">= (target cover × wk demand) − (available + incoming)</span></span></span></div><div class="big" style="color:'+(_ord>0?'var(--jlz)':'var(--gray-400)')+'">'+ordTxt+'</div><div><span class="ipv-st '+stCls+'">'+stTxt+'</span></div></div>'
@@ -18837,9 +18899,31 @@ function renderBuyPlanner() {
     pushSettingToSheet('bpLtAirInland',  _lt.air.inland);
   }
 
-  // Update cases sub-label inside the snapshot banner
-  const stockCasesEl = document.getElementById('bp-stock-cases');
-  if (stockCasesEl) stockCasesEl.textContent = Math.round(stockCasesFree).toLocaleString() + ' cases';
+  // Caja "Available · free" del banner. #bp-stock-lbs guarda el BRUTO y así tiene que quedar: lo leen
+  // el Simulator, el Sheet (bpStockLbs) y este mismo render como bruto, y restarle ahí el committed lo
+  // descontaría dos veces. Antes la caja mostraba ese bruto en lb y lo libre en cajas debajo, así que
+  // sus dos mitades no coincidían por justo el committed. Ahora el input queda oculto como portador del
+  // dato y la caja pinta lo libre (bruto − committed) en lb y en cajas. Solo cambia lo que se ve.
+  function bpShowAvailableFree(grossLbs, committedCases) {
+    var freeCases = Math.max(0, (grossLbs || 0) / 30 - (committedCases || 0));
+    var casesEl = document.getElementById('bp-stock-cases');
+    if (casesEl) casesEl.textContent = Math.round(freeCases).toLocaleString() + ' cases';
+    var inp = document.getElementById('bp-stock-lbs');
+    if (!inp || !inp.parentNode) return freeCases;
+    var shown = document.getElementById('bp-stock-free-lbs');
+    if (!shown) {
+      shown = document.createElement('span');
+      shown.id = 'bp-stock-free-lbs';
+      shown.className = 'bp-st-num';
+      shown.setAttribute('style', 'background:none;border:none;padding:0');
+      shown.title = 'Free to sell: on-hand minus committed this week (manage lots in the Inventory module)';
+      inp.parentNode.insertBefore(shown, inp);
+      inp.style.display = 'none';
+    }
+    shown.textContent = Math.round(freeCases * 30).toLocaleString();
+    return freeCases;
+  }
+  bpShowAvailableFree(stockLbs, committedNowCases);
   // Phase 2: fill the gross-on-hand and committed summary boxes (Available = the input above).
   const _ohgEl = document.getElementById('bp-onhand-gross');
   if (_ohgEl) _ohgEl.textContent = Math.round(stockCasesGross).toLocaleString();
@@ -18960,7 +19044,7 @@ function renderBuyPlanner() {
   // al ritmo de facturación: dividir por `salesDemand` daba 4,05 semanas donde son 3,56 (+14%). Es
   // el titular del Buy Planner y del Command Center, y la proyección de abajo ya usaba la base
   // física — o sea que el encabezado y su propia tabla no coincidían.
-  const coverage = weeklyDemand > 0 ? stockCases / weeklyDemand : 0;
+  const coverage = weeklyDemand > 0 ? stockCasesFree / weeklyDemand : 0;   // sobre el LIBRE, igual que los otros cuatro productos (availLbs / weeklyLbsBuy) y que el tooltip: desde que ginger se carga BRUTO, stockCases incluye lo reservado
   {
     const covEl = document.getElementById('bp-coverage');
     if (covEl) {
@@ -27626,16 +27710,37 @@ function dmLineStats(p, o){
   var dsMain = !o;
   try{ dsMain = ((dmLineOrigins(p) || [])[0] || '') === (o || ''); }catch(e){}
   try{ if(dsMain && typeof mtoCasesPerWeek === 'function') ds = mtoCasesPerWeek(p, (typeof dsWindow==='function')?dsWindow():26) || 0; }catch(e){}
-  var onHand = 0;
+  // On hand = lo físico de la línea; Cover = lo LIBRE contra lo que sale de cámara.
+  // Ginger-Perú sumaba `bpInvState().rows` crudo, así que entraban los contenedores DOWNGRADED (ya
+  // convencionales: un eje de segregación que nunca se suma al orgánico) y las filas huérfanas de una
+  // orden borrada. `invmCompute` es el que las saca, y es lo que leen el KPI de Inventory y el Buy
+  // Planner. Y la cobertura dividía ese bruto por lo vendido, sin committed ni merma: 119 cs con 60
+  // reservadas daban 6,0 semanas en la tarjeta y 2,8 en el Buy Planner, y "Lines needing attention"
+  // callaba sobre líneas ya cortas. Ahora es la cuenta de "Current cover": libre ÷ (run-rate × merma).
+  // El libre de ginger-Perú es el mismo `stockCasesFree` del Buy Planner (bruto − committed de la
+  // semana), y su merma la del propio planner, igual que en renderBuildupPanel.
+  var onHand = 0, free = 0, infl = 1;
   if(p === 'ginger' && o === 'Peru'){
-    try{ var st = bpInvState();
-      onHand = Object.keys(st.rows||{}).reduce(function(t,k){ return t + (+((st.rows[k]||{}).cases)||0); }, 0);
+    try{ var im = invmCompute();
+      onHand = (im.lots||[]).reduce(function(t,l){ return t + (+((l||{}).cases)||0); }, 0);
     }catch(e){}
+    var cNow = 0;
+    try{ if(typeof committedInvForWeek === 'function') cNow = committedInvForWeek(dmWeekKey(new Date()), 'ginger') || 0; }catch(e){}
+    free = Math.max(0, onHand - cNow);
+    var _bpd = (typeof window !== 'undefined') ? window._bpDigest : null;
+    infl = (_bpd && _bpd.salesDemand > 0 && _bpd.weeklyDemand > 0) ? (_bpd.weeklyDemand / _bpd.salesDemand) : (1 / 0.86);
   } else {
-    try{ var ps = invmProductStats(p, o); if(ps) onHand = ps.onHandCases || 0; }catch(e){}
+    try{ var ps = invmProductStats(p, o);
+      if(ps){
+        onHand = ps.onHandCases || 0;
+        free = (ps.availCases != null) ? ps.availCases : onHand;
+        infl = 1 / (1 - Math.max(0, Math.min(60, +ps.shrinkPct || 0)) / 100);
+      }
+    }catch(e){}
   }
+  var outWk = rr * infl;
   return { win:win, rr:rr, dRR:(prior > 0 ? (rr-prior)/prior*100 : null),
-           ds:ds, onHand:onHand, cover:(rr > 0 ? onHand/rr : null),
+           ds:ds, onHand:onHand, free:free, cover:(outWk > 0 ? free/outWk : null),
            spark:ser.slice(-13).map(function(x){ return (x.lbs||0)/cl; }),
            unit:(p === 'shallots' ? 'sacks' : 'cs') };
 }
@@ -29114,7 +29219,12 @@ function renderDemandAccuracy(){
   if (typeof getCommitted === 'function' && typeof dmWeekKey === 'function') {
     const _monNow = dmWeekKey(new Date());
     const _byWk = {};
-    cmPlanEntries().forEach(function(x){ if (x && x.wk && x.wk >= _monNow && _cmProd(x) === fp) _byWk[x.wk] = (_byWk[x.wk] || 0) + (+x.cases || 0); });
+    // Lo CRUZADO va del puerto al cliente: no se compra para cámara (misma regla y misma fuente que
+    // committedInvForWeek, vía _cmCrossDock). Lo reempacado sí entra y sigue contando. Y el committed
+    // viene en la caja VENDIDA: se pasa al pack de compra antes de compararlo con el run-rate, o infla.
+    // Turmeric: una orden cruzada de Sol-ti de 700 cs pedía "buy >= 700 cs" de cajas que nunca tocan cámara.
+    const _cd = (typeof _cmCrossDock === 'function') ? (_cmCrossDock(fp) || {}) : {};
+    cmPlanEntries().forEach(function(x){ if (x && x.wk && x.wk >= _monNow && _cmProd(x) === fp && !(x.customer && Object.prototype.hasOwnProperty.call(_cd, x.customer))) _byWk[x.wk] = (_byWk[x.wk] || 0) + cmCasesInBuyPack(x, fp); });
     const _wks = Object.keys(_byWk).sort();
     committedWks = _wks.length;
     committedCs = _wks.reduce(function(s,w){ return s + _byWk[w]; }, 0);

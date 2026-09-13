@@ -573,6 +573,7 @@ var _cpwSave = (typeof mtoCasesPerWeek === 'function') ? mtoCasesPerWeek : null;
 mtoNetRows=function(rows){ return rows.filter(function(r){ return !(r && r.c==='Whole Foods Market' && r.prod==='garlic'); }); };
 invmProductStats=function(p,o){ return {onHandCases:(p==='garlic'?48:0)}; };
 bpInvState=function(){ return {rows:{A:{cases:2184}}}; };
+invmCompute=function(){ return {lots:[{cases:2184}], distressedLots:[]}; };   // U26: ginger-Perú lee los lotes ya filtrados (sin degradados ni huérfanos)
 nowcastProductModel=function(m){ return m; };   // solo para este grupo: group() la restaura en el siguiente
 
 var _seen=null, _win=3;
@@ -4255,6 +4256,541 @@ group('U08 · la tarjeta del Simulator lee los mismos plazos que la del Buy Plan
 } catch (_e) {
   // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
   ok('U08 no tira excepción: ' + ((_e && _e.message) || _e), false);
+}
+
+// ── U11 · Lo reempacado se suma a la demanda de stock: sus cajas entran y también salen.
+try {
+group('invmProjectionHTML · el committed reempacado se SUMA al run-rate, no compite con él');
+// Garlic: 210 cs de Whole Foods reempacadas llegan la semana +1 y su committed está en esa misma
+// semana. El run-rate (37 cs/wk) ya viene NETO de Whole Foods (mtoNetRows). Con max(committed, run-rate)
+// la semana consumía 210 y las 37 cajas de los demás clientes desaparecían: el stock quedaba 37 cs alto.
+(function(){
+  var W1 = dmWeekKey(new Date(Date.now() + 7*86400000));
+  var ROWS = [];
+  getCommitted        = function(){ return ROWS; };
+  _cmProd             = function(c){ return c.prod; };
+  _cmOriginFor        = function(c){ return c.origin || ''; };
+  _cmShipped          = function(){ return false; };
+  dmWindow            = function(){ return 13; };
+  mtoByCustomer       = function(p, w, opts){ return (opts && opts.crossDockOnly) ? {} : { 'WHOLE FOODS': 16 }; };
+  invmCommittedByWeek = function(){ var o = {}; ROWS.forEach(function(c){ o[c.wk] = (o[c.wk] || 0) + c.cases; }); return o; };
+  invmProductArrivals = function(){ var o = {}; o[W1] = 210; return o; };
+  whatifArrivals      = function(){ return {}; };
+  prodInvState        = function(){ return {}; };
+  invmProductModel    = function(){ return null; };
+  invmOrderCases      = function(){ return 0; };
+  var _s = { p:'garlic', origin:'California', label:'Garlic', weeklyLbs:37*30, weeklyCases:37,
+             safetyWks:1, targetWks:3, leadWks:1, status:'ok', onHandCases:500, availCases:500,
+             effOnHandCases:500, caseLb:30, shrinkPct:0, hasModel:true };
+  var nums = function(html, re){ var out = [], m; while ((m = re.exec(html))) out.push(parseInt(m[1].replace(/,/g,''), 10)); return out; };
+  var dem  = function(html){ return nums(html, /color:#b91c1c">−([\d,]+)/g); };
+  var ends = function(html){ return nums(html, /font-weight:700;color:(?:#b91c1c|var\(--gray-800\))">(-?[\d,]+)<\/td>/g); };
+
+  // A) Solo Whole Foods reempacado en la semana +1.
+  ROWS = [{ type:'inv', prod:'garlic', origin:'California', customer:'WHOLE FOODS', wk:W1, cases:210 }];
+  var h = invmProjectionHTML(_s);
+  check('la semana en curso sigue consumiendo el run-rate', dem(h)[0], 37);
+  check('la semana del reempaque consume run-rate + las 210 (37 + 210)', dem(h)[1], 247);
+  check('y el stock al cierre no queda 37 cs alto (463 + 210 - 247)', ends(h)[1], 426);
+  check('la diferencia no se arrastra: la semana +2 cierra 37 más abajo', ends(h)[2], 389);
+
+  // B) Además, 20 cs de un cliente de stock esa semana: el suyo compite con el run-rate, el reempacado va encima.
+  ROWS = [{ type:'inv', prod:'garlic', origin:'California', customer:'WHOLE FOODS', wk:W1, cases:210 },
+          { type:'inv', prod:'garlic', origin:'California', customer:'KEHE', wk:W1, cases:20 }];
+  check('stock 20 < run-rate 37: max(20, 37) + 210', dem(invmProjectionHTML(_s))[1], 247);
+
+  // C) Un cliente de stock grande: su committed reemplaza al run-rate, sin sumarlo dos veces.
+  ROWS = [{ type:'inv', prod:'garlic', origin:'California', customer:'WHOLE FOODS', wk:W1, cases:210 },
+          { type:'inv', prod:'garlic', origin:'California', customer:'KEHE', wk:W1, cases:50 }];
+  check('stock 50 > run-rate 37: max(50, 37) + 210, no 50 + 37 + 210', dem(invmProjectionHTML(_s))[1], 260);
+
+  // D) Sin nada contra orden, el max() de siempre queda intacto.
+  mtoByCustomer = function(){ return {}; };
+  ROWS = [{ type:'inv', prod:'garlic', origin:'California', customer:'KEHE', wk:W1, cases:210 }];
+  check('sin reempacado, el committed de stock reemplaza al run-rate como antes', dem(invmProjectionHTML(_s))[1], 210);
+})();
+} catch (_e) {
+  // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
+  ok('U11 no tira excepción: ' + ((_e && _e.message) || _e), false);
+}
+
+// ── U13 · Una orden cross-dock marcada cuenta como cruzada desde que se contrata o viaja (y aunque todavía no se haya facturado), así que su committed deja de restar stock libre y de cobrarse como demanda de cámara, igual que su llegada ya se neteaba.
+try {
+group('U13 · un cruzado EN CAMINO ya sale de la demanda de camara');
+// La llegada de una orden cruzada se netea a cero apenas se marca (directShipTotal no mira el
+// status), pero la identidad de "cliente cruzado" pedia arrivalActual y ventas facturadas. En el
+// medio —el estado normal de una orden recien marcada— las 700 cajas de Sol-ti se cobraban como
+// demanda de camara sin ninguna llegada: el STOCKOUT de turmeric-Fiji semana 38.
+(function(){
+  var hoy = new Date(), DIA = 86400000;
+  var iso = function(n){ return dmISOLocal(new Date(hoy.getTime() + n*DIA)); };
+  var tiene = function(o, c){ return Object.prototype.hasOwnProperty.call(o || {}, c); };
+  var ORD = [];
+  _ordProd      = function(o){ return o.product || 'ginger'; };
+  dmWindow      = function(){ return 6; };
+  productCaseLb = function(){ return 30; };
+  getOrders     = function(){ return ORD; };
+  getDirectShip = function(po){ for(var i=0;i<ORD.length;i++){ if(ORD[i].jlzPo===po) return ORD[i].directShip||[]; } return []; };
+  _dmRawAll     = [];                                       // Sol-ti todavia no facturo nada
+  var cd = function(p){ return mtoByCustomer(p || 'turmeric', 6, {crossDockOnly:true}); };
+
+  ORD = [{ jlzPo:'T-SOLTI', product:'turmeric', status:'In Transit', cases:700, arrivalEstimated:iso(10),
+           directShip:[{ customer:'Sol-ti', cases:700 }] }];
+  check('la llegada ya entra con neto cero', 700 - directShipTotal('T-SOLTI'), 0);
+  ok('en transito: su committed ya NO es demanda de camara', tiene(cd(), 'Sol-ti'));
+  ORD[0].status = 'Contracted';
+  ok('contratada: tampoco', tiene(cd(), 'Sol-ti'));
+  ORD[0].status = 'In Transit'; ORD[0].arrivalEstimated = iso(-40);
+  ok('atrasada y sin marcar llegada: sigue neta en llegadas, sigue fuera de la demanda', tiene(cd(), 'Sol-ti'));
+  ORD[0].arrivalEstimated = iso(10);
+  check('pero la TASA no descuenta lo que no llego', Object.keys(mtoByCustomer('turmeric', 6)).length, 0);
+  ORD[0].directShip = [{ customer:'Sol-ti', cases:700, viaWarehouse:true }];
+  ok('reempacado en camino SI sigue siendo demanda de esa semana', !tiene(cd(), 'Sol-ti'));
+
+  ORD = [{ jlzPo:'T-SOLTI', product:'turmeric', status:'Arrived', cases:700, arrivalActual:iso(-7), arrivalEstimated:iso(-7),
+           directShip:[{ customer:'Sol-ti', cases:700 }] }];
+  ok('llegada pero sin facturar todavia: sigue siendo cruzado', tiene(cd(), 'Sol-ti'));
+  check('y la tasa conserva el techo de lo vendido', Object.keys(mtoByCustomer('turmeric', 6)).length, 0);
+  ORD[0].status = 'Cancelled';
+  ok('una cancelada no marca a nadie', !tiene(cd(), 'Sol-ti'));
+  ORD = [{ jlzPo:'G-SOLTI', product:'garlic', status:'In Transit', cases:700, arrivalEstimated:iso(10),
+           directShip:[{ customer:'Sol-ti', cases:700 }] }];
+  ok('no se cruza de producto', !tiene(cd('turmeric'), 'Sol-ti'));
+})();
+} catch (_e) {
+  // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
+  ok('U13 no tira excepción: ' + ((_e && _e.message) || _e), false);
+}
+
+// ── U16 · El panel "Buy confidence" deja de pedir comprar el committed cruzado (que nunca entra a cámara) y compara el committed en cajas del pack de compra, igual que el Buy Planner.
+try {
+// ═══ U16 · Buy confidence: "How much should I buy?" no pide comprar lo cruzado ═══
+// El panel sumaba TODO el committed, también el cruzado (Sol-ti, puerto → cliente), y en la caja
+// VENDIDA: "nearest wk with orders: buy >= 700 cs" por cajas que nunca tocan la cámara, mientras el
+// Buy Planner y las proyecciones las sacan por _cmCrossDock. Lo reempacado sí sigue contando.
+// Requiere `renderDemandAccuracy` y `_cmCrossDock` en la lista de extract.py de run.sh.
+group('U16 · Buy confidence no pide comprar el committed cruzado');
+(function(){
+  var _u16Nombres = ['document','_dmModel','dmProductMeta','dmProductSeries','dmFocusRows','dmSeriesCompare',
+                     'dmGlobalDataMax','dmClearanceScan','dmBacktest','dmShelfWeeks','dmPullAccuracy','dmZoneLabel'];
+  var _u16Guardado = {};
+  _u16Nombres.forEach(function(n){ try { _u16Guardado[n] = eval(n); } catch (e) {} });
+
+  var p2 = function(n){ return (n < 10 ? '0' : '') + n; };
+  var iso = function(dias){ var t = new Date(Date.now() + dias*86400000);
+    return t.getFullYear() + '-' + p2(t.getMonth()+1) + '-' + p2(t.getDate()); };
+  var semanaQueViene = dmWeekKey(new Date(Date.now() + 7*86400000));
+
+  productFocus  = function(){ return 'turmeric'; };
+  productCaseLb = function(){ return 30; };
+  productLabel  = function(p){ return p; };
+  dmWindow      = function(){ return 13; };
+  _ordProd      = function(o){ return o.product || 'ginger'; };
+  _cmProd       = function(c){ return (c && c.product) || 'ginger'; };
+  _cmShipped    = function(c){ return !!(c && c.shipped); };
+  cxEsc         = function(x){ return String(x); };
+  ooClassifySku = function(sku){ var m = String(sku || '').match(/(\d+)\s*Lbs?/i); return m ? { packLbs:+m[1] } : null; };
+  PRODUCTS      = { turmeric:{ shrinkPct:5 } };
+
+  // Dos órdenes llegadas hace 2 semanas: Sol-ti CRUZADO (700) y Whole Foods REEMPACADO ACÁ (130).
+  getOrders = function(){ return [
+    { jlzPo:'PO-XD', product:'turmeric', status:'Arrived', arrivalActual:iso(-14),
+      directShip:[{ customer:'Sol-ti', cases:700 }] },
+    { jlzPo:'PO-RP', product:'turmeric', status:'Arrived', arrivalActual:iso(-14),
+      directShip:[{ customer:'Whole Foods', cases:130, viaWarehouse:true }] }
+  ]; };
+  // Vendieron eso mismo, así que el techo de mtoByCustomer no ata.
+  _dmRawAll = [ { prod:'turmeric', c:'Sol-ti',      d:iso(-14), lbs:700*30, type:'Sale' },
+                { prod:'turmeric', c:'Whole Foods', d:iso(-14), lbs:130*30, type:'Sale' } ];
+
+  // Committed de la semana que viene: Sol-ti 700 (cruzado, no entra), Whole Foods 200 (reempacado:
+  // sí sale de cámara esa semana) y Kroger 60 cajas de 5 lb (= 10 cajas del pack de 30 lb).
+  getCommitted = function(){ return [
+    { customer:'Sol-ti',      wk:semanaQueViene, cases:700, type:'inv', product:'turmeric' },
+    { customer:'Whole Foods', wk:semanaQueViene, cases:200, type:'inv', product:'turmeric' },
+    { customer:'Kroger',      wk:semanaQueViene, cases:60,  type:'inv', product:'turmeric', sku:'OG-TUR-5Lbs' }
+  ]; };
+
+  // El resto del panel, neutro: run-rate de 150 cs/wk, sin backtest (sesgo 1), sin margen.
+  _dmModel        = { weekly:[] };
+  dmProductMeta   = function(p){ return { label:p, caseLb:30, accent:'#000' }; };
+  dmProductSeries = function(){ return []; };
+  dmFocusRows     = function(){ return []; };
+  dmGlobalDataMax = function(){ return ''; };
+  dmSeriesCompare = function(){ return { casesNow:0, pxNow:0 }; };
+  dmClearanceScan = function(){ return { cleanRunRate:150, sigma13:10, normalMargin:null, gpPerCase:null,
+                                         liqLoss:0, liqWeeks:0, casesDumped:0, dispCases:0, dispCost:0, weeks:52 }; };
+  dmBacktest      = function(){ return null; };
+  dmShelfWeeks    = function(){ return 5; };
+  dmPullAccuracy  = function(){};
+  dmZoneLabel     = function(){ return ''; };
+  var _u16out = '';
+  document = { getElementById: function(id){
+    return (id === 'dm-accuracy') ? { set innerHTML(v){ _u16out = v; }, get innerHTML(){ return _u16out; } } : null;
+  } };
+
+  renderDemandAccuracy();
+
+  var leer = function(re){ var m = _u16out.match(re); return m ? m[1].replace(/,/g, '') : '(no aparece)'; };
+  // 200 reempacado + 10 (60 cajas de 5 lb en pack de 30) = 210. Las 700 cruzadas no entran.
+  check('committed on the books sin lo cruzado y en el pack de compra',
+        leer(/Committed on the books[\s\S]*?<div class="cv">([\d,]+) <small>/), 210);
+  check('la semana más cercana pide solo lo que pasa por cámara',
+        leer(/buy ≥ ([\d,]+) cs \(committed\)/), 210);
+  ok('nunca pide comprar las 700 cajas cruzadas de Sol-ti', !/buy ≥ (700|9[0-9]{2}) cs/.test(_u16out));
+
+  _u16Nombres.forEach(function(n){
+    if (!(n in _u16Guardado)) return;
+    try { eval(n + ' = _u16Guardado[' + JSON.stringify(n) + ']'); } catch (e) {}
+  });
+})();
+} catch (_e) {
+  // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
+  ok('U16 no tira excepción: ' + ((_e && _e.message) || _e), false);
+}
+
+// ── U20 · La caja "Available · free" del Buy Planner ahora muestra en lb lo mismo que en cajas: lo libre (bruto menos committed), no el bruto.
+try {
+group('U20 · La caja "Available · free" del Buy Planner ahora muestra en lb lo mism');
+// U20 — La caja "Available · free" del Buy Planner mostraba el BRUTO en lb (#bp-stock-lbs) y lo libre
+// en cajas debajo: 70,020 lb · 1,900 cases. Las dos mitades de la misma caja diferían por el committed.
+(function(){
+  function assert(label, cond, got){
+    if (typeof ok === 'function') ok(label, cond);
+    if (!cond) throw new Error('U20 FAIL: ' + label + (got !== undefined ? ' (obtenido: ' + got + ')' : ''));
+  }
+  assert('existe bpShowAvailableFree (la caja pinta lo libre, no el bruto del input)',
+         typeof bpShowAvailableFree === 'function');
+
+  var els = {};
+  function mk(tag, id){
+    var e = { tagName: tag, id: id || '', value: '', textContent: '', title: '', className: '',
+              style: {}, attrs: {}, parentNode: null,
+              setAttribute: function(k, v){ this.attrs[k] = v; } };
+    if (id) els[id] = e;
+    return e;
+  }
+  var box = { kids: [], insertBefore: function(n, ref){
+    var i = this.kids.indexOf(ref); this.kids.splice(i < 0 ? this.kids.length : i, 0, n);
+    n.parentNode = this; if (n.id) els[n.id] = n; } };
+  var inp = mk('INPUT', 'bp-stock-lbs'); inp.value = '70020'; inp.parentNode = box; box.kids.push(inp);
+  var casesEl = mk('SPAN', 'bp-stock-cases');
+
+  var hadDoc = (typeof document !== 'undefined'), savedDoc = hadDoc ? document : undefined;
+  document = { getElementById: function(id){ return els[id] || null; },
+               createElement: function(t){ return mk(String(t).toUpperCase()); } };
+  try {
+    // 2,334 cs brutas en camara (70,020 lb), 434 cs committed esta semana -> 1,900 cs libres = 57,000 lb
+    var free = bpShowAvailableFree(70020, 434);
+    assert('devuelve las cajas libres (bruto - committed)', Math.round(free) === 1900, free);
+    var shown = els['bp-stock-free-lbs'];
+    assert('la caja tiene un numero visible propio', !!shown);
+    assert('el numero visible es lo LIBRE en lb (57,000), no el bruto (70,020)',
+           shown.textContent === (57000).toLocaleString(), shown.textContent);
+    assert('el sub-label sigue diciendo las cajas libres',
+           casesEl.textContent === (1900).toLocaleString() + ' cases', casesEl.textContent);
+    assert('las dos mitades de la caja coinciden (lb = cases x 30)',
+           shown.textContent === (1900 * 30).toLocaleString());
+    assert('el input sigue guardando el BRUTO (lo leen Simulator y Sheet)', inp.value === '70020', inp.value);
+    assert('el input bruto no se muestra en la caja "free"', inp.style.display === 'none', inp.style.display);
+    assert('el numero visible va antes del input, en la misma caja', box.kids[0] === shown && box.kids[1] === inp);
+
+    // Re-render sin committed: no duplica el numero y muestra el bruto completo
+    bpShowAvailableFree(70020, 0);
+    assert('re-render no agrega un segundo numero', box.kids.length === 2, box.kids.length);
+    assert('sin committed, libre = bruto', shown.textContent === (70020).toLocaleString(), shown.textContent);
+
+    // Committed mayor que el stock: nunca negativo
+    bpShowAvailableFree(3000, 500);
+    assert('committed > stock -> 0, nunca negativo', shown.textContent === (0).toLocaleString(), shown.textContent);
+  } finally {
+    document = savedDoc;
+  }
+})();
+} catch (_e) {
+  // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
+  ok('U20 no tira excepción: ' + ((_e && _e.message) || _e), false);
+}
+
+// ── U21 · La cobertura de ginger ahora cuenta solo el stock libre (sin lo ya reservado), igual que turmeric/garlic/shallots y como promete el tooltip.
+try {
+// U21 — La cobertura de ginger sale del stock LIBRE, como en los otros cuatro productos.
+// Desde 2026-09-03 el inventario de ginger se carga BRUTO, así que `stockCases` incluye lo reservado;
+// dividirlo por la demanda inflaba el titular (y el tono verde/ámbar/rojo) en committed / demanda.
+// renderBuyPlanner es todo DOM y no se puede correr acá: se toma la expresión real de `coverage`
+// del código y se evalúa con números sintéticos.
+group('U21 · Coverage de ginger = LIBRE / demanda semanal, no BRUTO');
+(function(){
+  var src = null;
+  try { if (typeof renderBuyPlanner === 'function') src = String(renderBuyPlanner); } catch (e) {}
+  if (!src) {
+    try {
+      ObjC.import('Foundation');
+      var cwd = ObjC.unwrap($.NSFileManager.defaultManager.currentDirectoryPath);
+      var cands = [cwd + '/JLZ_Container_Intelligence.html', cwd + '/../JLZ_Container_Intelligence.html'];
+      for (var i = 0; i < cands.length && !src; i++) {
+        var s = $.NSString.stringWithContentsOfFileEncodingError(cands[i], $.NSUTF8StringEncoding, null);
+        if (s && !s.isNil()) src = ObjC.unwrap(s);
+      }
+      if (src) { var at = src.indexOf('function renderBuyPlanner('); src = (at >= 0) ? src.slice(at) : null; }
+    } catch (e) {}
+  }
+  if (!ok('se encontró el código de renderBuyPlanner', !!src)) return;
+  var m = src.match(/const coverage\s*=\s*([^;]+);/);
+  if (!ok('renderBuyPlanner calcula `coverage`', !!m)) return;
+  var cov = new Function('stockCases', 'stockCasesGross', 'stockCasesFree', 'committedNowCases', 'weeklyDemand',
+                         'return (' + m[1] + ');');
+  // 2.334 cs en cámara (bruto), 434 reservados esta semana, 700 cs/wk de salida física.
+  var got = cov(2334, 2334, 1900, 434, 700);
+  check('2334 brutos - 434 reservados, 700 cs/wk -> 2.71 semanas', (+got).toFixed(2), (1900 / 700).toFixed(2));
+  ok('no es el bruto / demanda (3.33)', Math.abs(got - 2334 / 700) > 0.01);
+  check('sin committed, libre = bruto -> 1.00', (+cov(700, 700, 700, 0, 700)).toFixed(2), '1.00');
+  check('sin demanda -> 0', +cov(2334, 2334, 1900, 434, 0), 0);
+})();
+} catch (_e) {
+  // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
+  ok('U21 no tira excepción: ' + ((_e && _e.message) || _e), false);
+}
+
+// ── U22 · El tooltip de "Available to sell" deja de decir que solo resta el committed de esta semana: resta también las semanas futuras ya reservadas, que es lo que el número siempre hizo.
+try {
+group('U22 — el committed del disponible: qué horizonte resta y qué dice la pantalla');
+// El número NO se toca: lo reempacado llega (cuenta en incoming) y su cliente sale del run-rate, así
+// que el committed de semanas futuras es lo único que consume esas cajas en la posición y la compra.
+// Lo que estaba mal era el tooltip, que decía "current week".
+ok('prodCommittedTotal está extraída', typeof prodCommittedTotal === 'function');
+ok('invmAnalysisHTML está extraída', typeof invmAnalysisHTML === 'function');
+if (typeof prodCommittedTotal === 'function' && typeof invmAnalysisHTML === 'function') {
+  dmWeekKey = function(){ return '2026-09-07'; };
+  getCommitted = function(){ return [
+    { type:'inv', prod:'turmeric', customer:'Earl', cases:40,  wk:'2026-08-31' },   // pasada: ya salió
+    { type:'inv', prod:'turmeric', customer:'Earl', cases:50,  wk:'2026-09-07' },   // esta semana
+    { type:'inv', prod:'turmeric', customer:'Sol',  cases:300, wk:'2026-10-05' }    // reempacada, +4 semanas
+  ]; };
+  _cmProd = function(c){ return c.prod; };
+  _cmOriginFor = function(c){ return c.origin || ''; };
+  prodInvFor = function(){ return { lots: [] }; };
+  ooClassifySku = function(){ return null; };
+  mtoByCustomer = function(){ return {}; };                 // nada cruzado
+  var _u22 = prodCommittedTotal('turmeric', 'all');
+  check('resta esta semana y las futuras reservadas, nunca las pasadas', _u22, 350);
+
+  invmOrderCases = function(){ return 0; };
+  var _u22s = { p:'turmeric', origin:'all', status:'ok', weeklyLbs:0, hasModel:true, demandOverride:null,
+                directShipCases:0, coverWks:0, targetWks:0, leadWks:0, safetyWks:0, lead:0, caseLb:30,
+                cv:0, nWeeks:0, serviceLevel:95, z:1.645, shrinkPct:0, supList:[], presMix:[],
+                onHandCases:500, committedCases:_u22, availCases:150, orderCases:0 };
+  var _u22h = invmAnalysisHTML(_u22s);
+  ok('el tooltip de "Available to sell" ya no dice que solo resta la semana en curso',
+     _u22h.indexOf('committed, current week') === -1);
+  ok('…y dice que resta también las semanas siguientes ya reservadas',
+     /later week already booked/.test(_u22h));
+}
+} catch (_e) {
+  // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
+  ok('U22 no tira excepción: ' + ((_e && _e.message) || _e), false);
+}
+
+// ── U24 · El committed de una venta cross-dock deja de restarse del stock libre y de la demanda de la semana desde que se marca la orden (contratada o en tránsito), sin depender de que haya llegado, de que la cuenta haya facturado ni del toggle de ventana de Demand.
+try {
+// U24: a cross-dock account is recognized from the moment the sale is booked, not only once the PO arrives and the customer invoices
+group('U24 · el committed cruzado no se resta mientras el contenedor navega');
+(function(){
+  var iso = function(dias){ var t = new Date(Date.now() + dias*86400000), p = function(n){ return (n<10?'0':'')+n; };
+    return t.getFullYear()+'-'+p(t.getMonth()+1)+'-'+p(t.getDate()); };
+  var tiene = function(o, c){ return Object.prototype.hasOwnProperty.call(o || {}, c); };
+  _ordProd = function(o){ return o.product || 'ginger'; };
+  productCaseLb = function(){ return 30; };
+  dmWindow = function(){ return 13; };
+  _dmRawAll = [];                                    // Sol-ti todavia no facturo nada en la ventana
+  var ords = [];
+  getOrders = function(){ return ords; };
+
+  // A) En transito, sin ventas: el ciclo normal de un cruzado.
+  ords = [{ jlzPo:'PO-FJ', product:'turmeric', status:'In Transit', arrivalEstimated:iso(21),
+            directShip:[{ customer:'Sol-ti', cases:700 }] }];
+  ok('una PO cruzada EN TRANSITO ya marca a la cuenta', tiene(mtoByCustomer('turmeric', 13, {crossDockOnly:true}), 'Sol-ti'));
+  check('pero no inventa tasa para el run-rate', mtoByCustomer('turmeric', 13, {crossDockOnly:true})['Sol-ti'], 0);
+  ok('y el neteo del run-rate (sin crossDockOnly) sigue exigiendo la llegada', !tiene(mtoByCustomer('turmeric', 13), 'Sol-ti'));
+
+  // B) Contratada sin ETA: igual es cruzada.
+  ords = [{ jlzPo:'PO-FJ', product:'turmeric', status:'Contracted', directShip:[{ customer:'Sol-ti', cases:700 }] }];
+  ok('una PO contratada sin fecha tambien marca', tiene(mtoByCustomer('turmeric', 13, {crossDockOnly:true}), 'Sol-ti'));
+
+  // C) Llego hace 5 semanas y la ventana de Demand esta en 3: no puede volver el -700.
+  ords = [{ jlzPo:'PO-FJ', product:'turmeric', status:'Arrived', arrivalActual:iso(-35),
+            directShip:[{ customer:'Sol-ti', cases:700 }] }];
+  ok('con la ventana en 3 semanas la llegada de hace 5 no se cae', tiene(mtoByCustomer('turmeric', 3, {crossDockOnly:true}), 'Sol-ti'));
+
+  // D) Llego dentro de la ventana pero la cuenta no facturo (lumpy): sigue siendo cruzada.
+  ords = [{ jlzPo:'PO-FJ', product:'turmeric', status:'Arrived', arrivalActual:iso(-7),
+            directShip:[{ customer:'Sol-ti', cases:700 }] }];
+  ok('llegada sin factura en la ventana sigue marcando', tiene(mtoByCustomer('turmeric', 13, {crossDockOnly:true}), 'Sol-ti'));
+
+  // E) Lo que NO debe entrar (cada uno haria comprar de menos).
+  ords = [{ jlzPo:'PO-R', product:'turmeric', status:'In Transit', arrivalEstimated:iso(14),
+            directShip:[{ customer:'Sol-ti', cases:700, viaWarehouse:true }] }];
+  ok('reempacado en transito NO es cruzado', !tiene(mtoByCustomer('turmeric', 13, {crossDockOnly:true}), 'Sol-ti'));
+  ords = [{ jlzPo:'PO-C', product:'turmeric', status:'Cancelled', arrivalEstimated:iso(14),
+            directShip:[{ customer:'Sol-ti', cases:700 }] }];
+  ok('una PO cancelada NO marca', !tiene(mtoByCustomer('turmeric', 13, {crossDockOnly:true}), 'Sol-ti'));
+  ords = [{ jlzPo:'PO-V', product:'turmeric', status:'In Transit', arrivalEstimated:iso(-200),
+            directShip:[{ customer:'Sol-ti', cases:700 }] }];
+  ok('una PO en transito olvidada hace meses NO marca para siempre', !tiene(mtoByCustomer('turmeric', 13, {crossDockOnly:true}), 'Sol-ti'));
+  ords = [{ jlzPo:'PO-G', product:'garlic', status:'In Transit', arrivalEstimated:iso(14),
+            directShip:[{ customer:'Sol-ti', cases:700 }] }];
+  ok('otro producto NO marca', !tiene(mtoByCustomer('turmeric', 13, {crossDockOnly:true}), 'Sol-ti'));
+
+  // F) Donde se veia el numero: la demanda de la semana ya no carga las 700 de Sol-ti.
+  ords = [{ jlzPo:'PO-FJ', product:'turmeric', status:'In Transit', arrivalEstimated:iso(21),
+            directShip:[{ customer:'Sol-ti', cases:700 }] }];
+  getCommitted = function(){ return [{ prod:'turmeric', type:'inv', wk:'2026-09-14', customer:'Sol-ti', cases:700 }]; };
+  var d = HYBRID_REAL('2026-09-14', 50, { customers:[{ c:'Otro', rrCases:50 }] }, 'turmeric', null, '');
+  check('hybridSalesForWeek no suma el committed cruzado en transito', d, 50);
+})();
+} catch (_e) {
+  // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
+  ok('U24 no tira excepción: ' + ((_e && _e.message) || _e), false);
+}
+
+// ── U26 · Las tarjetas de Demand dejan de contar contenedores downgraded en el "On hand" de ginger-Perú, y su "Cover" pasa a medir el stock libre (menos committed y con merma), igual que el Buy Planner.
+try {
+// U26 · Tarjetas de Demand: "On hand" sin contenedores downgraded, y "Cover" sobre lo LIBRE.
+// Ginger-Perú sumaba `bpInvState().rows` crudo: un contenedor downgraded (ya convencional) y una fila
+// huérfana entraban al "On hand" orgánico. Y la cobertura era bruto ÷ vendido, sin committed ni merma:
+// la tarjeta decía 6,0 semanas donde el Buy Planner decía 2,8, y "Lines needing attention" callaba.
+group('U26 · la tarjeta no suma lo downgraded y la cobertura va sobre lo libre');
+DM_ACCENT={ginger:'#0d5026',garlic:'#b45309',shallots:'#7c3aed',turmeric:'#b42318'};
+productLabel=function(p){ return p; };
+productCaseLb=function(){ return 30; };
+dmRowOrigin=function(r){ return r.oitem||''; };
+dmWindow=function(){ return 3; };
+mtoNetRows=function(rows){ return rows; };
+mtoCasesPerWeek=function(){ return 0; };
+nowcastProductModel=function(m){ return m; };
+dmBuildModel=function(rows,_a,cl,p){
+  var rr = (p==='ginger') ? 400 : 20;
+  return { runRate3:rr*cl, runRate6:rr*cl, runRate13:rr*cl, runRate26:rr*cl,
+           weeklyReliable:[{lbs:rr*cl},{lbs:rr*cl},{lbs:rr*cl}] };
+};
+_dmRawAll=[];
+for(var _u26w=0;_u26w<6;_u26w++){
+  var _u26d=new Date(Date.UTC(2026,5,1)+_u26w*7*86400000).toISOString().slice(0,10);
+  _dmRawAll.push({d:_u26d, prod:'ginger', oitem:'Peru',       c:"Albert's Organics", lbs:400*30, units:400, type:'Sale'});
+  _dmRawAll.push({d:_u26d, prod:'garlic', oitem:'California', c:"Albert's Organics", lbs:20*30,  units:20,  type:'Sale'});
+}
+// El store crudo: 1.000 cs orgánicas + un contenedor DOWNGRADED de 1.100 + 50 de una orden borrada.
+bpInvState=function(){ return { rows:{ A:{cases:1000}, DG:{cases:1100}, HUERF:{cases:50} } }; };
+// invmCompute es quien separa: lo downgraded va a distressedLots y la huérfana no aparece.
+invmCompute=function(){ return { lots:[{id:'A', cases:1000, downgraded:false}],
+                                 distressedLots:[{id:'DG', cases:1100, downgraded:true}] }; };
+committedInvForWeek=function(wk, p){ return p==='ginger' ? 200 : 0; };
+window._bpDigest = { salesDemand:800, weeklyDemand:1000 };        // merma del planner: x1,25
+invmProductStats=function(p,o){ return p==='garlic' ? {onHandCases:119, availCases:59, shrinkPct:5} : {onHandCases:0}; };
+
+var _u26g=dmLineStats('ginger','Peru');
+check('ginger-Perú: On hand = lotes orgánicos de invmCompute (sin downgraded ni huérfana)', _u26g.onHand, 1000);
+// libre = 1.000 - 200 committed = 800; sale de cámara 400 x 1,25 = 500/sem -> 1,6 (antes 2.150/400 = 5,4)
+check('ginger-Perú: Cover = libre ÷ salida de cámara', Math.round(_u26g.cover*10)/10, 1.6);
+
+var _u26a=dmLineStats('garlic','California');
+check('garlic: On hand sigue siendo el físico', _u26a.onHand, 119);
+// (119 - 60) / (20 / 0,95) = 2,8 -- el mismo "Current cover" del Buy Planner (antes 119/20 = 6,0)
+check('garlic: Cover = el "Current cover" del Buy Planner', Math.round(_u26a.cover*10)/10, 2.8);
+window._bpDigest = undefined;
+} catch (_e) {
+  // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
+  ok('U26 no tira excepción: ' + ((_e && _e.message) || _e), false);
+}
+
+// ── U27 · La cabecera de la proyección deja de mostrar una resta de merma que no se hace: ahora On-hand − Committed = Available cierra, y la nota explica de dónde sale el arranque con merma.
+try {
+group('invmProjectionHTML · la cabecera On-hand - Committed = Available cierra (U27)');
+// availCases = físico - committed; la merma va del lado de la demanda. La cabecera metía un paso
+// "- Shrink 5% (25 cs)" en la cadena y mostraba 500 - 25 - 20 = 480: una cuenta que no cierra.
+(function(){
+  dmWeekKey = function(d){ var x=new Date(d); var g=(x.getDay()+6)%7; x.setDate(x.getDate()-g);
+    return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); };
+  invmProductArrivals = function(){ return {}; };
+  whatifArrivals      = function(){ return {}; };
+  var CBW = {};
+  invmCommittedByWeek = function(){ return CBW; };
+  prodInvState        = function(){ return {}; };
+  invmProductModel    = function(){ return null; };
+  invmOrderCases      = function(){ return 0; };
+  var _s = { p:'turmeric', origin:'Fiji', label:'Turmeric', weeklyLbs:3000, weeklyCases:100,
+             safetyWks:2, targetWks:6, onHandCases:500, committedCases:20, availCases:480,
+             shrinkPct:5, effOnHandCases:475, caseLb:30, excludedCases:0, hasModel:true };
+  var terms = function(html){
+    var a = html.indexOf('>On-hand<'), b = html.indexOf('>Available to sell<');
+    if (a < 0 || b < 0) return null;
+    var seg = html.slice(a, html.indexOf('</div></div>', b));
+    var re = /font-size:17px[^>]*>([\d,]+)</g, m, out = [];
+    while ((m = re.exec(seg))) out.push(parseInt(m[1].replace(/,/g, ''), 10));
+    return out;
+  };
+  var html = invmProjectionHTML(_s);
+  var t = terms(html);
+  ok('la cabecera se dibuja con al menos on-hand, committed y available', !!(t && t.length >= 3));
+  check('arranca en el físico', t && t[0], 500);
+  check('termina en el disponible de invmProductStats', t && t[t.length - 1], 480);
+  var bal = t ? t.slice(1, -1).reduce(function(x, y){ return x - y; }, t[0]) : null;
+  check('y la resta cierra: on-hand menos lo del medio = available', bal, 480);
+  ok('la merma no aparece como un término que se resta', html.indexOf('>Shrink ') < 0);
+
+  CBW = { '2026-09-14': 20 };
+  var h2 = invmProjectionHTML(_s);
+  var t2 = terms(h2);
+  check('con órdenes por semana la cadena también cierra',
+        t2 ? t2.slice(1, -1).reduce(function(x, y){ return x - y; }, t2[0]) : null, 480);
+  ok('y la nota dice de dónde salen las 475 con las que arranca la proyección',
+     /475 cs<\/b> \(500 on-hand less 5\.0% shrink\)/.test(h2));
+})();
+} catch (_e) {
+  // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
+  ok('U27 no tira excepción: ' + ((_e && _e.message) || _e), false);
+}
+
+// ── U28 · Con el filtro "30+/45+ days" activo, el pie de las tablas de lotes ahora dice cuántas cajas esconde y cuánto suman de verdad los totales, en vez de afirmar que cuadran con el on-hand.
+try {
+group('U28 — con el filtro de antigüedad, el pie dice cuántas cajas no suman las tablas');
+(function(){
+  if (typeof invmRenderProduct !== 'function' || typeof invmProductStats !== 'function') {
+    ok('invmRenderProduct está extraído (agregalo a la lista de extract.py en run.sh)', false);
+    return;
+  }
+  var _realStats = invmProductStats, _realDays = bpDaysSince;
+  var _realLF = (typeof invmLotFilter === 'function') ? invmLotFilter : undefined;
+  var EDAD = { '2026-07-15': 60, '2026-09-10': 3 };
+  bpDaysSince = function(iso){ return (iso in EDAD) ? EDAD[iso] : 0; };
+  // 68 cs en cámara: un lote viejo de 24 y uno recién llegado de 44. El excluido (10 cs, nuevo) NO es
+  // on-hand, así que tampoco puede aparecer como "escondido": serían 54 y el plan usa 68.
+  var LOTS = [ { lot:'G-OLD', origin:'California', supplier:'Grower A', received:'2026-07-15', cases:24, avgCost:40 },
+               { lot:'G-NEW', origin:'California', supplier:'Grower B', received:'2026-09-10', cases:44, avgCost:40 },
+               { lot:'G-EXC', origin:'California', supplier:'Grower B', received:'2026-09-10', cases:10, avgCost:40, excluded:true } ];
+  invmProductStats = function(){ return { p:'garlic', label:'Garlic', origin:'California', origins:['California'], caseLb:30,
+    lots:LOTS, allLots:LOTS, onHandCases:68, onHandLbs:2040, excludedCases:10, costVal:2720,
+    weeklyLbs:0, weeklyCases:0, status:'ok', supList:[], nWeeks:0, cv:0 }; };
+  try {
+    invmLotFilter = function(){ return 30; };
+    var con = invmRenderProduct('garlic');
+    var pie = con.slice(con.lastIndexOf('Both tables are physically in the cooler'));
+    ok('el pie sigue anclado al on-hand del plan (68)', pie.indexOf('<b>68 cs</b>') >= 0);
+    ok('con 30+ days, el pie dice las 44 cs que las tablas no suman', pie.indexOf('44 cs') >= 0);
+    ok('…y cuánto suman de verdad las tablas (24)', pie.indexOf('24 cs') >= 0);
+    ok('el lote excluido no se cuenta como escondido (serían 54)', pie.indexOf('54 cs') < 0);
+
+    invmLotFilter = function(){ return 0; };
+    var sin = invmRenderProduct('garlic');
+    var pie0 = sin.slice(sin.lastIndexOf('Both tables are physically in the cooler'));
+    ok('sin filtro, las tablas ya suman 68: el pie no avisa nada', pie0.indexOf('44 cs') < 0 && pie0.indexOf('24 cs') < 0);
+  } finally {
+    invmProductStats = _realStats; bpDaysSince = _realDays; invmLotFilter = _realLF;
+  }
+})();
+} catch (_e) {
+  // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
+  ok('U28 no tira excepción: ' + ((_e && _e.message) || _e), false);
 }
 
 // ═══ El entorno se limpia entre grupos ══════════════════════════════════════
