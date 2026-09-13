@@ -14845,7 +14845,18 @@ function bpToggleHist(){
 function bpGetPipelineByWeek() {
   const orders = (typeof getOrders === 'function') ? getOrders() : [];
   // Ginger buy-plan supply only — a non-ginger order must never inflate ginger arrivals.
-  const pipeline = orders.filter(o => _ordProd(o) === 'ginger' && (o.status === 'Contracted' || o.status === 'In Transit'));
+  // Y solo ginger-PERÚ: este es el planner de Perú (Hawaii tiene su propia vista, bpRenderProduct),
+  // así que un contenedor de Hawaii acá sumaría supply contra un stock que solo tiene lotes de Perú
+  // —comprando de menos— y esas mismas cajas se cuentan otra vez en la vista de Hawaii. Mismo criterio
+  // que invmProductArrivals: filtrar sí, PERDER no. Se descarta solo cuando el origen es OTRO bucket
+  // conocido del producto; en blanco o escrito distinto sigue contando acá.
+  const pipeline = orders.filter(o => {
+    if (_ordProd(o) !== 'ginger') return false;
+    if (!(o.status === 'Contracted' || o.status === 'In Transit')) return false;
+    const _oo = (typeof _ordOrigin === 'function') ? _ordOrigin(o) : (o.origin || '');
+    if (_oo && _oo !== 'Peru' && typeof _invmKnownOrigin === 'function' && _invmKnownOrigin('ginger', _oo)) return false;
+    return true;
+  });
   const byWeek = {};  // week → [{order, cases}]
   pipeline.forEach(o => {
     const arrival = normalizeDate(o.arrivalEstimated || o.arrivalActual);
@@ -16728,7 +16739,13 @@ function invmProductArrivals(p, origin){
     // Descartar solo cuando el origen coincide con OTRO bucket real; si no encaja en ninguno, cuenta.
     if(origin && origin!=='all'){
       var _oo=(typeof _ordOrigin==='function')?_ordOrigin(o):(o.origin||'');
-      if(_oo && _oo!==origin && _invmKnownOrigin(p,_oo)) return;   // otro origen conocido: no es de acá
+      // Y el bucket se compara como se comparan los lotes, no por igualdad exacta: el origen de una
+      // orden SIEMPRE sale del mapa de proveedores —ningún camino escribe `origin` y el Sheet no trae
+      // esa columna— así que garlic dice 'California (Gilroy)' y shallots 'AZ / CA' contra un bucket
+      // de lote que dice 'California'. Con `!==` se caía TODA llegada de esos dos: el contenedor de
+      // 227 cs de Christopher Ranch valía 0 en `incomingCases` y la sugerencia mandaba a comprarlo de
+      // nuevo. `invmOriginMatch` ya resuelve esto del lado de los lotes; las órdenes usan la misma regla.
+      if(_oo && !invmOriginMatch({prod:p, origin:_oo}, origin) && _invmKnownOrigin(p,_oo)) return;   // otro origen conocido: no es de acá
     }
     if(!(o.status==='Contracted'||o.status==='In Transit')) return;
     var eta=o.arrivalActual||o.arrivalEstimated||o.etaActual||o.etaEstimated; if(!eta) return;
@@ -16741,6 +16758,18 @@ function invmProductArrivals(p, origin){
     var wk; try{ wk=(typeof dmWeekKey==='function')?dmWeekKey(new Date(String(eta).slice(0,10)+'T12:00:00')):null; }catch(e){ wk=null; }
     if(!wk) return;
     out[wk]=(out[wk]||0)+cs;
+  });
+  // ── Un contenedor atrasado sigue en camino: se pliega a la semana en curso ──────────────
+  // La ETA se corre todo el tiempo (por eso existe `etaChangeHistory`) y la orden se queda en
+  // Contracted/In Transit con la fecha vieja. Los KPI de posición suman TODAS las llaves, pero la
+  // proyección y el runway caminan desde HOY hacia adelante: una llave vencida no la lee nadie. La
+  // misma tarjeta decía "1.320 cs ya en camino" arriba y dibujaba 0 en la tabla de abajo, con el
+  // veredicto de recompra calculado sin esas cajas. Mismo criterio que ya usa `invmProjectionHTML`
+  // con el committed atrasado ("overdue/backlog folds into now"): el TOTAL no cambia, solo deja de
+  // caerse en una semana que ninguna pantalla mira.
+  var nowWk=null; try{ nowWk=(typeof dmWeekKey==='function')?dmWeekKey(new Date()):null; }catch(e){ nowWk=null; }
+  if(nowWk) Object.keys(out).forEach(function(k){
+    if(k<nowWk){ out[nowWk]=(out[nowWk]||0)+out[k]; delete out[k]; }
   });
   return out;
 }
@@ -17027,7 +17056,13 @@ function invmProjectionHTML(s){
           var land=o.arrivalActual; if(!land) return;
           var wk; try{ wk=(typeof dmWeekKey==='function')?dmWeekKey(new Date(String(land).slice(0,10)+'T12:00:00')):null; }catch(e){ wk=null; }
           if(!wk) return;
-          var cs=parseFloat(o.cases)||0; if(cs<=0) return;
+          // ── Lo cruzado no llegó al almacén ───────────────────────────────────────────────
+          // Mismo neteo que la tabla de adelante (`invmProductArrivals`) y que el bloque gemelo de ginger.
+          // Sin esto el contenedor de turmeric se mostraba +850 acá y +150 allá; y como `arrCases` maneja el
+          // camino hacia atrás del stock, cada semana anterior se reconstruía 700 cs más abajo de lo que hubo
+          // — justo la columna que se cruza contra WholesaleWare. Lo reempacado SÍ entra a cámara: no se resta.
+          var _hds=0; try{ if(typeof directShipTotal==='function') _hds=directShipTotal(o.jlzPo)||0; }catch(e){}
+          var cs=Math.max(0,(parseFloat(o.cases)||0)-_hds); if(cs<=0) return;
           (_harr[wk]=_harr[wk]||[]).push({po:o.jlzPo||'—', cases:cs});
         });
         var _hinfl=(s.shrinkPct>0)?(1/(1-Math.min(0.6,s.shrinkPct/100))):1;
@@ -19105,8 +19140,23 @@ function renderBuyPlanner() {
     + '</tr></thead><tbody>';
   rows.forEach(r => {
     const monthDay = r.weekStartDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    // Un solo productor de "cuantas cajas de esta llegada pisan la camara": el total de la orden
+    // menos lo cruzado (puerto -> cliente, que nunca entra al almacen). Es el MISMO neto que suma
+    // `arrivalCases`, la celda de arriba: antes la sub-linea mostraba el bruto, y con ese bruto
+    // inflaba tambien los dias en camara de cajas que jamas entran.
+    function bpArrivalNetCases(a) {
+      return Math.max(0, ((a && a.cases) || 0)
+        - ((typeof directShipTotal === 'function' && a && a.order) ? directShipTotal(a.order.jlzPo) : 0));
+    }
+    // Y se nombra a donde se fue el resto, para que la resta no se lea como un error de carga.
     const arrivalsTxt = r.arrivalOrders.length
-      ? r.arrivalOrders.map(a => 'PO ' + a.order.jlzPo + ' (' + a.cases.toLocaleString() + 'cs · ~' + daysInWh(a.cases) + 'd in WH)').join(', ')
+      ? r.arrivalOrders.map(a => {
+          const net = bpArrivalNetCases(a), xd = Math.max(0, (a.cases || 0) - net);
+          return 'PO ' + a.order.jlzPo + (net > 0
+            ? ' (' + net.toLocaleString() + 'cs · ~' + daysInWh(net) + 'd in WH'
+              + (xd > 0 ? ' · ' + xd.toLocaleString() + 'cs cross-dock' : '') + ')'
+            : ' (all ' + (a.cases || 0).toLocaleString() + 'cs cross-dock, never enters the warehouse)');
+        }).join(', ')
       : '—';
     let statusBadge, rowBg = '';
     if (r.endingStock <= 0) {
@@ -23912,7 +23962,22 @@ function renderSimulator() {
 
   // Get active pipeline from real Orders module
   const orders = (typeof getOrders === 'function') ? getOrders() : [];
-  const activeOrders = orders.filter(o => _ordProd(o) === 'ginger' && (o.status === 'Contracted' || o.status === 'In Transit'));
+  // El Simulator de acá abajo es el de ginger-PERÚ: el origen Hawaii se desvía arriba a
+  // simRenderProduct, así que un contenedor de Hawaii no puede contar como llegada de Perú.
+  // Sin este filtro inflaba arrivalCases en la proyección (y el timeline, y la lista de pipeline),
+  // y el Buy Planner "coincidía" semana a semana solo porque contaba de más igual.
+  // Mismo criterio que invmProductArrivals —el que usa la vista de Hawaii—: descartar solo si el
+  // origen coincide con OTRO bucket conocido del producto; uno que nadie registró NO desaparece.
+  function simGingerPeruOrders(list) {
+    return (list || []).filter(function(o){
+      if (_ordProd(o) !== 'ginger') return false;
+      if (!(o && (o.status === 'Contracted' || o.status === 'In Transit'))) return false;
+      var oo = (typeof _ordOrigin === 'function') ? _ordOrigin(o) : ((o && o.origin) || '');
+      if (oo && oo !== 'Peru' && typeof _invmKnownOrigin === 'function' && _invmKnownOrigin('ginger', oo)) return false;
+      return true;
+    });
+  }
+  const activeOrders = simGingerPeruOrders(orders);
 
   // Update assumptions banner
   const stockLbs = parseFloat(document.getElementById('bp-stock-lbs')?.value) || 0;

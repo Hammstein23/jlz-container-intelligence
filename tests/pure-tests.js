@@ -3189,6 +3189,263 @@ ok('avisa en pantalla que quedó solo en este dispositivo',
    _c04Bar.length === 1 && /this device/i.test(_c04Bar[0]));
 ok('y no lo anuncia como error de red', _c04Bar.length === 1 && /\| warn$/.test(_c04Bar[0]));
 
+// ── C09 · Las llegadas de garlic y shallots vuelven a contar: el origen del proveedor y el del lote son el mismo bucket.
+
+// ── AL APLICAR: este bloque va ANTES del primer grupo que stubea `invmOriginMatch` (hoy ~1096) ──
+// El pineo de abajo tiene que capturar la funcion REAL; pegado al final capturaria el stub.
+// `invmOriginMatch` no estaba en _PRISTINO_NOMBRES y tres grupos la reemplazan por `return true`.
+// Ahora que `invmProductArrivals` la usa para decidir el bucket, ese stub se filtraba a los grupos
+// de origen de mas abajo y los hacia medir el stub en vez del codigo.
+if (_PRISTINO_NOMBRES.indexOf('invmOriginMatch') < 0) {
+  _PRISTINO_NOMBRES.push('invmOriginMatch');
+  _PRISTINO['invmOriginMatch'] = invmOriginMatch;
+}
+
+group('En camino · el contenedor de garlic/shallots no puede caerse del bucket');
+// El origen de una orden SIEMPRE sale del mapa de proveedores: ningun camino escribe `origin` en la
+// orden y el Sheet no trae esa columna. Ese mapa dice 'California (Gilroy)' para garlic y 'AZ / CA'
+// para shallots, mientras el bucket del lote dice 'California'. Comparando por igualdad exacta se
+// caia TODA llegada de esos dos productos: el contenedor de 227 cs de Christopher Ranch valia 0 en
+// `incomingCases`, en el runway y en la proyeccion de 13 semanas, y la sugerencia mandaba a
+// comprarlo de nuevo. Los lotes ya se emparejan flojo (`invmOriginMatch`); las ordenes igual.
+(function(){
+  PRODUCTS = {
+    ginger:   { suppliers:[ {name:'Anawi', origin:'Peru', leadDays:32}, {name:'Crown Pacific LLC', origin:'Hawaii', leadDays:10} ] },
+    garlic:   { suppliers:[ {name:'Christopher Ranch', origin:'California (Gilroy)', leadDays:3} ] },
+    shallots: { suppliers:[ {name:'Peri & Sons', origin:'AZ / CA', leadDays:5} ] }
+  };
+  invmOriginsFor = function(p){ return (p==='ginger') ? ['Hawaii'] : ['California']; };   // lo que hay HOY con lote
+  directShipTotal = function(){ return 0; };
+  _ordProd   = function(o){ return o.product; };
+  // El `origin` de cada orden es exactamente lo que devuelve el `_ordOrigin` real para ese proveedor
+  // contra el PRODUCTS de produccion: Christopher Ranch -> 'California (Gilroy)', Peri -> 'AZ / CA'.
+  _ordOrigin = function(o){ return o.origin; };
+  getOrders = function(){ return [
+    { product:'garlic',   origin:'California (Gilroy)', status:'In Transit', cases:227,  jlzPo:'G1', arrivalEstimated:'2026-09-14' },
+    { product:'shallots', origin:'AZ / CA',             status:'Contracted', cases:100,  jlzPo:'S1', arrivalEstimated:'2026-09-15' },
+    { product:'ginger',   origin:'Peru',                status:'In Transit', cases:1320, jlzPo:'P1', arrivalEstimated:'2026-09-20' },
+    { product:'ginger',   origin:'Hawaii',              status:'In Transit', cases:40,   jlzPo:'P2', arrivalEstimated:'2026-09-20' }
+  ]; };
+  var sum=function(o){ return Object.keys(o||{}).reduce(function(t,k){ return t+(o[k]||0); },0); };
+
+  check('garlic: el contenedor entra al bucket California', sum(invmProductArrivals('garlic','California')), 227);
+  check('shallots: AZ / CA es el mismo bucket California',  sum(invmProductArrivals('shallots','California')), 100);
+  check('garlic sin filtro de origen sigue igual',          sum(invmProductArrivals('garlic','all')), 227);
+  // Lo que el filtro SI tiene que seguir haciendo, intacto.
+  check('ginger: Peru no se cuenta como Hawaii',            sum(invmProductArrivals('ginger','Hawaii')), 40);
+  check('ginger: Peru sigue siendo Peru',                   sum(invmProductArrivals('ginger','Peru')), 1320);
+})();
+
+// ── C10 · La tabla de semanas pasadas deja de contar lo cruzado como llegada: muestra las cajas que entraron a cámara y el stock reconstruido hacia atrás vuelve a ser el que hubo.
+group('invmProjectionHTML · las semanas pasadas tampoco cuentan lo cruzado como llegada');
+// El contenedor de turmeric-Fiji trae 850 cs de las cuales 700 son de Sol-ti y van del puerto al
+// cliente: al almacén entran 150. La tabla de adelante ya lo netea (invmProductArrivals) y el bloque
+// gemelo de ginger también; este contaba las 850. Y como `arrCases` maneja el camino hacia atrás del
+// stock, cada semana anterior quedaba 700 cs más abajo de lo que hubo — la columna que se cruza
+// contra WholesaleWare mostraba un stock que nunca existió.
+(function(){
+  var ORDERS = [{ jlzPo:'2700001', product:'turmeric', origin:'Fiji', cases:850,
+                  status:'Arrived', arrivalActual:'2026-08-12',
+                  directShip:[{ customer:'Sol-ti', cases:700 }] }];
+  getOrders      = function(){ return ORDERS; };
+  saveOrders     = function(x){ ORDERS = x; };
+  findOrderForPo = function(po){ return ORDERS.filter(function(o){ return String(o.jlzPo)===String(po); })[0] || null; };
+  _ordProd       = function(o){ return o.product; };
+  _ordOrigin     = function(o){ return o.origin || ''; };
+  dmWeekKey = function(d){ var x=new Date(d); var g=(x.getDay()+6)%7; x.setDate(x.getDate()-g);
+    return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); };
+  invmProductModel    = function(){ return { caseLb:30, weeklyReliable:[{ week:'2026-08-10', lbs:3000 }] }; };
+  invmProductArrivals = function(){ return {}; };
+  whatifArrivals      = function(){ return {}; };
+  invmCommittedByWeek = function(){ return {}; };
+  prodInvState        = function(){ return {}; };
+  // El bloque de historia solo se dibuja si el usuario lo dejó abierto.
+  var _prevGet = localStorage.getItem;
+  localStorage.getItem = function(k){ return (String(k).indexOf('bp_hist_open_')===0) ? '1' : null; };
+
+  var _s = { p:'turmeric', origin:'Fiji', label:'Turmeric', weeklyLbs:3510, weeklyCases:117,
+             safetyWks:2, targetWks:6, onHandCases:400, availCases:400, effOnHandCases:400,
+             caseLb:30, shrinkPct:0, hasModel:true };
+  var html = invmProjectionHTML(_s);
+  localStorage.getItem = _prevGet;
+
+  ok('la tabla de semanas pasadas se dibuja', html.indexOf('containers received') >= 0);
+
+  var mArr = html.match(/color:#047857;font-weight:700">\+([\d,]+)</);
+  check('la llegada de esa semana son las 150 que entraron a cámara, no las 850 del contenedor',
+        mArr ? parseInt(mArr[1].replace(/,/g,''), 10) : null, 150);
+
+  var mPo = html.match(/PO 2700001 \(([\d,]+)cs\)/);
+  check('el detalle del PO dice lo mismo que la columna', mPo ? parseInt(mPo[1].replace(/,/g,''), 10) : null, 150);
+
+  // start = end + lo que salió del almacén − lo que entró  →  400 + 100 − 150
+  var mStart = html.match(/>~(-?[\d,]+)<\/span>/);
+  check('y el stock reconstruido hacia atrás es el que hubo (400 + 100 − 150)',
+        mStart ? parseInt(mStart[1].replace(/,/g,''), 10) : null, 350);
+  ok('nunca un stock negativo inventado por el contenedor cruzado', html.indexOf('>~-') < 0);
+})();
+
+// ── C11 · El Buy Planner de ginger-Perú deja de contar como supply propio los contenedores de Hawaii, que además ya se contaban en su propia vista.
+group('Buy Planner de ginger-Perú · un contenedor de Hawaii no es supply de acá');
+// El planner completo es el de ginger-PERÚ (Hawaii se dibuja aparte con bpRenderProduct), pero su
+// pipeline hacia adelante filtraba solo por producto: un contenedor de Crown Pacific (Hawaii) en
+// Contracted/In Transit se sumaba a las llegadas contra un stock que solo tiene lotes de Perú —el
+// plan compraba de menos— y las MISMAS cajas se contaban otra vez en la vista de Hawaii. El bloque
+// de semanas pasadas del mismo planner ya descartaba los no-Perú: la tabla de arriba y la de abajo
+// no podían cerrar. Lo que no puede pasar es el error opuesto: perder un contenedor real de Perú
+// porque alguien escribió el origen distinto.
+(function(){
+  if (typeof bpGetPipelineByWeek !== 'function')
+    throw new Error('bpGetPipelineByWeek no se extrajo del HTML — agregalo a la lista de extract.py en run.sh');
+
+  PRODUCTS = { ginger: { suppliers:[ {name:'Añawi', origin:'Peru'}, {name:'Crown Pacific LLC', origin:'Hawaii'} ] } };
+  invmOriginsFor  = function(){ return []; };            // ginger-Perú no vive en el store de lotes
+  _ordProd        = function(o){ return o.product || 'ginger'; };
+  _ordOrigin      = function(o){ return o.origin || ''; };
+  normalizeDate   = function(v){ return v ? String(v).slice(0,10) : v; };
+  getOrders = function(){ return [
+    { product:'ginger',   origin:'Peru',   status:'In Transit', cases:1320, jlzPo:'P1', arrivalEstimated:'2026-09-21' },
+    { product:'ginger',   origin:'Hawaii', status:'In Transit', cases:40,   jlzPo:'H1', arrivalEstimated:'2026-09-21' },
+    { product:'ginger',   origin:'Hawaii', status:'Contracted', cases:60,   jlzPo:'H2', arrivalEstimated:'2026-10-05' },
+    { product:'ginger',   origin:'',       status:'Contracted', cases:100,  jlzPo:'P2', arrivalEstimated:'2026-10-05' },
+    { product:'ginger',   origin:'Callao', status:'In Transit', cases:80,   jlzPo:'P3', arrivalEstimated:'2026-10-12' },
+    { product:'ginger',   origin:'Peru',   status:'Arrived',    cases:900,  jlzPo:'P0', arrivalEstimated:'2026-08-10' },
+    { product:'turmeric', origin:'Fiji',   status:'In Transit', cases:500,  jlzPo:'T1', arrivalEstimated:'2026-09-21' }
+  ]; };
+
+  var byWeek = bpGetPipelineByWeek();
+  var total = 0, pos = {};
+  Object.keys(byWeek).forEach(function(w){
+    byWeek[w].forEach(function(a){ total += a.cases; pos[a.order.jlzPo] = (pos[a.order.jlzPo]||0) + a.cases; });
+  });
+
+  check('las cajas de Hawaii no entran al plan de Perú', total, 1500);
+  check('el contenedor de Hawaii en tránsito no está',   pos['H1'] || 0, 0);
+  check('el contratado de Hawaii tampoco',               pos['H2'] || 0, 0);
+  check('el de Perú sigue entero',                       pos['P1'] || 0, 1320);
+  check('una orden sin origen NO desaparece',            pos['P2'] || 0, 100);
+  check('un origen que no es bucket de nadie tampoco',   pos['P3'] || 0, 80);
+  check('lo ya llegado no vuelve a entrar',              pos['P0'] || 0, 0);
+  check('y turmeric nunca fue ginger',                   pos['T1'] || 0, 0);
+  if ((pos['H1'] || 0) + (pos['H2'] || 0) > 0)
+    throw new Error('C11: un contenedor de Hawaii se está contando como supply de ginger-Perú');
+  if ((pos['P2'] || 0) !== 100 || (pos['P3'] || 0) !== 80)
+    throw new Error('C11: el filtro de origen está haciendo desaparecer carga real de Perú');
+})();
+
+// ── C12 · El Simulator de ginger-Perú deja de contar el contenedor de Hawaii como llegada propia.
+// ═══ El Simulator de Perú no cuenta el contenedor de Hawaii ═════════════════
+// renderSimulator tiene dos vistas de ginger: SIM_ORIGIN==='Hawaii' se va arriba a
+// simRenderProduct (que filtra origen vía invmProductArrivals) y Perú se queda con la proyección
+// completa. Esa rama filtraba producto pero NO origen, así que el contenedor de Crown Pacific
+// entraba como llegada de Perú e inflaba arrivalCases. El Buy Planner y el Simulator coincidían
+// semana a semana porque los dos contaban de más. La regla es la de invmProductArrivals:
+// filtrar sí, perder no.
+group('Simulator de Peru - el contenedor de Hawaii no es llegada de Peru');
+(function(){
+  PRODUCTS = {
+    ginger:   { suppliers:[ { name:'Anawi',             origin:'Peru',   leadDays:32 },
+                            { name:'Crown Pacific LLC', origin:'Hawaii', leadDays:10 } ] },
+    turmeric: { suppliers:[ { name:'Sbimal LLC',        origin:'Fiji',   leadDays:10 } ] }
+  };
+  invmOriginsFor = function(p){ return p === 'ginger' ? ['Hawaii'] : []; };   // lo que hay HOY con lote
+  _ordProd   = function(o){ return o.product || 'ginger'; };
+  _ordOrigin = function(o){ return o.origin || ''; };
+
+  var ORD = [
+    { product:'ginger',   origin:'Peru',    status:'In Transit', cases:1320, jlzPo:'P1' },
+    { product:'ginger',   origin:'Hawaii',  status:'In Transit', cases:40,   jlzPo:'P2' },  // el de la finding
+    { product:'ginger',   origin:'',        status:'Contracted', cases:500,  jlzPo:'P3' },  // sin origen: no se pierde
+    { product:'ginger',   origin:'Ecuador', status:'Contracted', cases:200,  jlzPo:'P4' },  // nadie lo registro: no se pierde
+    { product:'turmeric', origin:'Fiji',    status:'In Transit', cases:700,  jlzPo:'T1' },
+    { product:'ginger',   origin:'Peru',    status:'Arrived',    cases:900,  jlzPo:'P5' }   // ya llego
+  ];
+
+  var got = simGingerPeruOrders(ORD);
+  var pos = got.map(function(o){ return o.jlzPo; }).join(',');
+  var cs  = got.reduce(function(t,o){ return t + (o.cases || 0); }, 0);
+
+  ok('el contenedor de Hawaii NO entra en la proyeccion de Peru', pos.indexOf('P2') < 0);
+  ok('otro producto tampoco',                                     pos.indexOf('T1') < 0);
+  ok('ni una orden que ya llego',                                 pos.indexOf('P5') < 0);
+  ok('una orden sin origen NO desaparece',                        pos.indexOf('P3') > -1);
+  ok('un origen que nadie registro tampoco desaparece',           pos.indexOf('P4') > -1);
+  check('cajas de Peru en camino (1320+500+200, sin las 40 de Hawaii)', cs, 2020);
+  check('y son tres ordenes, no cuatro', got.length, 3);
+})();
+
+// ── C13 · Un contenedor con la ETA vencida que sigue navegando ya cuenta en la proyección y en el runway, no solo en el KPI de posición.
+// C13 - Un contenedor atrasado sigue siendo mercaderia en camino.
+if (typeof group === 'function') group('C13 - la llegada vencida se pliega a la semana en curso');
+(function(){
+  var _fail = function(m){ throw new Error('C13: ' + m); };
+  var _chk  = (typeof check === 'function') ? check : function(n,a,e){ if(a!==e) _fail(n+' - esperaba '+e+', dio '+a); };
+  var _ok   = (typeof ok    === 'function') ? ok    : function(n,c){ if(!c) _fail(n); };
+
+  var DIA=86400000, hoy=new Date();
+  var iso=function(n){ return dmISOLocal(new Date(hoy.getTime()+n*DIA)); };
+  var CUR=dmWeekKey(hoy);
+
+  _ordProd        = function(o){ return o.product; };
+  _ordOrigin      = function(o){ return o.origin; };
+  directShipTotal = function(){ return 0; };
+  getOrders = function(){ return [
+    { product:'ginger', origin:'Peru', status:'In Transit', cases:1320, jlzPo:'P-TARDE', arrivalEstimated:iso(-21) },
+    { product:'ginger', origin:'Peru', status:'Contracted', cases:200,  jlzPo:'P-ATRAS', arrivalEstimated:iso(-7)  },
+    { product:'ginger', origin:'Peru', status:'In Transit', cases:500,  jlzPo:'P-PROX',  arrivalEstimated:iso(14)  },
+    { product:'ginger', origin:'Peru', status:'Arrived',    cases:900,  jlzPo:'P-YA',    arrivalEstimated:iso(-30) }
+  ]; };
+
+  var arr=invmProductArrivals('ginger','Peru')||{}, keys=Object.keys(arr);
+  var total=keys.reduce(function(t,k){ return t+(arr[k]||0); },0);
+  var adelante=keys.reduce(function(t,k){ return t+((k>=CUR)?(arr[k]||0):0); },0);
+
+  _chk('el total en camino no cambia',                 total, 2020);
+  _chk('lo atrasado se pliega a la semana en curso',    arr[CUR], 1520);
+  _ok ('no queda ninguna semana en el pasado',          keys.every(function(k){ return k>=CUR; }));
+  _chk('la proyeccion ve lo mismo que el KPI',          adelante, total);
+  _chk('lo que llega mas adelante no se mueve',         arr[dmWeekKey(iso(14))], 500);
+})();
+
+// ── C14 · La sub-línea de cada llegada del Buy Planner ahora cuenta las mismas cajas que la celda de arriba —las que de verdad entran a cámara— y nombra cuántas fueron cruzadas en vez de esconderlas.
+group('C14 · la sub-línea de una llegada cuenta las MISMAS cajas que la celda');
+// La celda de Arrivals muestra `arrivalCases` (neto de cruzado) y la sub-línea gris de abajo escribía
+// el total BRUTO de la orden, y encima calculaba los días en cámara sobre ese bruto: un contenedor,
+// dos respuestas, y la grande es la que el ojo agarra. `bpArrivalNetCases` es ahora el único productor
+// de "cuántas cajas de esta llegada pisan la cámara"; celda y sub-línea leen de ahí.
+(function(){
+  var ORDERS = [{ jlzPo:'C-XD',  product:'ginger', cases:1000 },
+                { jlzPo:'C-RE',  product:'garlic', cases:1000 },
+                { jlzPo:'C-ALL', product:'ginger', cases:700  },
+                { jlzPo:'C-LIM', product:'ginger', cases:100  }];
+  getOrders      = function(){ return ORDERS; };
+  saveOrders     = function(x){ ORDERS = x; };
+  findOrderForPo = function(po){ return ORDERS.filter(function(o){ return String(o.jlzPo)===String(po); })[0] || null; };
+  // La forma exacta que arma bpGetPipelineByWeek: { order, cases } con el TOTAL de la orden.
+  var arr = function(po){ var o = findOrderForPo(po); return { order:o, cases:o.cases }; };
+
+  check('sin nada marcado, entra el contenedor entero', bpArrivalNetCases(arr('C-XD')), 1000);
+
+  addDirectShip('C-XD', 'Sol-ti', 850);                    // cruzado: puerto -> cliente
+  check('lo cruzado NO pisa la cámara', bpArrivalNetCases(arr('C-XD')), 150);
+
+  addDirectShip('C-RE', 'Whole Foods Market', 850, true);  // reempacado: entra, se reempaca y sale
+  check('lo reempacado SÍ pisa la cámara', bpArrivalNetCases(arr('C-RE')), 1000);
+
+  addDirectShip('C-ALL', 'Sol-ti', 700);
+  check('un contenedor todo cruzado no deja nada en cámara', bpArrivalNetCases(arr('C-ALL')), 0);
+
+  addDirectShip('C-LIM', 'Sol-ti', 999);
+  ok('nunca devuelve negativo', bpArrivalNetCases(arr('C-LIM')) === 0);
+
+  // La razón de ser del fix: es el mismo número que suma la celda, no el bruto de las órdenes.
+  var filas    = [arr('C-XD'), arr('C-RE')];
+  var celda    = filas.reduce(function(s,a){ return s + Math.max(0, (a.cases||0) - directShipTotal(a.order.jlzPo)); }, 0);
+  var subLinea = filas.reduce(function(s,a){ return s + bpArrivalNetCases(a); }, 0);
+  check('celda y sub-línea dan el mismo total', subLinea, celda);
+  ok('y ese total NO es el bruto de las órdenes (1000+1000)', subLinea !== 2000);
+})();
+
 // ═══ El entorno se limpia entre grupos ══════════════════════════════════════
 // Guardián del arreglo de arriba. Si alguien saca la restauración de `group()`, esto falla y
 // dice por qué — en vez de que un test futuro mida un stub ajeno y nadie se entere.
