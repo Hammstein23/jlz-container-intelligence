@@ -151,6 +151,188 @@ ok('una orden para una semana FUTURA no entra al historial', H.rateWeeks.indexOf
 // ═══ 4. Build-up por cliente ════════════════════════════════════════════════
 // Every visible column must add up to the TOTAL printed under it, and the accounts
 // inside "Other small accounts" must add up to that row.
+// ═══ Segunda tanda · tests que tienen que correr ANTES del grupo que stubea renderBuildupPanel ═══
+// Pasan aislados y fallaban al final del archivo: ese grupo viejo deja estado que el `group()` no
+// restaura (no es una función ni un dato de `window`). Mismo motivo que da el check de U14.
+// ── U14 · En el build-up de demanda, el cliente con compra reempacada vuelve a tener su fila con su committed de la semana, y "Other small accounts" deja de esconder esas cajas.
+try {
+// ═══ U14 · Build-up: lo REEMPACADO tiene fila; solo el cruzado sale de la tabla ═══════════════
+// El total de la columna sale de hybridSalesForWeek, que excluye SOLO el cruzado: el committed de una
+// cuenta reempacada es salida real de cámara esa semana y entra al total. Pero las filas sacaban las
+// DOS formas, así que esas cajas (261 cs de Whole Foods en la W37 de garlic) caían sin nombre en
+// "Other small accounts" y la tabla dejaba de explicar su propio total.
+group('Build-up · el committed reempacado tiene fila, no cae en Other');
+(function(){
+  var _creado = (typeof mtoNetModel !== 'function');
+  var _docAntes = document;
+  // mtoNetModel no está en la lista de extracción; sin él el panel usa el modelo crudo y el total
+  // mide otra cosa que las filas. Réplica mínima solo si no existe, para no tapar producción.
+  if (_creado) mtoNetModel = function(m, prod, weeks){
+    var by = mtoByCustomer(prod, weeks) || {};
+    var out = {}; for (var k in m) out[k] = m[k];
+    out.customers = m.customers.map(function(c){
+      if (!(by[c.c] > 0)) return c;
+      var n = {}; for (var k2 in c) n[k2] = c[k2];
+      ['rrCases','rr3Cases','rr6Cases','rr26Cases'].forEach(function(k3){
+        if (n[k3] != null) n[k3] = Math.max(0, n[k3] - by[c.c]); });
+      return n;
+    });
+    return out;
+  };
+  try {
+    // Un grupo posterior pisa renderBuildupPanel con un stub vacío; este grupo tiene que ir ANTES.
+    ok('renderBuildupPanel es el de producción (este grupo va antes del que lo stubea)',
+       String(renderBuildupPanel).indexOf('dm-buildup') > -1);
+    CASE_LB = 30;
+    productFocus = function(){ return 'garlic'; };
+    dmWindow     = function(){ return 6; };
+    _dmOrigin    = 'All';
+    PRODUCTS     = { garlic: { shrinkPct: 5 } };
+    getCommitted = function(){ return COMMITTED; };
+    _cmProd      = function(c){ return c.prod; };
+    _cmShipped   = function(){ return false; };
+    _cmOriginFor = function(){ return ''; };
+    if (typeof HYBRID_REAL === 'function') hybridSalesForWeek = HYBRID_REAL;   // el total REAL, no un stub
+    // SOL-TI cruzado; WHOLE FOODS reempacado. Sin flag vienen los dos; con crossDockOnly solo el cruzado.
+    mtoByCustomer = function(p, w, opts){
+      return (opts && opts.crossDockOnly) ? { 'SOL-TI': 50 } : { 'SOL-TI': 50, 'WHOLE FOODS': 23 };
+    };
+    var W = ['2026-07-20','2026-07-27','2026-08-03','2026-08-10','2026-08-17','2026-08-24'];
+    var wc = {}; W.forEach(function(w){ wc[w] = { 'ALBERTS': 30*20, 'WHOLE FOODS': 30*23, 'SOL-TI': 30*50 }; });
+    _dmModel = {
+      caseLb:30, rateWeeks:W, wkCust:wc, nowcastWeeks:{},
+      runRate13:30*93, runRate6:30*93, runRate3:30*93,
+      customers:[
+        { c:'ALBERTS',     rrCases:20, rr6Cases:20, rr3Cases:20, sporadic:false },
+        { c:'WHOLE FOODS', rrCases:23, rr6Cases:23, rr3Cases:23, sporadic:false },
+        { c:'SOL-TI',      rrCases:50, rr6Cases:50, rr3Cases:50, sporadic:false }
+      ]
+    };
+    _dmModelG = _dmModel;
+    // Semanas proyectadas lejos de hoy, para que no choquen con la columna de la semana en curso.
+    bpFutureWeeks = function(n){
+      var out = [], d = new Date('2027-01-04T12:00:00');
+      for (var i = 0; i < n; i++){ var x = new Date(d); x.setDate(x.getDate() + 7*i);
+        out.push({ weekStartISO: dmISOLocal(x), weekNum: 1 + i }); }
+      return out;
+    };
+    COMMITTED = [
+      { type:'inv', wk:'2027-01-11', customer:'WHOLE FOODS', cases:261, prod:'garlic', origin:'' },   // reempacado
+      { type:'inv', wk:'2027-01-18', customer:'SOL-TI',      cases:700, prod:'garlic', origin:'' }    // cruzado
+    ];
+
+    // Propio: un grupo anterior deja un document que devuelve null para 'dm-buildup', y entonces el
+    // panel no pinta nada y se lee el HTML de otro grupo.
+    var _html = '';
+    document = { getElementById: function(){ return { set innerHTML(v){ _html = v; }, get innerHTML(){ return _html; } }; } };
+    renderBuildupPanel();
+    var H = _html, R = [], re = /<tr([^>]*)>([\s\S]*?)<\/tr>/g, mm;
+    while ((mm = re.exec(H))){
+      var cls = (/class="([^"]*)"/.exec(mm[1]) || ['',''])[1], cells = [], cre = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/g, cc;
+      while ((cc = cre.exec(mm[2]))) cells.push(cc[1].replace(/<[^>]*>/g,'').trim());
+      R.push({ cls:cls, cells:cells });
+    }
+    var has = function(r, c){ return (' ' + r.cls + ' ').indexOf(' ' + c + ' ') > -1; };
+    var n = function(s){ var v = parseFloat(String(s).replace(/,/g,'')); return isNaN(v) ? 0 : v; };
+    var tot = R.filter(function(r){ return has(r,'tot'); })[0];
+    var oth = R.filter(function(r){ return has(r,'oth-sum'); })[0];
+    var cus = R.filter(function(r){ return r.cls === '' && tot && r.cells.length === tot.cells.length; });
+    ok('la tabla se renderizó', !!tot);
+    if (!tot) return;
+    var i37 = tot.cells.length - 7;                       // primera semana proyectada: 2027-01-11
+    var planW37 = Math.round(hybridSalesForWeek('2027-01-11', 20, mtoNetModel(_dmModel, 'garlic', 6), 'garlic', null, ''));
+    check('el plan (hybridSalesForWeek) cuenta el committed reempacado', planW37, 281);
+    check('el TOTAL de la tabla no se mueve: sigue siendo el del plan', n(tot.cells[i37]), 281);
+    var wf = cus.filter(function(r){ return /WHOLE FOODS/.test(r.cells[0]); })[0];
+    ok('la cuenta reempacada tiene fila en la tabla', !!wf);
+    check('…y esa fila muestra sus 261 cs de la semana', wf ? n(wf.cells[i37]) : -1, 261);
+    check('"Other small accounts" ya no se queda con esas cajas', oth ? n(oth.cells[i37]) : 0, 0);
+    var bad = 0;
+    for (var ci = 1; ci < tot.cells.length; ci++){
+      var s = 0; cus.forEach(function(r){ s += n(r.cells[ci]); });
+      if (Math.abs(s + (oth ? n(oth.cells[ci]) : 0) - n(tot.cells[ci])) > 0.5) bad++;
+    }
+    check('filas + Other = TOTAL en cada columna', bad, 0);
+    ok('el cruzado (SOL-TI) sigue fuera de las filas', !cus.some(function(r){ return /SOL-TI/.test(r.cells[0]); }));
+    check('…y su committed no infla la semana siguiente', n(tot.cells[i37 + 1]), 20);
+  } finally {
+    if (_creado) mtoNetModel = undefined;
+    document = _docAntes;
+  }
+})();
+} catch (_e) {
+  // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
+  ok('U14 no tira excepción: ' + ((_e && _e.message) || _e), false);
+}
+
+// ── U37 · El plan de ginger de Perú deja de restar dos veces una orden contra-orden de Hawaii: su demanda ya no queda baja por esa tasa.
+try {
+group('U37 · la orden contra-orden de Hawaii no se resta dos veces del plan de Peru');
+// dmEffectiveRunRateLbs le resta a ginger(todo) la tasa de Hawaii medida sobre filas CRUDAS; despues el
+// Buy Planner (_bpMto) y el Simulator (_simMto) restan mtoCasesPerWeek('ginger') sin mirar origen. Una
+// orden cruzada de Hawaii salia dos veces y Peru quedaba bajo por esa tasa. Aca: Peru vende 800 cs/wk.
+(function(){
+  var _sv = { qaModelG: (typeof qaModelG !== 'undefined') ? qaModelG : undefined,
+              qaQuietList: (typeof qaQuietList !== 'undefined') ? qaQuietList : undefined,
+              qaPct: (typeof qaPct !== 'undefined') ? qaPct : undefined,
+              _dmModelG: (typeof _dmModelG !== 'undefined') ? _dmModelG : undefined,
+              _dmRawAll: (typeof _dmRawAll !== 'undefined') ? _dmRawAll : undefined };
+  var DAY = 86400000, NOW = Date.now();
+  var iso = function(daysAgo){ var x = new Date(NOW - daysAgo*DAY);
+    return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); };
+  dmWindow = function(){ return 6; };
+  productCaseLb = function(){ return 30; };
+  _ordProd = function(o){ return (o && o.product) || 'ginger'; };
+  dmRowOrigin = function(r){ return r.origin; };
+  qaQuietList = function(){ return []; };
+  qaPct = function(){ return 100; };
+  // Modelo de juguete: tasa = libras de las filas / 6 semanas. Lo que se prueba es QUE filas le llegan.
+  dmBuildModel = function(rows){
+    var t = 0; (rows || []).forEach(function(r){ t += (+r.lbs || 0); });
+    var rr = t / 6; return { runRate13: rr, runRate6: rr, runRate3: rr, runRate26: rr };
+  };
+  var mkModel = function(rs){ var a = 0; rs.forEach(function(r){ a += r.lbs; });
+    return { caseLb:30, runRate13: a/6, runRate6: a/6, runRate3: a/6, runRate26: a/6 }; };
+  var rows = [];
+  for (var i = 0; i < 6; i++){
+    rows.push({ prod:'ginger', origin:'Peru',   c:'PERU CO', d:iso(3 + 7*i), lbs:800*30 });
+    rows.push({ prod:'ginger', origin:'Hawaii', c:'HI CO',   d:iso(3 + 7*i), lbs:10*30 });
+  }
+  rows.push({ prod:'ginger', origin:'Hawaii', c:'HI XDOCK', d:iso(9), lbs:60*30 });   // la venta contra orden
+  _dmRawAll = rows;
+  _dmModelG = mkModel(rows);
+  qaModelG = function(){ return _dmModelG; };
+  getOrders = function(){ return [{ jlzPo:'HI-1', product:'ginger', origin:'Hawaii', status:'Arrived',
+    arrivalActual: iso(10), directShip:[{ customer:'HI XDOCK', cases:60 }] }]; };
+
+  var mto = mtoCasesPerWeek('ginger', dmWindow('ginger'));
+  check('la orden de Hawaii vale 10 cs/wk contra orden', Math.round(mto), 10);
+  // La misma cuenta que renderBuyPlanner (_bpMto) y simRenderProjection (_simMto)
+  check('Peru vende 800 cs/wk: la orden de Hawaii no le baja la demanda',
+        Math.round(Math.max(0, dmEffectiveRunRateLbs() / 30 - mto)), 800);
+
+  // Control: sin marcas el numero no cambia (Peru = todo - Hawaii)
+  getOrders = function(){ return []; };
+  check('sin marcas, Peru sigue en 800', Math.round(dmEffectiveRunRateLbs() / 30 - mtoCasesPerWeek('ginger', 6)), 800);
+
+  // Control: una orden contra-orden de PERU se descuenta una sola vez, y la de Hawaii no se suma encima
+  _dmRawAll = rows.concat([{ prod:'ginger', origin:'Peru', c:'PERU XDOCK', d:iso(9), lbs:120*30 }]);
+  _dmModelG = mkModel(_dmRawAll);
+  getOrders = function(){ return [
+    { jlzPo:'HI-1', product:'ginger', origin:'Hawaii', status:'Arrived', arrivalActual: iso(10), directShip:[{ customer:'HI XDOCK', cases:60 }] },
+    { jlzPo:'PE-1', product:'ginger', origin:'Peru',   status:'Arrived', arrivalActual: iso(10), directShip:[{ customer:'PERU XDOCK', cases:120 }] }
+  ]; };
+  check('con marcas en los dos origenes, Peru queda en 800',
+        Math.round(dmEffectiveRunRateLbs() / 30 - mtoCasesPerWeek('ginger', 6)), 800);
+
+  qaModelG = _sv.qaModelG; qaQuietList = _sv.qaQuietList; qaPct = _sv.qaPct;
+  _dmModelG = _sv._dmModelG; _dmRawAll = _sv._dmRawAll;
+})();
+} catch (_e) {
+  // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
+  ok('U37 no tira excepción: ' + ((_e && _e.message) || _e), false);
+}
+
 group('renderBuildupPanel — las columnas cuadran');
 CASE_LB = 30;
 var productFocus = function(){ return 'turmeric'; };
@@ -4449,6 +4631,119 @@ group('U16 · Buy confidence no pide comprar el committed cruzado');
   ok('U16 no tira excepción: ' + ((_e && _e.message) || _e), false);
 }
 
+// ── U18 · Las filas por cliente del nowcast no cuentan el committed CRUZADO que el agregado ya excluye.
+try {
+group('nowcast · el committed cruzado no infla la fila del cliente');
+var _u18Wk  = function(off){ var d=new Date(); d.setDate(d.getDate()+off); return dmWeekKey(d); };
+var _u18ISO = function(off){ var d=new Date(); d.setDate(d.getDate()+off);
+  return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); };
+var U18PREV = _u18Wk(-7);
+var _u18Rel = [], _u18WkC = {};
+for (var _u18I = 9; _u18I >= 1; _u18I--) {
+  var _u18K = _u18Wk(-14-(_u18I-1)*7);
+  _u18Rel.push({ week:_u18K, lbs:3000 });
+  _u18WkC[_u18K] = { 'WHOLE FOODS':3000 };            // toda la historia atribuida: filas == agregado
+}
+_u18WkC[U18PREV] = { 'WHOLE FOODS':1200 };
+dmWindow = function(){ return 6; };
+// El stub de stubs.js no filtra lo cruzado (choque conocido). Acá va el filtro de producción, para
+// medir la fila contra el mismo agregado que ve la app.
+invmCommittedByWeek = function(prod, origin, fromWk){
+  var cd = mtoByCustomer(prod, dmWindow(prod), { crossDockOnly:true }) || {}, o = {};
+  COMMITTED.forEach(function(c){
+    if (c.prod !== prod || c.wk < fromWk) return;
+    if (Object.prototype.hasOwnProperty.call(cd, c.customer)) return;
+    if (origin && origin !== 'all' && c.origin !== origin) return;
+    o[c.wk] = (o[c.wk] || 0) + c.cases;
+  });
+  return o;
+};
+COMMITTED = [
+  { type:'inv', wk:U18PREV, customer:'WHOLE FOODS', cases:50,  prod:'garlic', origin:'California' },
+  { type:'inv', wk:U18PREV, customer:'SOL-TI',      cases:100, prod:'garlic', origin:'California' }
+];
+getOrders = function(){ return [{ jlzPo:'PO-XDOCK', product:'garlic', status:'Arrived',
+  arrivalActual:_u18ISO(-7), directShip:[{ customer:'SOL-TI', cases:100 }] }]; };
+_dmRawAll = [{ prod:'garlic', c:'SOL-TI', d:_u18ISO(-7), lbs:100*30 }];
+var U18 = nowcastProductModel({ caseLb:30, wkCust:_u18WkC, weeklyReliable:_u18Rel.slice(),
+  weekly:_u18Rel.concat([{ week:U18PREV, lbs:1200 }]),
+  rateWeeks:_u18Rel.map(function(w){ return w.week; }),
+  customers:[{ c:'WHOLE FOODS', rrCases:0, rr6Cases:0, rr3Cases:0, sporadic:false, ovr:{} },
+             { c:'SOL-TI',      rrCases:0, rr6Cases:0, rr3Cases:0, sporadic:false, ovr:{} }] },
+  'garlic', 'California');
+// Agregado: (3000 + 3000 + (1200 + 50*30)) / 3 = 2900 lbs. Sol-ti no entra: es cruzado.
+check('el agregado no cuenta lo cruzado', U18.runRate3, 2900);
+var _u18Row = function(n){ return (U18.customers||[]).filter(function(c){ return c.c === n; })[0] || {}; };
+var _u18Sum = (_u18Row('WHOLE FOODS').rr3Cases||0) + (_u18Row('SOL-TI').rr3Cases||0);
+var _u18A = check('la fila cruzada no suma su committed', Math.round((_u18Row('SOL-TI').rr3Cases||0)*100)/100, 0);
+var _u18B = check('las filas suman el agregado (cs/sem)', Math.round(_u18Sum*30), U18.runRate3);
+if (!_u18A || !_u18B) throw new Error('U18: la suma de filas del nowcast supera al agregado por el committed cruzado');
+} catch (_e) {
+  // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
+  ok('U18 no tira excepción: ' + ((_e && _e.message) || _e), false);
+}
+
+// ── U19 · El gráfico de Demand deja de dibujar dos veces lo comprado contra orden: las 700 cajas de Sol-ti se ven como 700 (rayadas), no como 1.400, y la escala vuelve a ser la real.
+try {
+group('U19 · El gráfico de Demand deja de dibujar dos veces lo comprado contra orde');
+// U19 - el grafico hacia adelante apilaba lo comprado contra orden DOS veces: como committed y como made to order.
+// Requiere que run.sh extraiga dmForwardWeeks y dmMondayISO (cmPlanEntries y cmCasesInBuyPack ya estan).
+(function(){
+  if (typeof dmForwardWeeks !== 'function' || typeof dmMondayISO !== 'function')
+    throw new Error('U19: dmForwardWeeks / dmMondayISO no se extrajeron del HTML');
+  var ORD = [], COM = [];
+  getOrders = function(){ return ORD; };
+  getCommitted = function(){ return COM; };
+  _cmProd = function(c){ return (c && (c.product || c.prod)) || 'ginger'; };
+  _ordProd = function(o){ return (o && o.product) || 'ginger'; };
+  _cmShipped = function(c){ return !!(c && c.shipped); };
+  productCaseLb = function(){ return 30; };
+  ooClassifySku = function(sku){ var m = String(sku||'').match(/(\d+)\s*Lbs?/i); return m ? { packLbs:+m[1] } : {}; };
+  var AFTER = '2026-09-07';
+  function wk(rows, w){ for (var i = 0; i < rows.length; i++) if (rows[i].week === w) return rows[i]; return null; }
+  function total(rows){ var t = 0; rows.forEach(function(r){ t += (r.committed || 0) + (r.direct || 0); }); return t; }
+  function eq(label, got, want){ if (Math.abs(got - want) > 1e-6) throw new Error('U19 ' + label + ': esperado ' + want + ', obtenido ' + got); }
+
+  // 1) Cruzado: la orden de Sol-ti (700) y su container caen en la misma semana. Earl's es stock aparte.
+  ORD = [{ jlzPo:'T-1', product:'turmeric', status:'In Transit', arrivalEstimated:'2026-09-23', directShip:[{ customer:'Sol-ti', cases:700 }] }];
+  COM = [{ type:'inv', wk:'2026-09-21', customer:'Sol-ti', cases:700, product:'turmeric' },
+         { type:'inv', wk:'2026-09-21', customer:"Earl's", cases:50, product:'turmeric' }];
+  var r1 = dmForwardWeeks(AFTER, 'turmeric'), b1 = wk(r1, '2026-09-21');
+  if (!b1) throw new Error('U19 misma semana: falta la barra 2026-09-21');
+  eq('misma semana, direct', b1.direct, 700);
+  eq('misma semana, committed (solo Earl\'s)', b1.committed, 50);
+  eq('misma semana, barra total', b1.committed + b1.direct, 750);
+
+  // 2) El despacho cae la semana siguiente a la llegada: en el horizonte siguen siendo 700, no 1.400.
+  COM = [{ type:'inv', wk:'2026-09-28', customer:'Sol-ti', cases:700, product:'turmeric' }];
+  var r2 = dmForwardWeeks(AFTER, 'turmeric');
+  eq('semanas distintas, total del horizonte', total(r2), 700);
+
+  // 3) Pack chico: 21 cajas de 10 lb son 7 de 30. La orden marcada de 7 ya las cubre.
+  ORD = [{ jlzPo:'T-2', product:'turmeric', status:'In Transit', arrivalEstimated:'2026-09-23', directShip:[{ customer:'Sol-ti', cases:7 }] }];
+  COM = [{ type:'inv', wk:'2026-09-21', customer:'Sol-ti', cases:21, sku:'TURMERIC 10 Lbs', product:'turmeric' }];
+  var b3 = wk(dmForwardWeeks(AFTER, 'turmeric'), '2026-09-21');
+  eq('pack de 10 lb, committed', b3.committed, 0);
+  eq('pack de 10 lb, direct', b3.direct, 7);
+
+  // 4) Una orden que ya llego (no se dibuja) no puede borrar el committed futuro.
+  ORD = [{ jlzPo:'T-3', product:'turmeric', status:'Arrived', arrivalActual:'2026-09-01', directShip:[{ customer:'Sol-ti', cases:700 }] }];
+  COM = [{ type:'inv', wk:'2026-09-14', customer:'Sol-ti', cases:700, product:'turmeric' }];
+  var b4 = wk(dmForwardWeeks(AFTER, 'turmeric'), '2026-09-14');
+  if (!b4) throw new Error('U19 orden pasada: desaparecio la barra del committed');
+  eq('orden pasada, committed intacto', b4.committed, 700);
+
+  // 5) Otro producto no netea.
+  ORD = [{ jlzPo:'G-1', product:'garlic', status:'In Transit', arrivalEstimated:'2026-09-23', directShip:[{ customer:'Sol-ti', cases:700, viaWarehouse:true }] }];
+  COM = [{ type:'inv', wk:'2026-09-21', customer:'Sol-ti', cases:700, product:'turmeric' }];
+  eq('otro producto, committed intacto', wk(dmForwardWeeks(AFTER, 'turmeric'), '2026-09-21').committed, 700);
+  if (typeof console !== 'undefined') console.log('  ok   U19 dmForwardWeeks no apila lo comprado contra orden dos veces');
+})();
+} catch (_e) {
+  // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
+  ok('U19 no tira excepción: ' + ((_e && _e.message) || _e), false);
+}
+
 // ── U20 · La caja "Available · free" del Buy Planner ahora muestra en lb lo mismo que en cajas: lo libre (bruto menos committed), no el bruto.
 try {
 group('U20 · La caja "Available · free" del Buy Planner ahora muestra en lb lo mism');
@@ -4791,6 +5086,134 @@ group('U28 — con el filtro de antigüedad, el pie dice cuántas cajas no suman
 } catch (_e) {
   // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
   ok('U28 no tira excepción: ' + ((_e && _e.message) || _e), false);
+}
+
+// ── U34 · El run-rate de Demand descuenta lo comprado contra orden sobre las mismas semanas que promedia para ese origen, y ginger-Hawaii deja de mostrarse por debajo.
+try {
+group('U34 · Run-rate: el descuento contra-orden se mide con la MISMA ventana (producto + origen) que el titular');
+// ginger-Hawaii promedia 3 semanas (dmDefaultWindow) pero el panel netaba con dmWindow('ginger') = 6:
+// restaba 6 semanas de contra-orden de las 3 semanas más recientes y el titular quedaba por debajo.
+(function(){
+  var _sv = { gap: (typeof getActiveProduct !== 'undefined') ? getActiveProduct : undefined,
+              org: (typeof _dmOrigin !== 'undefined') ? _dmOrigin : undefined,
+              mdl: (typeof _dmModel !== 'undefined') ? _dmModel : undefined,
+              dfr: (typeof dmFilteredRows !== 'undefined') ? dmFilteredRows : undefined,
+              dwm: (typeof dmWindowMode !== 'undefined') ? dmWindowMode : undefined,
+              mnr: (typeof mtoNetRows !== 'undefined') ? mtoNetRows : undefined,
+              doc: document };
+  var WEEKS = ['2026-08-03','2026-08-10','2026-08-17','2026-08-24','2026-08-31','2026-09-07'];
+  var ROWS = [];
+  WEEKS.forEach(function(d){
+    ROWS.push({ d:d, prod:'ginger', oitem:'Hawaii', c:'Kailani Farms', lbs:10*30, units:10, type:'Sale' });
+    ROWS.push({ d:d, prod:'ginger', oitem:'Hawaii', c:'Hana Organics', lbs:5*30,  units:5,  type:'Sale' });
+  });
+  var _wins = [], _netRows = null;
+  dmWindow = function(p, origin){ return (p === 'ginger' && origin !== 'Hawaii') ? 6 : 3; };   // = dmDefaultWindow
+  dmWindowMode = function(p, origin){ return String(dmWindow(p, origin)); };
+  productFocus = function(){ return 'ginger'; };
+  getActiveProduct = function(){ return 'ginger'; };
+  _dmOrigin = 'Hawaii';
+  dmFilteredRows = function(){ return ROWS; };
+  mtoByCustomer = function(p, w){ _wins.push(w); return { 'Kailani Farms': 1 }; };   // 1 cs/wk contra orden
+  // Espía con la misma aritmética que mtoNetRows (tasa x ventana x caseLb, de lo más reciente hacia atrás).
+  // Un grupo anterior deja mtoNetRows stubeado, así que no se puede depender de la real acá.
+  mtoNetRows = function(rows, prod, weeks){
+    var by = mtoByCustomer(prod, weeks), left = {};
+    Object.keys(by).forEach(function(c){ left[c] = by[c] * Math.max(1, weeks || 13) * 30; });
+    return rows.slice().sort(function(a, b){ return String(b.d).localeCompare(String(a.d)); }).map(function(r){
+      if (!(left[r.c] > 0)) return r;
+      var take = Math.min(r.lbs, left[r.c]); left[r.c] -= take;
+      var n = {}; for (var k in r) n[k] = r[k]; n.lbs = r.lbs - take; return n;
+    });
+  };
+  dmBuildModel = function(rows){ _netRows = rows; return null; };
+  nowcastProductModel = function(m){ return m; };
+  _dmModel = { runRate13: 450, runRate6: 450, runRate3: 450, caseLb: 30, customers: [],
+               weeklyReliable: WEEKS.map(function(w){ return { week:w, lbs:450 }; }) };
+  var _o = '';
+  document = { getElementById: function(){ return { set innerHTML(v){ _o = v; }, get innerHTML(){ return _o; } }; } };
+  try { renderDmRunRate(); } catch (e) {}
+  ok('el panel consultó el contra-orden y rearmó el modelo', _wins.length > 0 && _netRows !== null);
+  check('toda consulta usa la ventana del titular (Hawaii = 3), no la de ginger-Perú',
+        _wins.filter(function(w){ return w !== 3; }).join(','), '');
+  var last3 = 0;
+  (_netRows || []).forEach(function(r){ if (r.c === 'Kailani Farms' && r.d >= '2026-08-24') last3 += (+r.lbs || 0); });
+  check('las 3 semanas promediadas pierden 3 cajas (1 cs/wk x 3), no 6', last3 / 30, 27);
+  getActiveProduct = _sv.gap; _dmOrigin = _sv.org; _dmModel = _sv.mdl; mtoNetRows = _sv.mnr;
+  dmFilteredRows = _sv.dfr; dmWindowMode = _sv.dwm; document = _sv.doc;
+})();
+} catch (_e) {
+  // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
+  ok('U34 no tira excepción: ' + ((_e && _e.message) || _e), false);
+}
+
+// ── U36 · La variabilidad de stock ya no recupera el bulto contra orden cuando el cliente factura la semana siguiente a la llegada, así que el colchón deja de inflarse por eso.
+try {
+group('U36 · invmStockableWeekly netea lo marcado tambien la semana despues de la llegada');
+// El cliente puede facturar la semana de la llegada o la siguiente. Si solo se netea la semana de
+// llegada, la siguiente conserva el bulto entero y el cv (safety -> target -> cuanto comprar) vuelve
+// a inflarse: el mismo sintoma de las 175 cajas de turmeric que ya estaba cubierto.
+(function(){
+  var _eq = function(label, got, want){
+    if (typeof check === 'function') check(label, got, want);
+    if (got !== want) throw new Error('U36 ' + label + ': got ' + got + ', want ' + want);
+  };
+  var semana = function(n){ var d = new Date(); d.setDate(d.getDate() - n*7); return dmWeekKey(d); };
+  var poner = function(rows, orders){
+    localStorage.getItem = function(k){ return k === 'jlz_demand_raw' ? JSON.stringify(rows) : null; };
+    getOrders = function(){ return orders || []; };
+  };
+  var porSemana = function(){ var m = {}; invmStockableWeekly('turmeric','all').forEach(function(x){ m[x.wk] = Math.round(x.lbs/30); }); return m; };
+  productCaseLb = function(){ return 30; };
+  dmIsInternalAccount = function(){ return false; };
+  invmOriginMatch = function(){ return true; };
+  _ordProd = function(o){ return o.product || 'ginger'; };
+
+  // Llega el jueves de la semana -3, Sol-ti factura el lunes de la -2.
+  var ORD = [{ jlzPo:'C1', product:'turmeric', status:'Arrived', arrivalActual:semana(3),
+               directShip:[{customer:'Sol-ti', cases:700}] }];
+  poner([
+    { prod:'turmeric', c:'Acme',   d:semana(3), lbs:50*30,  type:'Sale' },
+    { prod:'turmeric', c:'Sol-ti', d:semana(2), lbs:700*30, type:'Sale' },
+    { prod:'turmeric', c:'Acme',   d:semana(2), lbs:44*30,  type:'Sale' },
+    { prod:'turmeric', c:'Acme',   d:semana(1), lbs:60*30,  type:'Sale' }
+  ], ORD);
+  var S = porSemana();
+  _eq('la semana de llegada queda con su venta de camara', S[semana(3)], 50);
+  _eq('la factura de la semana siguiente sale netada',     S[semana(2)], 44);
+  _eq('la semana despues no se toca',                      S[semana(1)], 60);
+
+  // Mitad y mitad: 400 en la llegada, 400 la siguiente. Solo 700 marcadas -> sobran 100 de camara.
+  poner([
+    { prod:'turmeric', c:'Sol-ti', d:semana(3), lbs:400*30, type:'Sale' },
+    { prod:'turmeric', c:'Sol-ti', d:semana(2), lbs:400*30, type:'Sale' },
+    { prod:'turmeric', c:'Sol-ti', d:semana(1), lbs:30*30,  type:'Sale' }
+  ], ORD);
+  S = porSemana();
+  _eq('nunca resta mas de lo marcado (llegada)',   S[semana(3)], 0);
+  _eq('nunca resta mas de lo marcado (siguiente)', S[semana(2)], 100);
+  _eq('el arrastre dura UNA semana',               S[semana(1)], 30);
+
+  // La llegada cae la semana ANTERIOR a la primera venta del producto: igual se netea.
+  poner([
+    { prod:'turmeric', c:'Sol-ti', d:semana(2), lbs:700*30, type:'Sale' },
+    { prod:'turmeric', c:'Acme',   d:semana(2), lbs:44*30,  type:'Sale' },
+    { prod:'turmeric', c:'Acme',   d:semana(1), lbs:60*30,  type:'Sale' }
+  ], ORD);
+  S = porSemana();
+  _eq('netea aunque la llegada sea antes de la primera venta', S[semana(2)], 44);
+
+  // El arrastre es por cliente: lo que sobra de Sol-ti no puede comerse la venta de Acme.
+  poner([
+    { prod:'turmeric', c:'Acme', d:semana(3), lbs:10*30, type:'Sale' },
+    { prod:'turmeric', c:'Acme', d:semana(2), lbs:80*30, type:'Sale' }
+  ], ORD);
+  S = porSemana();
+  _eq('no le resta a otro cliente', S[semana(2)], 80);
+})();
+} catch (_e) {
+  // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
+  ok('U36 no tira excepción: ' + ((_e && _e.message) || _e), false);
 }
 
 // ═══ El entorno se limpia entre grupos ══════════════════════════════════════

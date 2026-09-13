@@ -16180,9 +16180,16 @@ function nowcastProductModel(m, p, origin){
   if(Array.isArray(m.customers) && m.customers.length && m.wkCust){
     var comCust={};
     if(typeof getCommitted==='function'){
+      // Lo CRUZADO no está en `cbw`: invmCommittedByWeek lo filtra, así que el agregado nunca completó
+      // una semana con esas cajas. Sumarlas acá inflaba la fila por encima del total. Mismo conjunto y
+      // misma ventana que ese filtro, o las filas vuelven a contar algo que el agregado no cuenta.
+      var _cdCust={};
+      try{ _cdCust=(typeof mtoByCustomer==='function')
+            ? (mtoByCustomer(p,(typeof dmWindow==='function')?dmWindow(p):13,{crossDockOnly:true})||{}) : {}; }catch(e){}
       cmPlanEntries().forEach(function(c){
         if(!c || c.type!=='inv' || !c.wk || _cmProd(c)!==p) return;
         if(odCust[c.customer]) return;                                  // order-driven: held out, as above
+        if(Object.prototype.hasOwnProperty.call(_cdCust, c.customer)) return;   // cruzado: fuera de cbw, fuera de la fila
         if(!out.nowcastWeeks[c.wk]) return;                             // only the weeks actually completed
         if(origin && origin!=='all' && typeof _cmOriginFor==='function'){ var o=_cmOriginFor(c); if(o && o!==origin) return; }
         (comCust[c.wk]=comCust[c.wk]||{})[c.customer]=(comCust[c.wk][c.customer]||0)+(parseFloat(c.cases)||0);
@@ -17514,9 +17521,25 @@ function invmStockableWeekly(p, origin){
     if(!conVenta.length) return [];
     var out=[], cur=new Date(conVenta[0]+'T12:00:00'), fin=new Date(conVenta[conVenta.length-1]+'T12:00:00');
     var guard=0;
+    // Lo marcado se netea en la semana de llegada y, lo que sobre, en la SIGUIENTE: el cliente puede
+    // facturar el lunes despues de un jueves de llegada (mtoDetectCandidates ya mira las dos semanas).
+    // Neteando solo la de llegada, esa semana quedaba en 0 y la siguiente con el bulto entero -- las
+    // 700 cs de Sol-ti otra vez adentro del cv. El arrastre dura UNA semana y es por cliente: nunca
+    // resta mas cajas de las que se marcaron. Arranca con lo llegado la semana anterior a la primera venta.
+    var arrastre={}, w0=dmWeekKey(new Date(cur.getTime()-7*86400000));
+    Object.keys(ds[w0]||{}).forEach(function(c){ arrastre[c]=ds[w0][c]; });
     while(cur<=fin && guard++<5000){
-      var w=dmWeekKey(cur), o=byw[w], t=0;
-      if(o) Object.keys(o).forEach(function(c){ t+=Math.max(0, o[c]-((((ds[w]||{})[c])||0))); });
+      var w=dmWeekKey(cur), o=byw[w]||{}, t=0, propio=ds[w]||{}, sigue={};
+      Object.keys(o).forEach(function(c){
+        var v=Math.max(0, o[c]), deAntes=Math.min(v, arrastre[c]||0);
+        t+=Math.max(0, v-deAntes-(propio[c]||0));
+      });
+      Object.keys(propio).forEach(function(c){
+        var libre=Math.max(0, Math.max(0, o[c]||0)-(arrastre[c]||0));
+        var sobra=propio[c]-Math.min(propio[c], libre);
+        if(sobra>0) sigue[c]=sobra;
+      });
+      arrastre=sigue;
       out.push({ wk:w, lbs:t });
       cur=new Date(cur.getTime()+7*86400000);
     }
@@ -26877,7 +26900,12 @@ function dmEffectiveRunRateLbs(){
         .filter(r => r && (r.prod || 'ginger') === 'ginger'
                      && typeof dmRowOrigin === 'function' && dmRowOrigin(r) !== 'Peru');
       if(!rows.length) return 0;
-      const hm = dmBuildModel(rows, false, m.caseLb || DM_CASE_LB, 'ginger');
+      // Lo contra-orden de Hawaii sale de SUS filas antes de medir su tasa: el Buy Planner y el Simulator
+      // ya restan `mtoCasesPerWeek('ginger')` entero, sin mirar origen. Si la tasa de Hawaii lo trae
+      // adentro, esa orden se descuenta dos veces y Perú compra de menos. Misma receta que invmProductModel.
+      let _hwRows = rows;
+      try{ if(typeof mtoNetRows === 'function') _hwRows = mtoNetRows(rows, 'ginger', win); }catch(e){}
+      const hm = dmBuildModel(_hwRows, false, m.caseLb || DM_CASE_LB, 'ginger');
       if(!hm) return 0;
       return (win === 3 ? (hm.runRate3 || hm.runRate13) : win === 6 ? (hm.runRate6 || hm.runRate13)
             : win === 26 ? (hm.runRate26 || hm.runRate13) : hm.runRate13) || 0;
@@ -26922,7 +26950,9 @@ function renderDmRunRate(){
       // flag por cliente. Al retirarlo, ninguna fila queda marcada, la condición da falso y todo este
       // bloque —incluido el descuento por orden— deja de correr en silencio. El panel seguía
       // mostrando a Sol-ti con 233 cs/wk y un titular de 321 mientras el plan usaba 88.
-      var _hpWin = (typeof dmWindow === 'function') ? dmWindow(_hpProd) : 13;
+      // La ventana del descuento tiene que ser la MISMA (producto + origen) con la que abajo se promedia
+      // el titular: sin el origen, ginger-Hawaii restaba 6 semanas de contra-orden de un promedio de 3.
+      var _hpWin = (typeof dmWindow === 'function') ? dmWindow(_hpProd, (typeof _dmOrigin !== 'undefined') ? _dmOrigin : '') : 13;
       var _hasMto = false;
       try{ _hasMto = (typeof mtoByCustomer === 'function')
                      && Object.keys(mtoByCustomer(_hpProd, _hpWin) || {}).length > 0; }catch(e){}
@@ -27258,15 +27288,40 @@ function dmForwardWeeks(afterWk, product) {
   // Era ginger-only, de cuando el contra-orden solo existía para ginger. Ya no: turmeric tiene seis
   // POs marcadas para Sol-ti y garlic una para Whole Foods, y el gráfico las dibujaba en cero. Se
   // suman las DOS formas —cruzado y reempacado— porque las dos son volumen comprado contra orden.
+  // Lo marcado se junta por cliente, solo lo que se dibuja (semanas futuras): hace falta abajo.
+  var _mtoLeft = {};
   {
     (typeof getOrders === 'function' ? getOrders() : []).forEach(function(o) {
       if(!o || _ordProd(o) !== _p || !Array.isArray(o.directShip)) return;
       var wk = dmMondayISO(o.arrivalEstimated || o.arrivalActual); if(!wk) return;
       var tot = o.directShip.reduce(function(s, d){ return s + (d.cases || 0); }, 0);
       if(tot > 0) (byWk[wk] = byWk[wk] || { committed:0, direct:0 }).direct += tot;
+      if(afterWk && wk <= afterWk) return;
+      o.directShip.forEach(function(d){
+        if(d && d.customer && +d.cases > 0) _mtoLeft[d.customer] = (_mtoLeft[d.customer] || 0) + (+d.cases);
+      });
     });
   }
-  return Object.keys(byWk).filter(function(w){ return !afterWk || w > afterWk; }).sort()
+  // Lo comprado contra orden estaba DOS veces en la misma barra: la venta vive en el committed (su
+  // semana de despacho) y las cajas marcadas en la orden (su semana de llegada). Cruzado, las dos caen
+  // en la misma semana y 700 cajas de Sol-ti se apilaban como 1.400 —y la escala, armada sobre ese
+  // doble, achicaba las barras reales de al lado—. Lo marcado ya se dibuja rayado, así que se saca del
+  // committed de ESE cliente, desde su semana más cercana, y por PESO: la orden viene en el pack de
+  // compra y el committed en el que se vendió (cmCasesInBuyPack). Solo pantalla: no toca la compra.
+  if(Object.keys(_mtoLeft).length){
+    cmPlanEntries().filter(function(c) {
+      return c && c.type === 'inv' && c.wk && _cmProd(c) === _p && (!afterWk || c.wk > afterWk)
+        && byWk[c.wk] && Object.prototype.hasOwnProperty.call(_mtoLeft, c.customer);
+    }).sort(function(a, b){ return String(a.wk).localeCompare(String(b.wk)); }).forEach(function(c) {
+      var raw = +c.cases || 0, buy = (typeof cmCasesInBuyPack === 'function') ? cmCasesInBuyPack(c, _p) : raw;
+      if(!(raw > 0) || !(buy > 0) || !(_mtoLeft[c.customer] > 0)) return;
+      var take = Math.min(buy, _mtoLeft[c.customer]);
+      _mtoLeft[c.customer] -= take;
+      var nv = byWk[c.wk].committed - take * raw / buy;
+      byWk[c.wk].committed = (nv > 1e-6) ? nv : 0;
+    });
+  }
+  return Object.keys(byWk).filter(function(w){ return (!afterWk || w > afterWk) && (byWk[w].committed > 0 || byWk[w].direct > 0); }).sort()
     .map(function(w){ return { week:w, cases:0, px:0, inc:false, isFuture:true, committed:byWk[w].committed, direct:byWk[w].direct }; });
 }
 // show entries may carry {isFuture, committed, direct} (forecast bars). opts (optional):
@@ -28191,7 +28246,14 @@ function renderBuildupPanel(){
   // Quién compra CONTRA ORDEN sale de los contenedores marcados, no de una etiqueta por cliente:
   // una cuenta puede comprar contra orden y de cámara en la misma semana.
   var _mtoSet = (function(){ try{ return (typeof mtoByCustomer === 'function') ? (mtoByCustomer(prod, _win) || {}) : {}; }catch(e){ return {}; } })();
-  var _isDS = function(c){ return Object.prototype.hasOwnProperty.call(_mtoSet, c); };
+  // Las filas sacan SOLO el CRUZADO, misma regla que dmWeekStatus y hybridSalesForWeek. Lo reempacado
+  // entra a cámara y su committed de la semana es salida real: hybridSalesForWeek lo suma al total de la
+  // columna, así que su cliente necesita fila. Sacando las dos formas, esas cajas (261 cs de Whole Foods
+  // en la W37 de garlic) caían sin nombre en "Other small accounts". El run-rate de la fila igual va neto
+  // de lo contra orden por `_mtoBy`, que sí toma las dos formas.
+  var _cdSet = (function(){ try{ return (typeof mtoByCustomer === 'function')
+      ? (mtoByCustomer(prod, _win, {crossDockOnly:true}) || {}) : {}; }catch(e){ return {}; } })();
+  var _isDS = function(c){ return Object.prototype.hasOwnProperty.call(_cdSet, c); };
   var salesBase;
   if (isG) {
     salesBase = (typeof dmEffectiveRunRateLbs === 'function' && dmEffectiveRunRateLbs() != null)
