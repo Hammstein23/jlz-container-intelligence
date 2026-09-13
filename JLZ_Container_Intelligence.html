@@ -19034,7 +19034,13 @@ function renderBuyPlanner() {
   });
   // Segunda pasada: el cover de cada semana se mide contra lo que viene después, no contra sí misma.
   rows.forEach((r, i) => {
-    r.weeksOfCoverage = bpWeeksOfCover(r.endingStock, rows.slice(i + 1).map(x => x.demand));
+    // Mismo horizonte que el Simulator (bpFutureWeeks(16)), aunque acá se dibujen 12 filas. Midiendo
+    // solo contra SUS filas, la fila 12 no tenía semanas por delante —bpWeeksOfCover(stock, []) da 0— y
+    // la última semana salía siempre 0.0w y CRITICAL con cualquier stock, mientras el Simulator mostraba
+    // la cobertura real de esa misma semana. Las 4 semanas que no se dibujan van a la tasa base
+    // (weeklyDemand): es lo que da la demanda híbrida cuando no hay committed tan lejos.
+    r.weeksOfCoverage = bpWeeksOfCover(r.endingStock, rows.slice(i + 1).map(x => x.demand)
+      .concat(Array(Math.max(0, 16 - rows.length)).fill(weeklyDemand)));
   });
 
   // Render projection table
@@ -19382,8 +19388,11 @@ function renderBuyPlanner() {
   else if (rawDay === 6) airAdjustDays = -3;  // Sat → back to Wed (waits Sun)
   // Sun/Mon/Tue/Wed all fine
   const airEtaDate = new Date(airRawEta.getTime() + airAdjustDays * 86400000);
-  const seaEtaIso  = seaEtaDate.toISOString().slice(0, 10);
-  const airEtaIso  = airEtaDate.toISOString().slice(0, 10);
+  // Fecha LOCAL, nunca toISOString(): al oeste de Greenwich una llegada el domingo a la noche ya era
+  // lunes en UTC, y la semana de llegada (y el stock "On hand then") quedaba una semana despues de la
+  // que usa el Simulator con bpRowAtDate. dmISOLocal es el helper que cierra esa clase de bug.
+  const seaEtaIso  = dmISOLocal(seaEtaDate);
+  const airEtaIso  = dmISOLocal(airEtaDate);
   const seaEtaWk   = (typeof isoWeek === 'function') ? isoWeek(seaEtaIso) : null;
   const airEtaWk   = (typeof isoWeek === 'function') ? isoWeek(airEtaIso) : null;
   const grossCasesPerContainer = 1320;
@@ -23700,19 +23709,25 @@ function simRenderProjection(realOrders, hypoOrders) {
     arrivalsByWeek[wkKey].push(item);
   };
   const downgradedSetProj = new Set(simGetState().downgradedPos);
+  // La llave lleva el AÑO ISO de la semana (el de su jueves), no el del calendario: es la misma que
+  // usan las filas (bpFutureWeeks) y el Buy Planner (bpGetPipelineByWeek). Con el año calendario, un
+  // contenedor que llegaba el 1-3 de enero caía en '2027-W53', ninguna fila leía esa llave y la
+  // llegada desaparecía de la proyección: el Simulator marcaba STOCKOUT donde el Buy Planner no.
+  const _simIsoWkKey = (iso) => {
+    const t = new Date(iso + 'T00:00:00Z');
+    t.setUTCDate(t.getUTCDate() - (t.getUTCDay() + 6) % 7 + 3);
+    return t.getUTCFullYear() + '-W' + String(isoWeek(iso)).padStart(2, '0');
+  };
   realOrders.forEach(o => {
     const arrival = normalizeDate(o.arrivalEstimated || o.arrivalActual);
     if (!arrival) return;
-    const wk = isoWeek(arrival);
-    const yr = (new Date(arrival + 'T00:00:00Z')).getUTCFullYear();
-    const wkKey = yr + '-W' + String(wk).padStart(2, '0');
+    const wkKey = _simIsoWkKey(arrival);
     addArrival(wkKey, { label: 'PO ' + (o.jlzPo || '—'), po: o.jlzPo, cases: o.cases || 0, isReal: true, isDowngraded: downgradedSetProj.has(String(o.jlzPo || '—')) });
   });
   hypoOrders.forEach(o => {
     const eta = simComputeEta(o);
     if (!eta) return;
-    const wk = isoWeek(dmISOLocal(eta));
-    const wkKey = eta.getUTCFullYear() + '-W' + String(wk).padStart(2, '0');
+    const wkKey = _simIsoWkKey(dmISOLocal(eta));
     addArrival(wkKey, { label: '🧪 ' + (o.vendor || ''), cases: o.cases || 0, isReal: false });
   });
 
@@ -23840,10 +23855,30 @@ function simRenderProjection(realOrders, hypoOrders) {
   // mismos: lo que cambia es el mundo sobre el que se decide. Sin esto la tarjeta del Simulator
   // mostraba la recomendación del Buy Planner — ignorando los escenarios recién cargados.
   try{
+    // Se borra ANTES de decidir: si el escenario ya no existe (o el Buy Planner quedó sano) y no se
+    // arma un digest nuevo, la tarjeta volvía a mostrar la compra del escenario que se había quitado.
+    window._simDigest = null;
     var _bd=window._bpDigest||{}, _br=_bd.rec||{};
+    // El Buy Planner publica `rec` solo cuando SU proyección tiene un faltante. Con el stock sano no
+    // llegaba ningún parámetro, y la tarjeta del Simulator quedaba en blanco justo cuando una venta
+    // hipotética ponía su tabla en STOCKOUT. Los parámetros del pedido no dependen de que haya
+    // faltante: se arman con las MISMAS reglas que renderBuyPlanner (lead de mar, cadencia del input o
+    // la sugerida, 1.320 cajas brutas por contenedor, vida útil). El colchón cae al de esta proyección.
+    if(!_br.perContainer && weeklyDemand>0){
+      var _perC=1320, _cadIn=parseFloat(document.getElementById('bp-cadence')?.value);
+      _br={ leadWks:(typeof bpGetLeadTimes==='function') ? ((bpGetLeadTimes().sea_total||37)/7) : 5.3,
+            cadence:(isFinite(_cadIn) && _cadIn>0) ? _cadIn : Math.max(0.5, Math.round((_perC/weeklyDemand)*2)/2),
+            perContainer:_perC, shelfWks:(typeof dmShelfWeeks==='function') ? dmShelfWeeks('ginger') : 8 };
+    }
     if(_simProjRows.length && weeklyDemand>0 && _br.perContainer){
       var _ssC=(_br.ssCases!=null)?_br.ssCases:safetyThreshold;
-      var _pk=_simProjRows.reduce(function(m,r){ return (!m || r.endingStock>m.endingStock)?r:m; }, null);
+      // El pico con la MISMA regla que el Buy Planner: la semana de mayor cobertura, medida contra las
+      // demandas que vienen después. Elegir la de mayor stock caía en otra fila cuando un contenedor
+      // aterriza tarde, y el techo de vida útil —y los contenedores— cambiaban de una pantalla a la otra.
+      var _pk=_simProjRows.reduce(function(m,r,i){
+        var c=bpWeeksOfCover(r.endingStock, _simProjRows.slice(i+1).map(function(x){ return x.demand; }));
+        return (c>(m?m.c:-1)) ? { c:c, r:r } : m; }, null);
+      _pk=_pk?_pk.r:null;
       var _lead=(typeof bpGetLeadTimes==='function')?(bpGetLeadTimes().sea_total||37):37;
       // La semana que CONTIENE la llegada, igual que el Buy Planner (`r.weekNum === seaEtaWk`).
       var _arr=bpRowAtDate(_simProjRows, Date.now()+_lead*86400000);
@@ -23867,6 +23902,20 @@ function simRenderProjection(realOrders, hypoOrders) {
               leadWks:_cpS.leadWks, cadence:_cpS.cadence, ssCases:_cpS.ssCases,
               perContainer:_cpS.perContainer, raw:_cpS.raw, wanted:_cpS.wanted, cap:_cpS.cap,
               cappedBy:_cpS.cappedBy, shelfWks:_cpS.shelfWks } };
+      // Los plazos de mar y aire, con la MISMA regla que el Buy Planner (`computeDeadline`): la semana
+      // del quiebre (o, si no hay quiebre, la primera bajo el colchón) menos el lead. La tarjeta los lee:
+      // sin ellos el Simulator nunca se ponía rojo, perdía el plazo por aire y contaba "lands" desde hoy.
+      var _ltS=(typeof bpGetLeadTimes==='function')?bpGetLeadTimes():null;
+      var _tgS=_simProjRows.filter(function(r){ return r.endingStock<=0; })[0]
+            || _simProjRows.filter(function(r){ return r.endingStock<_ssC; })[0] || null;
+      var _dlS=function(leadDays){
+        if(!_tgS || !_tgS.weekStartDate || !isFinite(leadDays)) return null;
+        var dd=new Date(new Date(_tgS.weekStartDate).getTime()-leadDays*86400000);
+        return { date:dd, daysLeft:Math.round((dd-new Date())/86400000),
+                 wk:(typeof isoWeek==='function' && typeof dmISOLocal==='function')?isoWeek(dmISOLocal(dd)):null };
+      };
+      window._simDigest.seaDeadline=_dlS(_lead);
+      window._simDigest.airDeadline=_dlS(_ltS?_ltS.air_total:NaN);
     }
   }catch(e){ console.warn('sim digest', e); }
   // Las filas quedan a la vista, igual que `_bpDigest`: sin esto la proyección del Simulator es la

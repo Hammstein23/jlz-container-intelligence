@@ -3785,6 +3785,478 @@ var NCC = nowcastProductModel(_ncModel(), 'garlic', 'California');
 // `cbw` que nunca las tuvo y se comerían el committed de los demás clientes de la semana.
 check('lo cruzado no se descuenta dos veces (filtrarlo es trabajo de invmCommittedByWeek)', NCC.runRate3, 3400);
 
+// ═══ Auditoría de los tres modos · segunda tanda (hallazgos U, verificados 3 lentes) ═════════
+
+// ── U01 · El Buy Planner mide el cover contra el mismo horizonte de 16 semanas que el Simulator: su última semana deja de salir 0.0w/CRITICAL y las dos pantallas muestran el mismo cover para cada semana.
+try {
+// === U01. Cover del Buy Planner contra el mismo horizonte que el Simulator ===
+// El Buy Planner dibuja 12 semanas y el Simulator 16, y cada uno medía el cover contra SUS filas.
+// bpWeeksOfCover(stock, []) === 0, así que la semana 12 del Buy Planner salía 0.0w y CRITICAL con
+// cualquier stock, mientras el Simulator mostraba la cobertura real de esa misma semana.
+// renderBuyPlanner no se puede extraer (DOM), así que se lee del HTML el bloque de la segunda pasada
+// (entre "Segunda pasada" y "Render projection table") y se corre con filas sintéticas.
+group('U01 · Buy Planner: el cover de la última semana no puede ser 0 por falta de horizonte');
+(function(){
+  ObjC.import('Foundation');
+  var env = $.NSProcessInfo.processInfo.environment;
+  var cwd = ObjC.unwrap($.NSFileManager.defaultManager.currentDirectoryPath);
+  var cands = [];
+  var envHtml = env.objectForKey('JLZ_HTML');
+  if (envHtml && !envHtml.isNil()) cands.push(ObjC.unwrap(envHtml));
+  cands.push(cwd + '/JLZ_Container_Intelligence.html', cwd + '/../JLZ_Container_Intelligence.html');
+  var src = null;
+  for (var k = 0; k < cands.length && src == null; k++){
+    var s = $.NSString.stringWithContentsOfFileEncodingError(cands[k], $.NSUTF8StringEncoding, null);
+    if (s && !s.isNil()) src = ObjC.unwrap(s);
+  }
+  if (src == null){ ok('se encontró el HTML para leer renderBuyPlanner', false); return; }
+  var fnAt = src.indexOf('function renderBuyPlanner(');
+  var a = src.indexOf('// Segunda pasada: el cover', fnAt);
+  var b = src.indexOf('// Render projection table', a);
+  if (fnAt < 0 || a < 0 || b < 0){ ok('se encontró la segunda pasada del cover en renderBuyPlanner', false); return; }
+  var pass2 = new Function('rows', 'weeklyDemand', 'bpWeeksOfCover', src.slice(a, b));
+
+  // 12 filas como las del Buy Planner: demanda pareja de 300, run-rate 300.
+  var WD = 300, rows = [];
+  for (var i = 0; i < 12; i++) rows.push({ demand: WD, endingStock: 4000 - i * 250, weeksOfCoverage: 0 });
+  pass2(rows, WD, bpWeeksOfCover);
+
+  // Lo que el Simulator (16 semanas) calcula para esas mismas semanas.
+  var simDem = []; for (var j = 0; j < 16; j++) simDem.push(WD);
+  var r1 = function(x){ return Math.round(x * 10) / 10; };
+  var last = rows[11], simLast = bpWeeksOfCover(last.endingStock, simDem.slice(12));
+  check('semana 12: 1.250 cs contra 300/sem da 4,0w (no 0,0w)', r1(last.weeksOfCoverage), 4);
+  ok('semana 12: sin badge CRITICAL (cover >= 1)', last.weeksOfCoverage >= 1);
+  check('semana 12 igual que el Simulator', r1(last.weeksOfCoverage), r1(simLast));
+  check('semana 11 igual que el Simulator', r1(rows[10].weeksOfCoverage), r1(bpWeeksOfCover(rows[10].endingStock, simDem.slice(11))));
+  var todas = true;
+  rows.forEach(function(r, i){ if (r1(r.weeksOfCoverage) !== r1(bpWeeksOfCover(r.endingStock, simDem.slice(i + 1)))) todas = false; });
+  ok('las 12 semanas coinciden con el Simulator, una por una', todas);
+
+  // El horizonte es el del Simulator, ni más ni menos: con stock infinito la semana 1 topea en 15.
+  var big = []; for (var q = 0; q < 12; q++) big.push({ demand: 500, endingStock: 1e9, weeksOfCoverage: 0 });
+  pass2(big, 250, bpWeeksOfCover);
+  check('stock que sobrevive todo: semana 1 topea en 15 semanas, como el Simulator', big[0].weeksOfCoverage, 15);
+  check('stock que sobrevive todo: semana 12 topea en 4', big[11].weeksOfCoverage, 4);
+
+  // Las semanas que no se dibujan van a la tasa base: 1.000 cs contra 250/sem = 4,0w en la semana 12.
+  var mix = []; for (var m = 0; m < 12; m++) mix.push({ demand: 500, endingStock: 1000, weeksOfCoverage: 0 });
+  pass2(mix, 250, bpWeeksOfCover);
+  check('más allá de la fila 12 se mide a weeklyDemand', mix[11].weeksOfCoverage, 4);
+})();
+} catch (_e) {
+  // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
+  ok('U01 no tira excepción: ' + ((_e && _e.message) || _e), false);
+}
+
+// ── U02 · El Simulator ahora da cantidad de contenedores y fecha para ordenar en su escenario aunque el Buy Planner esté sano, en vez de dejar la tarjeta en blanco sobre una tabla en STOCKOUT.
+try {
+// === U02 - La tarjeta de compra del Simulator contesta aunque el Buy Planner este sano ===
+// El Buy Planner solo publica `rec` cuando SU proyeccion tiene un faltante. Con el stock sano no
+// habia parametros del pedido, y el Simulator dejaba la tarjeta en blanco justo cuando Juan cargaba
+// una venta hipotetica que ponia la tabla en STOCKOUT.
+group('U02 - Simulator: tarjeta de compra con el Buy Planner sano');
+(function(){
+  var _G = (function(){ return this; })();
+  // simRenderProjection toca el DOM y no esta en la lista de extract.py: si falta, se levanta del
+  // HTML real con el mismo brace-matching que extract.py.
+  if (typeof simRenderProjection !== 'function') {
+    ObjC.import('Foundation');
+    var cwd = $.NSFileManager.defaultManager.currentDirectoryPath.js;
+    var cands = [cwd + '/JLZ_Container_Intelligence.html', cwd + '/../JLZ_Container_Intelligence.html'];
+    var src = null;
+    for (var ci = 0; ci < cands.length && !src; ci++) {
+      var s = $.NSString.stringWithContentsOfFileEncodingError(cands[ci], $.NSUTF8StringEncoding, null);
+      if (s && s.js) src = s.js;
+    }
+    if (!src) throw new Error('U02: no se encontro JLZ_Container_Intelligence.html desde ' + cwd);
+    var i0 = src.indexOf('function simRenderProjection(');
+    if (i0 < 0) throw new Error('U02: simRenderProjection no esta en el HTML');
+    var p = src.indexOf('{', i0), depth = 0;
+    for (; p < src.length; p++) {
+      var c = src.charAt(p);
+      if (c === '{') depth++;
+      else if (c === '}') { depth--; if (depth === 0) break; }
+    }
+    (0, eval)(src.slice(i0, p + 1));
+  }
+
+  var NOMBRES = ['document','_dmModelG','simGetState','isoWeek','bpGetLeadTimes','simHypoSalesForWeek',
+    'simActiveHypoSales','bpGetSales','bpRollingAvg','mtoNetModel','mtoCasesPerWeek','dmWindow',
+    'dmEffectiveRunRateLbs','committedInvForWeek','bpFutureWeeks','dmShelfWeeks','libEsc'];
+  var guard = {}; NOMBRES.forEach(function(n){ guard[n] = _G[n]; });
+  var bpD0 = window._bpDigest, simD0 = window._simDigest;
+  var cw0 = console.warn;
+  if (typeof console.warn !== 'function') console.warn = function(){};
+
+  try {
+    var ELS = {};
+    _G.document = { getElementById: function(id){
+      if (!ELS[id]) ELS[id] = { value: ({ 'bp-stock-lbs':'180000', 'bp-stock-date':'' })[id], innerHTML:'', style:{} };
+      return ELS[id]; } };
+    _G._dmModelG = null;
+    _G.simGetState = function(){ return { downgradedPos:[], hypotheticalSales:[] }; };
+    _G.isoWeek = function(){ return 37; };
+    _G.bpGetLeadTimes = function(){ return { sea_total:37, air_total:13 }; };
+    _G.simActiveHypoSales = function(){ return []; };
+    _G.bpGetSales = function(){ return []; };
+    _G.bpRollingAvg = undefined;
+    _G.mtoNetModel = function(m){ return m; };
+    _G.mtoCasesPerWeek = function(){ return 0; };
+    _G.dmWindow = function(){ return 13; };
+    _G.dmEffectiveRunRateLbs = function(){ return 24000; };   // 800 cs/sem
+    _G.committedInvForWeek = function(){ return 0; };
+    _G.dmShelfWeeks = function(){ return 8; };
+    // 16 semanas desde el lunes de esta semana.
+    var hoy = new Date(); hoy.setHours(12,0,0,0);
+    var lun = new Date(hoy); lun.setDate(hoy.getDate() - ((hoy.getDay() + 6) % 7));
+    var FW = [];
+    for (var k = 0; k < 16; k++) { var d = new Date(lun); d.setDate(lun.getDate() + 7*k);
+      FW.push({ week:'W' + k, weekNum:37 + k, weekStartDate:d }); }
+    _G.bpFutureWeeks = function(n){ return FW.slice(0, n); };
+    // La venta hipotetica: 5.000 cajas en la tercera semana. 6.000 en mano, 800/sem -> quiebre.
+    var HYPO_WK = dmWeekKey(FW[2].weekStartDate);
+    _G.simHypoSalesForWeek = function(k){ return (k === HYPO_WK) ? 5000 : 0; };
+
+    // Buy Planner SANO: digest sin `rec`, que es lo que publica renderBuyPlanner sin faltante.
+    window._bpDigest = { stockCases:6000, salesDemand:800, weeklyDemand:800, coverage:7.5, safety:1.5 };
+    window._simDigest = undefined;
+    simRenderProjection([], []);
+    var tabla = (ELS['sim-projection-table'] || {}).innerHTML || '';
+    var tarjeta = (ELS['sim-ginger-suggestion'] || {}).innerHTML || '';
+    ok('el escenario pone la tabla del Simulator en STOCKOUT', tabla.indexOf('STOCKOUT') >= 0);
+    ok('la tarjeta de compra del Simulator NO queda en blanco', /Buy <b>\d+<\/b> container/.test(tarjeta));
+    var SD = window._simDigest;
+    ok('el Simulator publica su propio digest con recomendacion', !!(SD && SD.scenario && SD.rec && SD.rec.containers >= 1));
+    if (SD && SD.rec) {
+      check('mismas 1.320 cajas brutas por contenedor que el Buy Planner', SD.rec.perContainer, 1320);
+      check('misma cadencia sugerida que el Buy Planner (1320/800 -> 1.5)', SD.rec.cadence, 1.5);
+      check('mismo lead de mar que el Buy Planner (37 dias)', SD.rec.leadWks.toFixed(4), (37/7).toFixed(4));
+      ok('y dice cuando ordenar', !!(SD.protect && !SD.protect.horizonShort));
+    }
+
+    // Con `rec` publicado, los parametros siguen saliendo del Buy Planner (sin cambio).
+    ELS = {};
+    window._bpDigest = { stockCases:6000, salesDemand:800, weeklyDemand:800, coverage:7.5, safety:1.5,
+      rec:{ containers:2, netCases:2640, perContainer:1320, cadence:3, leadWks:37/7, shelfWks:8, ssCases:1200 } };
+    window._simDigest = undefined;
+    simRenderProjection([], []);
+    check('con rec del Buy Planner, la cadencia es la suya', window._simDigest && window._simDigest.rec.cadence, 3);
+  } finally {
+    NOMBRES.forEach(function(n){ _G[n] = guard[n]; });
+    window._bpDigest = bpD0; window._simDigest = simD0;
+    console.warn = cw0;
+  }
+})();
+} catch (_e) {
+  // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
+  ok('U02 no tira excepción: ' + ((_e && _e.message) || _e), false);
+}
+
+// ── U03 · La tarjeta de compra del Simulator ya no sigue mostrando la recomendación de un escenario que se quitó o que dejó de aplicar.
+try {
+// ═══ U03 — la tarjeta de compra del Simulator no puede sobrevivir a su escenario ═══════════════
+// Era: `window._simDigest` solo se escribía si el Buy Planner tenía `rec` (estaba en quiebre), y
+// nunca se borraba. Se quitaba el hipotético, o llegaba un contenedor y el Buy Planner quedaba sano:
+// la tabla se recalculaba sin el escenario, pero la tarjeta de arriba seguía diciendo "Buy N
+// containers" con `scenario:true` — dos mundos distintos en la misma pantalla.
+// Requiere `simRenderProjection` en la lista de extract.py de run.sh.
+group('Simulator — la tarjeta no muestra la compra de un escenario que ya no existe');
+if (typeof simRenderProjection !== 'function') {
+  check('simRenderProjection extraída del HTML (agregala a la lista de extract.py en run.sh)', typeof simRenderProjection, 'function');
+} else {
+  var _u03Prev = {
+    document: document,
+    isoWeek: (typeof isoWeek !== 'undefined') ? isoWeek : undefined,
+    normalizeDate: (typeof normalizeDate !== 'undefined') ? normalizeDate : undefined,
+    simGetState: (typeof simGetState !== 'undefined') ? simGetState : undefined,
+    bpGetLeadTimes: (typeof bpGetLeadTimes !== 'undefined') ? bpGetLeadTimes : undefined,
+    bpDigest: window._bpDigest, simDigest: window._simDigest
+  };
+  var _u03Card = '';
+  document = { getElementById: function(id){
+    if (id === 'sim-ginger-suggestion') return { set innerHTML(v){ _u03Card = v; }, get innerHTML(){ return _u03Card; } };
+    if (id === 'sim-projection-table')  return { innerHTML:'' };
+    return null;
+  } };
+  // 16 semanas desde el lunes que viene, con fechas reales: el test no envejece.
+  var _u03Base = new Date(); _u03Base.setHours(12,0,0,0);
+  _u03Base.setDate(_u03Base.getDate() - ((_u03Base.getDay() + 6) % 7) + 7);
+  bpFutureWeeks = function(n){ var o = []; for (var i = 0; i < (n||16); i++) {
+    var d = new Date(_u03Base.getTime()); d.setDate(d.getDate() + 7*i);
+    o.push({ week:'W' + i, weekNum:i + 1, weekStartDate:d }); } return o; };
+  dmEffectiveRunRateLbs = function(){ return 3000; };      // 100 cajas/semana
+  mtoCasesPerWeek = function(){ return 0; };
+  dmWindow = function(){ return 13; };
+  committedInvForWeek = function(){ return 0; };
+  simGetState = function(){ return { hypotheticalOrders:[], hypotheticalSales:[], quotes:[], downgradedPos:[] }; };
+  isoWeek = function(){ return 1; };
+  normalizeDate = function(v){ return String(v).slice(0,10); };
+  bpGetLeadTimes = function(){ return { sea_total:37, air_total:13 }; };
+
+  // 1) Buy Planner en quiebre: hay `rec`, así que el Simulator arma su propio digest.
+  window._simDigest = undefined;
+  window._bpDigest = { weeklyDemand:100, safety:2.5, stockCases:0, coverage:0,
+    rec:{ perContainer:1320, leadWks:37/7, cadence:4, ssCases:250, shelfWks:12 } };
+  simRenderProjection([], []);
+  ok('precondición: con el Buy Planner en quiebre el Simulator arma su digest', !!(window._simDigest && window._simDigest.scenario));
+  ok('precondición: y la tarjeta recomienda comprar', /Buy <b>/.test(_u03Card));
+
+  // 2) Se quita el escenario y el Buy Planner reescribe su digest sin `rec`. El stock sigue en 0 con
+  //    100 cs/semana: la tabla del Simulator está en quiebre, así que SÍ tiene que recomendar (eso es
+  //    U02). Lo que no puede pasar es que siga mostrando el digest del escenario de antes.
+  var _u03First = window._simDigest;
+  window._bpDigest = { weeklyDemand:100, safety:2.5, stockCases:0, coverage:0 };
+  simRenderProjection([], []);
+  ok('el digest del escenario anterior no se reutiliza', window._simDigest !== _u03First);
+  // 3) Un mundo de verdad sano, sin demanda: no se arma digest nuevo, y el viejo no puede quedar.
+  dmEffectiveRunRateLbs = function(){ return 0; };
+  window._bpDigest = { weeklyDemand:0, safety:2.5, stockCases:5000, coverage:99 };
+  simRenderProjection([], []);
+  ok('sin nada que decidir, el digest del escenario anterior se borra', !window._simDigest);
+  ok('la tarjeta ya no dice "Buy N containers" de un escenario que no existe', !/Buy <b>/.test(_u03Card));
+
+  document = _u03Prev.document;
+  isoWeek = _u03Prev.isoWeek; normalizeDate = _u03Prev.normalizeDate;
+  simGetState = _u03Prev.simGetState; bpGetLeadTimes = _u03Prev.bpGetLeadTimes;
+  window._bpDigest = _u03Prev.bpDigest; window._simDigest = _u03Prev.simDigest;
+}
+} catch (_e) {
+  // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
+  ok('U03 no tira excepción: ' + ((_e && _e.message) || _e), false);
+}
+
+// ── U04 · El Simulator ya no pierde los contenedores (reales o hipotéticos) que llegan en la semana que cruza el año, y coincide con el Buy Planner en esa semana.
+try {
+// U04 - El Simulator arma la llave de cada llegada con el ANO ISO de la semana, no el del calendario.
+// Con el ano calendario, un contenedor que llega el 1-3 de enero quedaba en '2027-W53' mientras la fila
+// (bpFutureWeeks) y el Buy Planner usan '2026-W53': ninguna fila lo leia y la llegada desaparecia.
+if (typeof group === 'function') group('U04 - la llegada de la semana que cruza el ano no desaparece del Simulator');
+(function(){
+  var _fail = function(m){ throw new Error('U04: ' + m); };
+  var _chk  = (typeof check === 'function') ? check : function(n,a,e){ if (String(a) !== String(e)) _fail(n + ' - esperaba ' + e + ', dio ' + a); };
+  var _ok   = (typeof ok    === 'function') ? ok    : function(n,c){ if (!c) _fail(n); };
+  if (typeof simRenderProjection !== 'function') _fail('simRenderProjection no esta extraida');
+  if (typeof isoWeek !== 'function' || typeof normalizeDate !== 'function' || typeof dmISOLocal !== 'function')
+    _fail('faltan isoWeek / normalizeDate / dmISOLocal reales');
+
+  var G = this;
+  var NOMBRES = ['bpFutureWeeks','simComputeEta','simGetState','directShipTotal','dmEffectiveRunRateLbs','mtoCasesPerWeek','bpGingerSuggestionHTML'];
+  var PREV = {};
+  NOMBRES.forEach(function(n){ PREV[n] = (typeof G[n] !== 'undefined') ? G[n] : undefined; });
+  var PREV_DIG = window._bpDigest, PREV_ROWS = window._simProjRows;
+
+  // Tres filas: la semana que cruza 2025->2026, una normal y la que cruza 2026->2027 (2026 tiene 53).
+  G.bpFutureWeeks = function(){ return [
+    { year:2026, weekNum:1,  week:'2026-W01', weekStartDate:new Date(2025,11,29), weekStartISO:'2025-12-29' },
+    { year:2026, weekNum:40, week:'2026-W40', weekStartDate:new Date(2026,8,28),  weekStartISO:'2026-09-28' },
+    { year:2026, weekNum:53, week:'2026-W53', weekStartDate:new Date(2026,11,28), weekStartISO:'2026-12-28' }
+  ]; };
+  G.simComputeEta = function(o){ return o.eta ? new Date(o.eta.y, o.eta.m, o.eta.d) : null; };   // local, como produccion
+  G.simGetState = function(){ return { hypotheticalOrders:[], hypotheticalSales:[], quotes:[], downgradedPos:[] }; };
+  G.directShipTotal = function(){ return 0; };
+  G.dmEffectiveRunRateLbs = function(){ return 3000; };
+  G.mtoCasesPerWeek = function(){ return 0; };
+  G.bpGingerSuggestionHTML = function(){ return ''; };
+  window._bpDigest = { weeklyDemand:100, safety:2.5 };
+  window._simProjRows = null;
+
+  try {
+    // Como el Buy Planner: bpGetPipelineByWeek pone las tres en la misma semana que la fila.
+    var REAL = [
+      { jlzPo:'U04-A', status:'In Transit', cases:1320, arrivalEstimated:'2027-01-02' },  // sabado -> 2026-W53
+      { jlzPo:'U04-B', status:'Contracted', cases:500,  arrivalEstimated:'2025-12-31' },  // miercoles -> 2026-W01
+      { jlzPo:'U04-C', status:'Contracted', cases:700,  arrivalEstimated:'2026-10-01' }   // control, mitad de ano
+    ];
+    var HYPO = [ { vendor:'U04-H', cases:40, eta:{ y:2027, m:0, d:3 } } ];                // domingo -> 2026-W53
+
+    simRenderProjection(REAL, HYPO);
+    var rows = window._simProjRows || [];
+    _chk('se proyectan las tres filas', rows.length, 3);
+    var arr = rows.map(function(r){ return r.arrivals; });
+    _chk('llegadas de 2026-W01 (el contenedor del 31-dic-2025)', arr[0], 500);
+    _chk('llegadas de 2026-W40 (control: no se mueve)',            arr[1], 700);
+    _chk('llegadas de 2026-W53 (contenedor del 2-ene + hipotetico del 3-ene)', arr[2], 1360);
+    _ok('ninguna caja en camino se pierde del horizonte',
+        arr.reduce(function(s,x){ return s + x; }, 0) === 1320 + 500 + 700 + 40);
+  } finally {
+    NOMBRES.forEach(function(n){ if (PREV[n] === undefined) { try { delete G[n]; } catch(e){} } else G[n] = PREV[n]; });
+    window._bpDigest = PREV_DIG; window._simProjRows = PREV_ROWS;
+  }
+})();
+if (typeof summary === 'function' && typeof _PRISTINO === 'undefined') summary();   // suelto; dentro de pure-tests lo cierra el final
+} catch (_e) {
+  // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
+  ok('U04 no tira excepción: ' + ((_e && _e.message) || _e), false);
+}
+
+// ── U05 · La tarjeta de compra del Simulator mide el techo de vida útil contra la misma semana pico que el Buy Planner, así que las dos pantallas recomiendan los mismos contenedores sin escenarios cargados.
+try {
+group('U05 · el pico de vida util se elige con la misma regla en Buy Planner y Simulator');
+// El Buy Planner le pasa a bpContainerPlan el stock final de la semana de MAYOR COBERTURA; el
+// Simulator le pasaba el de la semana de MAYOR STOCK. Con una llegada tarde en el horizonte son
+// filas distintas, y el techo de vida util (y la cantidad de contenedores) cambiaba de pantalla a
+// pantalla sin ningun escenario cargado. Se ejecuta el tramo REAL del Simulator, no una copia.
+(function(){
+  if (typeof simRenderProjection !== 'function') { ok('simRenderProjection extraida (agregala a run.sh)', false); return; }
+  var src = String(simRenderProjection);
+  var a = src.indexOf('var _pk='), b = src.indexOf('var _lead=', a);
+  if (a < 0 || b < 0) { ok('se encuentra el tramo del pico en simRenderProjection', false); return; }
+  var tramo = src.slice(a, b);
+  // 10 semanas a 825; llega un contenedor doble en la semana 5 y uno grande en la 9.
+  var arr = [0,0,0,0,2640,0,0,0,5280,0], st = 4000, filas = [];
+  for (var i=0;i<arr.length;i++){ var s0=st; st = st + arr[i] - 825;
+    filas.push({ wkISO:'w'+i, arrivals:arr[i], demand:825, startingStock:s0, endingStock:st }); }
+  // La regla del Buy Planner (renderBuyPlanner): cover contra las semanas SIGUIENTES, y la primera
+  // fila de cobertura maxima.
+  var bpPk = null;
+  filas.forEach(function(r,i){
+    var c = bpWeeksOfCover(r.endingStock, filas.slice(i+1).map(function(x){ return x.demand; }));
+    if (c > (bpPk ? bpPk.c : -1)) bpPk = { c:c, r:r };
+  });
+  var simPk = (function(_simProjRows){ var _pk; eval(tramo); return _pk; })(filas);
+  check('el Buy Planner elige la semana 1 (3175 cs, la de mas cobertura)', bpPk.r.endingStock, 3175);
+  check('el Simulator elige la MISMA fila', simPk && simPk.endingStock, 3175);
+  var base = { weeklyDemand:825, leadWks:37/7, cadence:1, ssCases:900, perContainer:1320,
+               shelfWks:8, projAtArrival:1500 };
+  var cpB = bpContainerPlan(Object.assign({}, base, { peakStock:bpPk.r.endingStock }));
+  var cpS = bpContainerPlan(Object.assign({}, base, { peakStock:simPk ? simPk.endingStock : -1 }));
+  check('mismo techo de vida util en las dos pantallas', cpS.cap, cpB.cap);
+  check('misma cantidad de contenedores recomendada', cpS.containers, cpB.containers);
+})();
+} catch (_e) {
+  // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
+  ok('U05 no tira excepción: ' + ((_e && _e.message) || _e), false);
+}
+
+// ── U06 · El Buy Planner mide el stock a la llegada del contenedor en la misma semana que el Simulator, sin que cambie según la hora del día en que se abre.
+try {
+group('U06 · Buy Planner y Simulator miden el stock a la llegada en la MISMA semana');
+// El Buy Planner sacaba la semana de llegada de `toISOString()` (UTC): al oeste de Greenwich, una
+// llegada el domingo a la noche ya era lunes, y "On hand then" se leia una semana mas tarde que en el
+// Simulator (bpRowAtDate). Se prueba el codigo REAL de renderBuyPlanner: se recortan las lineas que
+// derivan la ETA y la busqueda de la fila, y se evaluan con un "hoy" sintetico.
+(function(){
+  var src = (typeof renderBuyPlanner === 'function') ? String(renderBuyPlanner) : '';
+  if (!ok('renderBuyPlanner e isoWeek estan extraidos', !!src && typeof isoWeek === 'function')) return;
+  var mEta = src.match(/const seaEtaDate\s*=[\s\S]*?const airEtaWk[^\n]*\n/);
+  var mArr = src.match(/const _arrRow\s*=[^\n]*\n/);
+  if (!ok('se encuentran las lineas de la ETA y de la fila de llegada', !!(mEta && mArr))) return;
+  var codigo = (mEta[0] + mArr[0]).replace(/\b(const|let)\s/g, 'var ');
+  // Semanas como las arma bpFutureWeeks: lunes locales, weekNum ISO.
+  var lunes0 = new Date(2026, 8, 7);                       // lunes 7-sep-2026 = ISO W37
+  var rows = [];
+  for (var i = 0; i < 12; i++) {
+    var ws = new Date(lunes0); ws.setDate(lunes0.getDate() + i*7);
+    rows.push({ weekStartDate: ws, weekNum: 37 + i, startingStock: 5000 - 800*i, endingStock: 4200 - 800*i });
+  }
+  var SEA = 37;
+  function evalua(llegada){
+    var todayDate = new Date(llegada.getTime() - SEA*86400000);
+    var lt = { sea_total: SEA, air_total: 10 };
+    var seaEtaDate, seaEtaWk, _arrRow;
+    eval(codigo);
+    var sim = bpRowAtDate(rows, todayDate.getTime() + SEA*86400000);
+    return { bp: _arrRow ? _arrRow.startingStock : null, sim: sim ? sim.startingStock : null, wk: seaEtaWk };
+  }
+  // Domingo 23:30 local (rueda hacia adelante al oeste de Greenwich) y lunes 00:30 local (rueda hacia
+  // atras al este). En cualquier huso distinto de UTC, al menos uno de los dos cruza de semana.
+  [ ['domingo 18-oct 23:30', new Date(2026, 9, 18, 23, 30), 42],
+    ['lunes 19-oct 00:30',   new Date(2026, 9, 19,  0, 30), 43],
+    ['jueves 15-oct 20:00',  new Date(2026, 9, 15, 20,  0), 42] ].forEach(function(c){
+    var r = evalua(c[1]);
+    check('llega ' + c[0] + ': semana ISO de la llegada', r.wk, c[2]);
+    check('llega ' + c[0] + ': Buy Planner mide el mismo stock que el Simulator', r.bp, r.sim);
+  });
+})();
+} catch (_e) {
+  // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
+  ok('U06 no tira excepción: ' + ((_e && _e.message) || _e), false);
+}
+
+// ── U08 · La tarjeta de compra del Simulator ahora muestra el plazo por aire, se pone roja con el plazo de mar a 7 días o menos, y da la misma fecha de llegada que la del Buy Planner.
+try {
+group('U08 · la tarjeta del Simulator lee los mismos plazos que la del Buy Planner');
+// `bpGingerSuggestionHTML` lee `seaDeadline`/`airDeadline`. `_bpDigest` los trae; `_simDigest` no:
+// el Simulator nunca se ponía rojo, perdía "by air you have until" y contaba "lands" desde HOY
+// en vez de desde el plazo — dos fechas de llegada en dos tarjetas que dicen ser la misma.
+(function(){
+  if (typeof simRenderProjection !== 'function') {
+    ok('simRenderProjection está extraída (agregala a la lista de extract.py en run.sh)', false);
+    return;
+  }
+  var DIA = 86400000;
+  var campos = { 'bp-stock-lbs': '30000', 'bp-stock-date': '' };   // 1000 cajas, sin fecha de conteo
+  var nodos = {}, _docPrevio = document;
+  document = { getElementById: function(id){
+    if (!nodos[id]) nodos[id] = { value: campos[id], innerHTML: '' };
+    return nodos[id];
+  } };
+  // 1000 cajas, 300 por semana, nada en camino: la semana 3 cierra en -200.
+  dmEffectiveRunRateLbs = function(){ return 9000; };
+  mtoCasesPerWeek = function(){ return 0; };
+  dmWindow = function(){ return 13; };
+  committedInvForWeek = function(){ return 0; };
+  hybridSalesForWeek = function(){ return null; };
+  simHypoSalesForWeek = function(){ return 0; };
+  simActiveHypoSales = function(){ return []; };
+  mtoNetModel = function(m){ return m; };
+  try { _dmModelG = null; } catch (e) {}
+  window._dmModelG = null;
+  simGetState = function(){ return { hypotheticalOrders:[], hypotheticalSales:[], quotes:[], downgradedPos:[] }; };
+  if (typeof isoWeek !== 'function') isoWeek = function(){ return 1; };
+  if (typeof normalizeDate !== 'function') normalizeDate = function(v){ return v; };
+  // Lead de mar 28 días: el plazo cae el lunes-7, que NUNCA es hoy (sea el día que sea que corra el
+  // test), así que "hoy + lead" y "plazo + lead" no pueden coincidir por casualidad.
+  bpGetLeadTimes = function(){ return { sea_total:28, air_total:5 }; };
+  invmWindowFit = function(){ return null; };
+  window._simDigest = null;
+  window._bpDigest = { safety:1, weeklyDemand:300,
+    // Contenedor chico y vida útil corta: ninguna semana de llegada salva el colchón, así que no hay
+    // `protect` y la tarjeta cae al "lands" de respaldo — justo el que salía de hoy en el Simulator.
+    rec:{ perContainer:100, leadWks:4, cadence:1, shelfWks:2.4, ssCases:300 } };
+
+  simRenderProjection([], []);
+  var S = window._simDigest, rows = window._simProjRows || [];
+  ok('el Simulator armó su digest', !!(S && S.rec));
+  if (!S || !S.rec) { document = _docPrevio; return; }
+
+  // El plazo, calculado como lo calcula el Buy Planner (`computeDeadline`): la semana del quiebre
+  // menos el lead.
+  var quiebre = rows.filter(function(r){ return r.endingStock <= 0; })[0];
+  ok('el escenario tiene quiebre', !!quiebre);
+  var plazo = function(lead){ var dd = new Date(new Date(quiebre.weekStartDate).getTime() - lead*DIA);
+    return { date:dd, daysLeft:Math.round((dd - new Date())/DIA) }; };
+  var mar = plazo(28), aire = plazo(5);
+
+  ok('el digest trae el plazo de mar', !!(S.seaDeadline && S.seaDeadline.date));
+  ok('el digest trae el plazo de aire', !!(S.airDeadline && S.airDeadline.date));
+  check('plazo de mar = semana del quiebre - lead de mar',
+        S.seaDeadline ? dmISOLocal(new Date(S.seaDeadline.date)) : null, dmISOLocal(mar.date));
+  check('días al plazo de mar', S.seaDeadline ? S.seaDeadline.daysLeft : null, mar.daysLeft);
+  ok('con el plazo vencido la tarjeta tiene con qué ponerse roja',
+     !!(S.seaDeadline && S.seaDeadline.daysLeft != null && S.seaDeadline.daysLeft <= 7));
+
+  var hSim = nodos['sim-ginger-suggestion'] ? nodos['sim-ginger-suggestion'].innerHTML : bpGingerSuggestionHTML(S);
+  ok('la tarjeta del Simulator dice el plazo por aire',
+     hSim.indexOf('by air you have until ' + dmISOLocal(aire.date)) > -1);
+
+  // La MISMA tarjeta armada con los plazos del Buy Planner tiene que aterrizar el mismo día.
+  var espejo = {}; for (var k in S) espejo[k] = S[k];
+  espejo.seaDeadline = mar; espejo.airDeadline = aire;
+  var hBp = bpGingerSuggestionHTML(espejo);
+  var lands = function(h){ var m = /lands <b>([0-9-]+)<\/b>/.exec(h); return m ? m[1] : null; };
+  ok('no hay fecha que proteja: se usa el respaldo', !(S.protect && S.protect.protect));
+  ok('las dos tarjetas dicen "lands"', lands(hBp) != null && lands(hSim) != null);
+  check('y aterrizan el mismo día', lands(hSim), lands(hBp));
+  ok('que NO es hoy + lead', lands(hSim) !== dmISOLocal(new Date(Date.now() + 28*DIA)));
+  window._simDigest = null; window._bpDigest = null; document = _docPrevio;
+})();
+} catch (_e) {
+  // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
+  ok('U08 no tira excepción: ' + ((_e && _e.message) || _e), false);
+}
+
 // ═══ El entorno se limpia entre grupos ══════════════════════════════════════
 // Guardián del arreglo de arriba. Si alguien saca la restauración de `group()`, esto falla y
 // dice por qué — en vez de que un test futuro mida un stub ajeno y nadie se entere.
