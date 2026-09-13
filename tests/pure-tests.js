@@ -37,7 +37,14 @@ var _PRISTINO_NOMBRES = [
   'PRODUCTS','invmProductModel','invmRunRateLbs','invmStockableWeekly','prodInvFor',
   'prodCommittedTotal','mtoCasesPerWeek','dsWindow','_ordOrigin','directShipTotal','invmOriginsFor',
   'invmRunway','bpProtectPlan','invmOrderCases',
-  'mtoByCustomer','cmPlanEntries','cmCasesInBuyPack','hybridSalesForWeek','getDirectShip','bpDaysSince'
+  'mtoByCustomer','cmPlanEntries','cmCasesInBuyPack','hybridSalesForWeek','getDirectShip','bpDaysSince',
+  // Cuatro grupos stubean `invmOriginMatch` a "siempre sí". Mientras las llegadas no lo llamaban daba
+  // igual; desde que comparan el origen de la orden con él, ese stub mezclaba Perú con Hawaii en el
+  // grupo de orígenes y el test medía el stub, no el código.
+  'invmOriginMatch','_invmKnownOrigin',
+  // El test de C08 cambia `addDirectShip` por un espía; sin restaurarlo, el grupo de C14 "marcaba"
+  // cajas como cruzadas y no pasaba nada, y medía un contenedor entero donde había 150.
+  'addDirectShip','removeDirectShip','_mutateOrderDirectShip','mtoEarmarkedTotal'
 ];
 var _PRISTINO = {};
 _PRISTINO_NOMBRES.forEach(function(n){ try { _PRISTINO[n] = eval(n); } catch (e) {} });
@@ -1613,7 +1620,13 @@ group('invmBuySuggestion · cuánto comprar, cuándo ordenar, cuándo llega');
   var gp = invmBuySuggestion('turmeric','Fiji');
   ok('trae el plan de proteccion', !!gp.protect && !gp.protect.horizonShort);
   check('la fecha limite ya no sale de la cuenta plana', gp.orderBy, menos(WK[8],10));
-  check('esperar es gratis solo hasta la primera llegada posible', gp.protect.free.landsWk, WK[2]);
+  // La primera llegada posible es la primera semana cuyo LUNES todavía se alcanza pidiendo hoy
+  // (lunes − lead ≥ hoy). Estaba fija en WK[2], que solo es cierto si hoy es viernes o antes: un
+  // sábado, con 10 días de lead, lo pedido llega el martes y no cubre ese lunes. Se calcula con la
+  // misma regla para que el test no dependa del día en que se corre.
+  var _primeraPosible = WK.filter(function(w){ return menos(w,10) >= dmISOLocal(hoy); })[0];
+  check('esperar es gratis solo hasta la primera llegada posible', gp.protect.free.landsWk, _primeraPosible);
+  ok('…y esa semana es la de dentro de dos o tres', _primeraPosible === WK[2] || _primeraPosible === WK[3]);
   // ── La cantidad se mide EN LA FECHA EN QUE LLEGA, no hoy ─────────────────────────────────────
   // Hoy hay 1.000 cajas para un objetivo de 343: mirado contra la posicion de hoy, "comprar 0". Pero
   // el pedido aterriza en WK[8], y para entonces van a quedar 200 — ahi faltan 143. Decir 0 mientras
