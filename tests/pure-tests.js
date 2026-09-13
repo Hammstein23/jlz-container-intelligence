@@ -3078,6 +3078,117 @@ check('una semana con órdenes se marca now, no prelim', (G2.nowcastWeeks || {})
 ok('…y esa SÍ promedia', (G2.rateWeeks || []).indexOf(PREVW) >= 0);
 check('se completa a facturado + reservado: (3000+3000+1200+3000)/3', G2.runRate3, 3400);
 
+// ═══ Auditoría de los tres modos de compra · un test por arreglo ════════════════════
+// Cada bloque prueba un hallazgo confirmado por el pase adversarial (ids C01-C16 del handoff
+// handoffs/AUDITORIA-3-MODOS-estado.md). Fallan contra el código de antes del arreglo.
+
+// ── C01 · Las marcas made to order ahora se ven en las dos máquinas: la que no las tenía contaba las cajas cruzadas como llegada libre y dejaba al cliente contra-orden dentro del run-rate.
+group('Made to order · la marca tiene que cruzar de máquina');
+// La fila que viaja al Sheet tiene 25 columnas y ninguna es directShip, así que la marca vivía en el
+// localStorage del que la hizo. En la máquina de al lado las 700 cs cruzadas volvían a contarse como
+// llegada libre Y el cliente seguía dentro del run-rate. Ahora el mapa viaja como setting ('mtoMarks').
+(function(){
+  var _realLS   = (typeof localStorage !== 'undefined') ? localStorage : null;
+  var _realFOP  = (typeof findOrderForPo === 'function') ? findOrderForPo : null;
+  var _realPush = (typeof pushSettingToSheet === 'function') ? pushSettingToSheet : null;
+  var LS = {};
+  localStorage = { getItem:function(k){ return (k in LS) ? LS[k] : null; },
+                   setItem:function(k,v){ LS[k] = String(v); } };
+  findOrderForPo = function(po){ return getOrders().filter(function(o){ return String(o.jlzPo)===String(po); })[0] || null; };
+  // La de producción escribe _lastPushedSettings y recién después manda al Sheet; acá no hay red.
+  _lastPushedSettings = {};
+  pushSettingToSheet = function(k, v){ _lastPushedSettings[k] = String(v); };
+
+  // Juan marca 700 de las 850 cs de turmeric como cruzadas para Sol-ti, en SU máquina.
+  LS['jlz_orders_pipeline'] = JSON.stringify([{ jlzPo:'X1', product:'turmeric', cases:850 }]);
+  addDirectShip('X1', 'Sol-ti', 700);
+  check('en la máquina de Juan llegan 150 libres', 850 - directShipTotal('X1'), 150);
+  ok('y la marca sale del equipo que la hizo', !!_lastPushedSettings['mtoMarks']);
+  var DEL_SHEET = _lastPushedSettings['mtoMarks'];
+
+  // Michael: otro localStorage, y la orden le llega del Sheet SIN la marca (no hay columna).
+  LS = {};
+  LS['jlz_orders_pipeline'] = JSON.stringify([
+    { jlzPo:'X1', product:'turmeric', cases:850 },
+    { jlzPo:'Z9', product:'shallots', cases:200, directShip:[{ customer:'Local', cases:20, viaWarehouse:true }] }]);
+  _lastPushedSettings = { mtoMarks: DEL_SHEET };
+  check('a Michael le llegan las mismas 150, no 850', 850 - directShipTotal('X1'), 150);
+  check('con el cliente, que es lo que lo saca del run-rate', (getOrders()[0].directShip||[{}])[0].customer, 'Sol-ti');
+  check('una PO que el mapa no conoce conserva su marca local', mtoEarmarkedTotal('Z9'), 20);
+  check('y el reempacado sigue entrando al almacén', directShipTotal('Z9'), 0);
+
+  // Desmarcar también tiene que cruzar, o la otra máquina compra de menos para siempre.
+  LS = {};
+  LS['jlz_orders_pipeline'] = JSON.stringify([{ jlzPo:'X1', product:'turmeric', cases:850, directShip:[{ customer:'Sol-ti', cases:700 }] }]);
+  _lastPushedSettings = { mtoMarks: DEL_SHEET };
+  removeDirectShip('X1', 0);
+  var DEL_SHEET2 = _lastPushedSettings['mtoMarks'];
+  LS = {};
+  LS['jlz_orders_pipeline'] = JSON.stringify([{ jlzPo:'X1', product:'turmeric', cases:850, directShip:[{ customer:'Sol-ti', cases:700 }] }]);
+  _lastPushedSettings = { mtoMarks: DEL_SHEET2 };
+  check('desmarcar también cruza: vuelven a llegar las 850', 850 - directShipTotal('X1'), 850);
+
+  // Sin Sheet configurado no hay mapa y todo sigue exactamente como antes.
+  _lastPushedSettings = {};
+  LS = {};
+  LS['jlz_orders_pipeline'] = JSON.stringify([{ jlzPo:'Q1', cases:100, directShip:[{ customer:'A', cases:5 }] }]);
+  check('sin Sheet configurado, la marca local sigue valiendo', directShipTotal('Q1'), 5);
+
+  if (_realLS) localStorage = _realLS;
+  findOrderForPo = _realFOP;        // no dejar los stubs colgados para el grupo siguiente
+  pushSettingToSheet = _realPush;
+})();
+
+// ── C02 · El pull de arranque ya no borra el flag de contenedor de-certificado: un PO downgraded sigue fuera del stock orgánico después de recargar la app.
+// ═══ El pull del arranque no puede borrar el "downgraded" ════════════════════
+// Code.gs no tiene columna para downgraded/downgradedDate/downgradedReason, así que la orden que
+// baja del Sheet llega SIN esas claves. Antes de este arreglo el auto-pull de cada apertura pisaba
+// la copia local y el contenedor de-certificado volvía a contar como orgánico (stock, cobertura
+// FEFO y los agregados sea/air de History), sin un solo aviso en pantalla.
+group('ordMergeLocalOnly — el pull no pisa lo que solo vive local');
+ok('la función existe (si falla, falta agregarla a extract.py en run.sh)',
+   typeof ordMergeLocalOnly === 'function');
+
+var DELSHEET = [{ jlzPo: 'Y-001', status: 'Arrived', cases: 1000, product: 'turmeric', origin: 'Peru' }];
+var LOCAL = [{ jlzPo: 'Y-001', status: 'Arrived', cases: 1000, product: 'ginger', origin: 'Peru',
+               insuranceUsd: 120, downgraded: true, downgradedDate: '2026-09-01',
+               downgradedReason: 'APHIS hold, fumigated, lost organic cert' },
+             { jlzPo: 'LOCAL-9', status: 'In Transit', cases: 800, product: 'garlic' }];
+
+var M = ordMergeLocalOnly(DELSHEET, LOCAL);
+var Y = M.filter(function(o){ return o.jlzPo === 'Y-001'; })[0] || {};
+ok('PO Y-001 sigue marcado downgraded después del pull', Y.downgraded === true);
+check('…con su motivo', Y.downgradedReason, 'APHIS hold, fumigated, lost organic cert');
+check('…y su fecha', Y.downgradedDate, '2026-09-01');
+check('el resto de los campos local-only sigue vivo', Y.insuranceUsd, 120);
+check('lo que SÍ trae el Sheet manda', Y.product, 'turmeric');
+check('la orden que solo existe local no se borra', M.length, 2);
+
+// Destildar es un dato, no un hueco: false tiene que sobrevivir igual que true, o la orden
+// limpiada volvería a aparecer downgraded en cuanto el Sheet no diga nada.
+var M2 = ordMergeLocalOnly([{ jlzPo: 'Y-002', cases: 500 }],
+                           [{ jlzPo: 'Y-002', cases: 500, downgraded: false, downgradedReason: null }]);
+check('un downgrade limpiado queda limpiado', M2[0].downgraded, 'false');
+
+// Una orden que nunca se tocó no estrena la clave.
+var M3 = ordMergeLocalOnly([{ jlzPo: 'Y-003', cases: 400 }], [{ jlzPo: 'Y-003', cases: 400 }]);
+ok('una orden sana no inventa el flag', M3[0].downgraded === undefined);
+
+// ── C04 · La marca "Bought for" deja de confirmarse como "Synced" y avisa que quedó solo en este dispositivo.
+// ════ C04 · "Bought for" no puede decir "Synced" por algo que no viaja ══════════════════════════
+// Las 25 columnas de replaceOrders (orderRows) no llevan `directShip`. Si ordAfterBoughtForChange
+// llama a pushOrdersToSheet(), la píldora pasa por "Saving…" y queda verde "Synced": Juan marca
+// "Sol-ti · 700 cs · CROSS-DOCK", ve el visto, y concluye que Michael lo va a ver. Nunca lo va a ver.
+group('ordAfterBoughtForChange · no finge haber sincronizado la marca');
+var _c04Push = 0, _c04Bar = [];
+pushOrdersToSheet = function(){ _c04Push++; };
+showBar = function(m, t){ _c04Bar.push(String(m) + ' | ' + String(t)); };
+ordAfterBoughtForChange();
+check('no dispara el push que no lleva la marca', _c04Push, 0);
+ok('avisa en pantalla que quedó solo en este dispositivo',
+   _c04Bar.length === 1 && /this device/i.test(_c04Bar[0]));
+ok('y no lo anuncia como error de red', _c04Bar.length === 1 && /\| warn$/.test(_c04Bar[0]));
+
 // ═══ El entorno se limpia entre grupos ══════════════════════════════════════
 // Guardián del arreglo de arriba. Si alguien saca la restauración de `group()`, esto falla y
 // dice por qué — en vez de que un test futuro mida un stub ajeno y nadie se entere.

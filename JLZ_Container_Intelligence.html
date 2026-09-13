@@ -11876,16 +11876,69 @@ function _ordSanitize(o){
   });
   return o;
 }
+// ── Las marcas made to order tienen que viajar entre máquinas ───────────────────────────────────
+// La fila que va al Sheet tiene 25 columnas (ORDER_HEADERS en Code.gs) y ninguna es `directShip`,
+// así que la marca vivía solo en el localStorage del que la hizo. En la otra máquina las cajas
+// cruzadas volvían a contarse como llegada libre (+700 cs de turmeric: cobertura 9.7 wk contra 3.0
+// real) y el cliente contra-orden seguía dentro del run-rate — los dos errores apuntan para lados
+// opuestos y no se cancelan. Hasta que Code.gs tenga su columna, el mapa
+// {po:[{customer,cases,viaWarehouse}]} viaja como un setting ('mtoMarks'): key/value libre, ya lo
+// escribe pushSettingToSheet y ya lo trae pullSettingsFromSheet al arrancar cualquier dispositivo.
+// Se resuelve acá y no en cada pantalla porque medio módulo lee `o.directShip` directo del objeto
+// orden: getOrders() es el único punto por el que pasan todos.
+
+// Normaliza una lista de marcas. Mismo criterio que _ordSanitize: el cliente se renderiza en varios
+// lados, así que se neutraliza en la ENTRADA y no en cada render.
+function _mtoMarkList(list) {
+  return (Array.isArray(list) ? list : []).map(function(d) {
+    var e = { customer: String((d && d.customer) || '').replace(/[<>"]/g, ''), cases: Math.round(Number(d && d.cases) || 0) };
+    if (d && d.viaWarehouse) e.viaWarehouse = true;      // reempacado: llega igual, solo sale del run-rate
+    return e;
+  }).filter(function(d) { return d.customer && d.cases > 0; });
+}
+// El mapa tal como lo vio este equipo. _lastPushedSettings guarda cada setting como lo trajo el
+// server al arrancar (o como lo acabamos de escribir). try/catch porque se declara con `let` más
+// abajo en el archivo y getOrders() ya corre antes de esa línea.
+function _mtoMarksMap() {
+  var raw = null;
+  try { raw = _lastPushedSettings['mtoMarks']; } catch(e) { raw = null; }
+  try { var m = JSON.parse(raw || '{}'); return (m && typeof m === 'object') ? m : {}; }
+  catch(e) { return {}; }
+}
 function getOrders() {
   try {
     var arr = JSON.parse(localStorage.getItem('jlz_orders_pipeline') || '[]');
-    return Array.isArray(arr) ? arr.map(_ordSanitize) : [];
+    if (!Array.isArray(arr)) return [];
+    var marks = _mtoMarksMap();
+    return arr.map(function(o) {
+      // El Sheet manda para toda PO que esté en el mapa, incluida la que quedó en [] porque le
+      // borraron la marca. La PO que no está no se toca: una marca local nunca se borra sola.
+      if (o && o.jlzPo) {
+        var m = marks[String(o.jlzPo).trim().toLowerCase()];
+        if (Array.isArray(m)) o.directShip = _mtoMarkList(m);
+      }
+      return _ordSanitize(o);
+    });
   }
   catch(e) { return []; }
 }
 function saveOrders(arr) {
   try { localStorage.setItem('jlz_orders_pipeline', JSON.stringify(arr)); }
   catch(e) { console.error('saveOrders failed:', e); }
+  // Merge, nunca reemplazo: un equipo que todavía no vio una PO marcada no puede borrarla del mapa.
+  try {
+    var prev = _mtoMarksMap(), marks = {}, dirty = false;
+    Object.keys(prev).forEach(function(k) { marks[k] = prev[k]; });
+    (Array.isArray(arr) ? arr : []).forEach(function(o) {
+      if (!o || !o.jlzPo || !Array.isArray(o.directShip)) return;
+      var k = String(o.jlzPo).trim().toLowerCase();
+      if (!o.directShip.length && !(k in marks)) return;          // nunca marcada: no ensuciar el mapa
+      var list = _mtoMarkList(o.directShip);
+      if (JSON.stringify(marks[k]) === JSON.stringify(list)) return;
+      marks[k] = list; dirty = true;
+    });
+    if (dirty && typeof pushSettingToSheet === 'function') pushSettingToSheet('mtoMarks', JSON.stringify(marks));
+  } catch(e) { console.warn('mtoMarks sync failed:', e); }
 }
 // Product of a procurement order. Orders written before multi-product support have
 // no `product` field → they are ginger (the pipeline was ginger-only). NEVER change
@@ -13664,7 +13717,10 @@ function ordRemoveBoughtFor(i){
   ordAfterBoughtForChange();
 }
 function ordAfterBoughtForChange(){
-  try{ if(typeof pushOrdersToSheet === 'function') pushOrdersToSheet(); }catch(e){}   // saveOrders() no sincroniza solo
+  // Esta marca NO viaja al Sheet: las 25 columnas de replaceOrders no llevan `directShip`, así que
+  // pushOrdersToSheet() reenviaba lo de siempre y dejaba la píldora en verde "Synced" confirmando
+  // algo que la otra máquina nunca iba a ver. No se llama, y se dice en pantalla que quedó local.
+  try{ if(typeof showBar === 'function') showBar('Saved on this device only — "Bought for" marks do not reach the Google Sheet yet, so another computer will not see this. Mark it there too.', 'warn'); }catch(e){}
   try{ renderOrderPanel(); }catch(e){}
   ['renderOrders','renderBuyPlanner','renderInventory','renderSimulator'].forEach(function(f){
     try{ if(typeof window[f] === 'function') window[f](); }catch(e){}
@@ -21902,33 +21958,41 @@ async function pullOrdersFromSheet(silent) {
       }
       return o;
     });
-    // Preserve LOCAL-ONLY fields that don't live in the Sheet schema.
-    // Without this, values entered locally (like the FOB-conversion cost estimates)
-    // would be silently wiped on every startup by the auto-pull.
-    // TODO: when Code.gs adds columns for these fields, this preservation can be removed.
-    const LOCAL_ONLY_ORDER_FIELDS = ['insuranceUsd', 'customsUsd', 'destHandlingUsd', 'directShip', 'product', 'origin'];
-    const localByPo = {};
-    (getOrders() || []).forEach(o => { if (o.jlzPo) localByPo[o.jlzPo] = o; });
-    orders.forEach(o => {
-      const local = localByPo[o.jlzPo];
-      if (!local) return;
-      LOCAL_ONLY_ORDER_FIELDS.forEach(f => {
-        if (o[f] === undefined && local[f] !== undefined) o[f] = local[f];
-      });
-    });
-    // Preserve LOCAL-ONLY ORDERS whose PO is not in the Sheet (e.g. non-ginger POs loaded locally
-    // that Code.gs doesn't carry yet). Without this, the auto-pull would silently wipe them.
-    const _sheetHas = {};
-    orders.forEach(o => { if (o && o.jlzPo != null) _sheetHas[String(o.jlzPo).trim()] = true; });
-    Object.keys(localByPo).forEach(po => { if (!_sheetHas[String(po).trim()]) orders.push(localByPo[po]); });
-    saveOrders(orders);
-    window._ordersData = orders;
+    const merged = ordMergeLocalOnly(orders, getOrders() || []);
+    saveOrders(merged);
+    window._ordersData = merged;
     if (typeof renderOrders === 'function') renderOrders();
-    if (!silent) showBar('✓ Pulled ' + orders.length + ' orders from Sheet', 'ok');
+    if (!silent) showBar('✓ Pulled ' + merged.length + ' orders from Sheet', 'ok');
   } catch (err) {
     console.error('pullOrdersFromSheet:', err);
     if (!silent) showBar('Error pulling from Sheet: ' + err.message, 'err');
   }
+}
+
+// Mezcla lo que trae el Sheet con lo que solo vive en este navegador.
+// readSheet_ arma cada orden con ORDER_FIELDS y nada más, así que los campos sin columna llegan
+// SIN la clave: si no se reponen acá, el auto-pull del arranque los borra en silencio.
+// `downgraded` es el caro: sin preservarlo, un contenedor de-certificado vuelve a contar como
+// orgánico (stock, cobertura FEFO y los agregados sea/air de History) y nada avisa en pantalla.
+// TODO: cuando Code.gs le dé columna propia a un campo, se saca de esta lista.
+function ordMergeLocalOnly(pulled, locals) {
+  const orders = Array.isArray(pulled) ? pulled : [];
+  const LOCAL_ONLY_ORDER_FIELDS = ['insuranceUsd', 'customsUsd', 'destHandlingUsd', 'directShip',
+    'product', 'origin', 'downgraded', 'downgradedDate', 'downgradedReason'];
+  const localByPo = {};
+  (locals || []).forEach(o => { if (o && o.jlzPo) localByPo[o.jlzPo] = o; });
+  orders.forEach(o => {
+    const local = localByPo[o.jlzPo];
+    if (!local) return;
+    LOCAL_ONLY_ORDER_FIELDS.forEach(f => {
+      if (o[f] === undefined && local[f] !== undefined) o[f] = local[f];
+    });
+  });
+  // Órdenes que solo existen local (POs que Code.gs todavía no lleva): sin esto el pull las borra.
+  const _sheetHas = {};
+  orders.forEach(o => { if (o && o.jlzPo != null) _sheetHas[String(o.jlzPo).trim()] = true; });
+  Object.keys(localByPo).forEach(po => { if (!_sheetHas[String(po).trim()]) orders.push(localByPo[po]); });
+  return orders;
 }
 
 // ── PULL SALES FROM SHEETS ──
