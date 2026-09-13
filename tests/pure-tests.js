@@ -44,7 +44,13 @@ var _PRISTINO_NOMBRES = [
   'invmOriginMatch','_invmKnownOrigin',
   // El test de C08 cambia `addDirectShip` por un espía; sin restaurarlo, el grupo de C14 "marcaba"
   // cajas como cruzadas y no pasaba nada, y medía un contenedor entero donde había 150.
-  'addDirectShip','removeDirectShip','_mutateOrderDirectShip','mtoEarmarkedTotal'
+  'addDirectShip','removeDirectShip','_mutateOrderDirectShip','mtoEarmarkedTotal',
+  // Segunda tanda: el Simulator (U03 stubea fechas y estado) y el build-up (grupos viejos lo
+  // reemplazan) se filtraban a los tests de U04 y U14, que pasaban aislados y fallaban en la suite.
+  'isoWeek','normalizeDate','simGetState','mtoNetModel','renderBuildupPanel',
+  // Tres grupos viejos reemplazan `document` y no lo devuelven: el Simulator buscaba su tabla en el
+  // document de otro test, no la encontraba y proyectaba cero filas.
+  'document','localStorage'
 ];
 var _PRISTINO = {};
 _PRISTINO_NOMBRES.forEach(function(n){ try { _PRISTINO[n] = eval(n); } catch (e) {} });
@@ -54,6 +60,9 @@ group = function(nombre){
     if (!(n in _PRISTINO)) return;
     try { eval(n + ' = _PRISTINO[' + JSON.stringify(n) + ']'); } catch (e) {}
   });
+  // No es una función sino el cache de settings: el test de C01 lo deja con marcas made to order, y
+  // el getOrders() real las aplica a las órdenes del grupo siguiente. Cada grupo arranca vacío.
+  _lastPushedSettings = {};
   return _grupoSinLimpiar(nombre);
 };
 

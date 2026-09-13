@@ -11,6 +11,9 @@ set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 HTML="${1:-$DIR/../JLZ_Container_Intelligence.html}"
+# Los tests que leen el HTML directo (no por extract.py) tienen que leer ESTE, no el de la carpeta
+# de trabajo: si no, correr la suite contra otra copia mide el archivo equivocado.
+export JLZ_HTML="$HTML"
 RUNBOOK="${2:-$DIR/../.claude/commands/lunes.md}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
