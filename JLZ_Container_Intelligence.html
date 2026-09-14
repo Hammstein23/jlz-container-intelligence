@@ -12044,6 +12044,12 @@ function cmCasesInBuyPack(c, prod){
   if(!(cs > 0)) return 0;
   var caseLb = (typeof productCaseLb === 'function') ? productCaseLb(prod) : 30;
   if(!(caseLb > 0)) return cs;
+  // Lo que trae el import YA viene en la caja estándar del producto: parseOpenOrders convierte
+  // `qty × packLbs / caseLb` desde el 2026-08-20. Esta función se agregó el 2026-09-04 creyendo que
+  // llegaba en la caja vendida y lo convertía otra vez: 21 cajas de 10 lb de cúrcuma, que el import
+  // guarda como 7, salían 2,33 — demanda subcontada y compra de menos. Solo se convierte lo que no
+  // pasó por el import.
+  if(c && c.source === 'import') return cs;
   var pk = null;
   try{ if(typeof ooClassifySku === 'function' && c && c.sku) pk = (ooClassifySku(c.sku) || {}).packLbs; }catch(e){}
   return (pk > 0) ? (cs * pk / caseLb) : cs;
@@ -16241,7 +16247,10 @@ function nowcastProductModel(m, p, origin){
 // Demand model for any product (ginger via prod model; focused product live; else built on-demand from raw rows).
 function invmProductModel(p,origin){
   origin=origin||'all';
-  if(origin==='all'){
+  // Los atajos de 'all' devuelven modelos SIN netear lo comprado contra orden, e invmProductStats da por
+  // hecho que viene neto. Solo se usan si no hay nada que netear; si hay, se arma por el camino que netea.
+  var _hayMto=false; try{ _hayMto = origin==='all' && typeof mtoByCustomer==='function' && Object.keys(mtoByCustomer(p, (typeof dmWindow==='function')?dmWindow(p):13)||{}).length>0; }catch(e){}
+  if(origin==='all' && !_hayMto){
     if(p==='ginger') return (typeof qaModelG==='function')?qaModelG():null;
     if(typeof productFocus==='function' && productFocus()===p && typeof _dmModel!=='undefined' && _dmModel) return _dmModel;
   }
@@ -17017,7 +17026,12 @@ function invmProjectionHTML(s){
   var f=function(n){ return Math.round(n||0).toLocaleString('en-US'); };
   var f1=function(n){ return (!isFinite(n))?'∞':(Math.round((n||0)*10)/10).toFixed(1); };
   if(!(s.weeklyLbs>0)) return '';   // no demand → cannot project
-  var weeklyCases=s.weeklyCases, safetyCases=s.safetyWks*weeklyCases, targetCases=s.targetWks*weeklyCases;
+  // La merma se cobra del lado de la DEMANDA, igual que invmProductStats y la tarjeta de compra de arriba.
+  // Antes la tabla usaba lo vendido sin merma: con committed semanal arrancaba del físico menos merma, y
+  // sin él arrancaba del disponible y la merma no se contaba en ningún lado — misma pantalla, 3.0 semanas
+  // de cover en la tabla contra 2.85 en la tarjeta.
+  var _pinfl=(s.shrinkPct>0)?(1/(1-Math.min(0.6,s.shrinkPct/100))):1;
+  var weeklyCases=(s.weeklyCases||0)*_pinfl, safetyCases=s.safetyWks*weeklyCases, targetCases=s.targetWks*weeklyCases;
   var arrivals=invmProductArrivals(s.p, s.origin), scen=whatifArrivals(s.p, s.origin), hasArr=false, hasScen=false;
   var base=new Date();
   var baseMon; try{ baseMon=(typeof dmWeekKey==='function')?dmWeekKey(base):null; }catch(e){ baseMon=null; }
@@ -17032,7 +17046,7 @@ function invmProjectionHTML(s){
   var _projSnap=null;
   try{ var _pst=(typeof prodInvState==='function')?prodInvState():null;
        if(_pst && _pst._savedAt) _projSnap=new Date(_pst._savedAt+'T00:00:00'); }catch(e){}
-  var weeks=[], start=hasCommWk ? (s.effOnHandCases!=null?s.effOnHandCases:s.onHandCases) : (s.availCases!=null?s.availCases:s.onHandCases), firstShort=null;
+  var weeks=[], start=hasCommWk ? s.onHandCases : (s.availCases!=null?s.availCases:s.onHandCases), firstShort=null;
   for(var i=0;i<N;i++){
     var dd=new Date(baseDate.getTime()+i*7*86400000);
     var wkISO; try{ wkISO=(typeof dmWeekKey==='function')?dmWeekKey(dd):dd.toISOString().slice(0,10); }catch(e){ wkISO=dd.toISOString().slice(0,10); }
@@ -17107,6 +17121,10 @@ function invmProjectionHTML(s){
     var shortWk=weeks[firstShort];
     var orderByIdx=Math.max(0, firstShort-Math.ceil(s.leadWks));
     var orderByISO=weeks[orderByIdx].wkISO;
+    // La fecha la pone la tarjeta de compra de arriba (bpProtectPlan): dos fechas distintas para el mismo
+    // contenedor en la misma pantalla es no saber cuál creer.
+    try{ var _gOB=(typeof invmBuySuggestion==='function')?invmBuySuggestion(s.p, s.origin):null;
+         if(_gOB && _gOB.orderBy) orderByISO=String(_gOB.orderBy).slice(0,10); }catch(e){}
     vcls=(s.status==='ur')?'ur':'re';
     verdict='<b>'+((s.status==='ur')?'Urgent.':'Reorder.')+'</b> Drops below safety ('+f(safetyCases)+' cs) on <b>'+lbl(shortWk.wkISO)+'</b> (week +'+firstShort+'). '
       +'Lead '+f1(s.leadWks)+' wk → place the order by <b>'+lbl(orderByISO)+'</b> at the latest. Suggested: <b>'+f(_vOrd)+' cs</b> to reach target.';
@@ -17145,7 +17163,7 @@ function invmProjectionHTML(s){
         var _hinfl=(s.shrinkPct>0)?(1/(1-Math.min(0.6,s.shrinkPct/100))):1;
         hw.forEach(function(w){ w.arrivals=_harr[w.week]||[]; w.arrCases=w.arrivals.reduce(function(t,a){return t+a.cases;},0); w.out=Math.round(w.sold*_hinfl); });
         var _hsnaps=(typeof stockSnapFor==='function')?stockSnapFor(s.p):{};
-        var _hcursor=(hasCommWk ? (s.effOnHandCases!=null?s.effOnHandCases:s.onHandCases) : (s.availCases!=null?s.availCases:s.onHandCases));
+        var _hcursor=(hasCommWk ? s.onHandCases : (s.availCases!=null?s.availCases:s.onHandCases));
         for(var _i=hw.length-1;_i>=0;_i--){ var _w=hw[_i];
           _w.end=_hcursor; _w.start=_hcursor+_w.out-_w.arrCases; _w.est=true;
           if(_hsnaps[_w.week]!=null){ _w.end=_hsnaps[_w.week]; _w.start=_hsnaps[_w.week]+_w.out-_w.arrCases; _w.est=false; }
@@ -17226,7 +17244,7 @@ function invmProjectionHTML(s){
       +'<div style="color:var(--gray-300);font-size:18px;font-weight:300">=</div>'
       +'<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--jlz);font-family:var(--fb);font-weight:600">Available to sell</div><div style="font-size:17px;font-weight:700;color:var(--jlz);font-family:var(--fm)">'+f(s.availCases)+'<span style="font-size:10px;color:var(--gray-400);font-weight:400"> cs</span></div></div>'
       +'<div style="margin-left:auto;font-size:10px;color:var(--gray-400);max-width:230px;line-height:1.45">'+(hasCommWk
-          ? ('Projection starts at <b style="color:var(--gray-600)">'+f(s.effOnHandCases)+' cs</b> ('+((s.shrinkPct>0)?(f(s.onHandCases)+' on-hand less '+f1(s.shrinkPct)+'% shrink'):'on-hand')+') and books committed in its own week.')
+          ? ('Projection starts at <b style="color:var(--gray-600)">'+f(s.onHandCases)+' cs</b> (on-hand'+((s.shrinkPct>0)?('; the '+f1(s.shrinkPct)+'% shrink is added to weekly demand'):'')+') and books committed in its own week.')
           : ('Projection starts at <b style="color:var(--gray-600)">'+f(s.availCases)+' cs</b> (available).'))+'</div>'
     +'</div>'
     + histHtml
@@ -17419,7 +17437,7 @@ function invmAnalysisHTML(s){
         + '<div style="margin-top:2px;color:var(--gray-500)">Total business ≈ <b>'+f(s.weeklyCases+s.directShipCases)+' cs/wk</b> <span style="color:var(--gray-400)">· both on the '+(s.win||13)+'-wk window</span></div>'
       + '</div>') : '')
     + '<div class="ipv-kpis">'
-      + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Available to sell<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Available · free to sell</span><span class="jlz-td">What\'s truly free to sell now: physical lots on hand, minus expected shrink, minus orders already sold but not yet shipped (committed: this week and any later week already booked).</span><span class="jlz-tf">= on-hand × (1 − shrink%) − committed</span></span></span></div><div class="big">'+f(s.availCases)+' <small>cs</small></div><div class="note">'+availNote+'</div></div>'
+      + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Available to sell<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Available · free to sell</span><span class="jlz-td">What\'s truly free to sell now: physical lots on hand minus orders already sold but not yet shipped (committed: this week and any later week already booked).</span><span class="jlz-tf">= on-hand − committed (shrink is added to weekly demand, not taken from stock)</span></span></span></div><div class="big">'+f(s.availCases)+' <small>cs</small></div><div class="note">'+availNote+'</div></div>'
       + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Current cover<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Current cover</span><span class="jlz-td">How many weeks your free stock lasts at the current sales pace.</span><span class="jlz-tf">= Available ÷ weekly demand</span></span></span></div><div class="big">'+covTxt+'</div><div class="note">available ÷ demand/wk</div></div>'
       + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Target cover<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Target cover</span><span class="jlz-td">Weeks of stock you want to hold before reordering: supplier lead time plus a safety buffer for demand swings.</span><span class="jlz-tf">= lead + safety (z × CV × √lead)</span></span></span></div><div class="big">'+tgtTxt+'</div><div class="note">lead '+f1(s.leadWks)+' + safety '+f1(s.safetyWks)+'</div></div>'
       + '<div class="ipv-kpi"><div class="lbl"><span class="jlz-gloss">Suggested order<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Suggested order</span><span class="jlz-td">Cases to buy now to reach target cover, counting what is already bought and on the way. Zero if you are already above target.</span><span class="jlz-tf">= (target cover × wk demand) − (available + incoming)</span></span></span></div><div class="big" style="color:'+(_ord>0?'var(--jlz)':'var(--gray-400)')+'">'+ordTxt+'</div><div><span class="ipv-st '+stCls+'">'+stTxt+'</span></div></div>'
@@ -25426,7 +25444,10 @@ function renderHome() {
       out.innerHTML = '<div style="padding:14px;text-align:center;color:var(--gray-300);font-size:11px;font-family:var(--fm);background:var(--gray-50);border:1px dashed var(--gray-200);border-radius:var(--r)">Load the inventory snapshot and sales history in the Buy Planner to power this digest</div>';
     } else {
       const fmtD = d => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      const sea = dg.seaDeadline, air = dg.airDeadline;
+      // La fecha de ORDEN es la de la tarjeta del Buy Planner: la última que no baja del colchón
+      // (bpProtectPlan). Anclada al quiebre, Home daba ~3 semanas más de las que hay. Sin plan, la del quiebre.
+      const _prot = dg.protect && dg.protect.protect;
+      const sea = _prot ? { date: _prot.orderBy + 'T12:00:00', daysLeft: _prot.daysLeft } : dg.seaDeadline, air = dg.airDeadline;
 
       let chip, chipBg, chipBorder, advice;
       if (!dg.shortfall) {

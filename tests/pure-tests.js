@@ -2697,7 +2697,11 @@ group('invmProjectionHTML · los otros cuatro también prorratean su primera sem
                         return m ? parseInt(m[1].replace(/,/g,''), 10) : null; };
 
   SNAP = null;         check('sin fecha de conteo NO prorratea (lado seguro)', wk1(), 117);
-  ok('...pero lo DICE, en vez de quedarse callado', /full week/.test(invmProjectionHTML(_s)));
+  // El aviso solo corresponde si a la semana ya le faltan días de venta: un lunes la semana está entera
+  // y consumirla completa es lo correcto. Estaba escrito para cualquier día y fallaba los lunes.
+  var _faltanDias = dmWeekPace(new Date()).ahead < DM_SELL_DAYS;
+  ok('...pero lo DICE, en vez de quedarse callado (y un lunes no hace falta)',
+     /full week/.test(invmProjectionHTML(_s)) === _faltanDias);
   SNAP = '2026-08-31'; check('conteo del lunes: la semana entera está por delante', wk1(), 117);
   SNAP = '2026-09-03'; check('conteo del jueves: solo la mitad', wk1(), 59);
   ok('y con fecha muestra de cuándo es el conteo', /Counted 2026-09-03/.test(invmProjectionHTML(_s)));
@@ -5038,8 +5042,8 @@ group('invmProjectionHTML · la cabecera On-hand - Committed = Available cierra 
   var t2 = terms(h2);
   check('con órdenes por semana la cadena también cierra',
         t2 ? t2.slice(1, -1).reduce(function(x, y){ return x - y; }, t2[0]) : null, 480);
-  ok('y la nota dice de dónde salen las 475 con las que arranca la proyección',
-     /475 cs<\/b> \(500 on-hand less 5\.0% shrink\)/.test(h2));
+  ok('y la nota dice que arranca del físico y la merma va a la demanda',
+     /500 cs<\/b> \(on-hand; the 5\.0% shrink is added to weekly demand\)/.test(h2));
 })();
 } catch (_e) {
   // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
@@ -5215,6 +5219,62 @@ group('U36 · invmStockableWeekly netea lo marcado tambien la semana despues de 
   // Una excepción no puede cortar la suite: todo lo que viene después quedaría sin correr.
   ok('U36 no tira excepción: ' + ((_e && _e.message) || _e), false);
 }
+
+// ═══ Auditoría de los tres modos · tercera tanda ════════════════════════════════════════════
+try {
+group('U38 · el committed importado no se convierte dos veces');
+check('lo importado ya viene en caja de compra: 7 son 7',
+      cmCasesInBuyPack({ cases:7, sku:'OG-TUR-10Lbs-PR-FJ', source:'import' }, 'turmeric'), 7);
+// (La conversión de lo que NO viene del import la cubre el grupo 'cmCasesInBuyPack · una caja de 5 lb…'.)
+} catch (_e) { ok('U38 no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
+try {
+group('U41 · Home muestra la misma fecha de orden que la tarjeta del Buy Planner');
+ok('lee el plan de protección antes que el plazo del quiebre',
+   /dg\.protect && dg\.protect\.protect/.test(String(renderHome)));
+} catch (_e) { ok('U41 no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
+try {
+group('U42/U47 · la proyección cobra la merma en la demanda y usa la fecha de la tarjeta');
+(function(){
+  invmProductArrivals = function(){ return {}; };
+  whatifArrivals      = function(){ return {}; };
+  invmCommittedByWeek = function(){ return {}; };
+  prodInvState        = function(){ return {}; };
+  // 95 cs/semana vendidas con 5% de merma salen 100 de la cámara: el colchón de 2 semanas son 200.
+  var ok1 = { p:'turmeric', origin:'Fiji', label:'Turmeric', weeklyLbs:2850, weeklyCases:95, shrinkPct:5,
+              safetyWks:2, targetWks:6, leadWks:2, onHandCases:100000, availCases:100000, effOnHandCases:95000, hasModel:true };
+  ok('el colchón de la tabla sale de la demanda con merma (200 cs, no 190)', /\(200 cs\)/.test(invmProjectionHTML(ok1)));
+  invmBuySuggestion = function(){ return { orderBy:'2026-10-05' }; };
+  invmOrderCases = function(){ return 500; };   // hay que comprar: el veredicto imprime fecha
+  var corto = { p:'turmeric', origin:'Fiji', label:'Turmeric', weeklyLbs:2850, weeklyCases:95, shrinkPct:5, status:'re',
+                safetyWks:2, targetWks:6, leadWks:2, onHandCases:50, availCases:50, effOnHandCases:47, orderCases:500, hasModel:true };
+  var hv = invmProjectionHTML(corto);
+  var lblOB = (typeof dmcDateLabel==='function' && dmcDateLabel('2026-10-05')) || '10-05';
+  ok('la fecha de orden del veredicto es la de la tarjeta de compra', hv.indexOf('order by <b>' + lblOB + '</b>') > -1);
+})();
+} catch (_e) { ok('U42/U47 no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
+try {
+group('U43 · el tooltip de Available to sell dice la fórmula que se usa');
+ok('no promete restar merma del stock', !/1 − shrink%/.test(String(invmAnalysisHTML)));
+ok('dice on-hand − committed', /= on-hand − committed/.test(String(invmAnalysisHTML)));
+} catch (_e) { ok('U43 no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
+try {
+group('U30 · el origen "all" no se salta el neteo de lo comprado contra orden');
+(function(){
+  var ATAJO = { atajo:true };
+  qaModelG = function(){ return ATAJO; };
+  _dmRawAll = [{ prod:'ginger', oitem:'Peru', c:'X', lbs:30 }];
+  dmBuild = function(){ return { armado:true }; };
+  mtoNetRows = function(r){ return r; };
+  mtoByCustomer = function(){ return {}; };
+  ok('sin nada contra orden puede usar el atajo', invmProductModel('ginger','all') === ATAJO);
+  mtoByCustomer = function(){ return { 'Sol-ti': 20 }; };
+  ok('con algo contra orden arma el modelo que netea', invmProductModel('ginger','all') !== ATAJO);
+})();
+} catch (_e) { ok('U30 no tira excepción: ' + ((_e && _e.message) || _e), false); }
 
 // ═══ El entorno se limpia entre grupos ══════════════════════════════════════
 // Guardián del arreglo de arriba. Si alguien saca la restauración de `group()`, esto falla y
