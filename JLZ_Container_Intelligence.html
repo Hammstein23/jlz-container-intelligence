@@ -4512,12 +4512,13 @@ function authInjectLogo() {
   <div id="bp-snapshot-banner" class="bp-status">
     <div class="bp-st-stat"><div class="bp-st-l">Snapshot</div><div class="bp-st-v" style="font-size:13px"><input type="date" id="bp-stock-date" oninput="renderBuyPlanner()" class="bp-st-date"/><span class="bp-st-sub" id="bp-stock-date-wk">—</span></div></div>
     <div class="bp-st-stat"><div class="bp-st-l"><span class="jlz-gloss">On hand<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">On hand · gross</span><span class="jlz-td">Total physical stock in the cooler: free-to-sell lots + already-reserved (committed). It's gross — the model subtracts committed from here, so reserved cases are counted once, not twice.</span><span class="jlz-tf">= free lots + committed</span></span></span></div><div class="bp-st-v"><span id="bp-onhand-gross" class="bp-st-num" style="background:none;border:none;padding:0">—</span><span class="bp-st-sub">cs · gross</span></div></div>
-    <div class="bp-st-stat"><div class="bp-st-l"><span class="jlz-gloss">Committed<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Committed · reserved</span><span class="jlz-td">Orders already sold but not yet shipped (from your Unshipped report), current week only. They reduce what you can sell again.</span><span class="jlz-tf">Σ unshipped orders (this week)</span></span></span></div><div class="bp-st-v"><span id="bp-committed-cs" class="bp-st-num" style="background:none;border:none;padding:0;color:#7c3aed">—</span><span class="bp-st-sub">reserved</span></div></div>
+    <div class="bp-st-stat"><div class="bp-st-l"><span class="jlz-gloss">Committed<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Committed · reserved</span><span class="jlz-td">Orders already sold but not yet shipped (from your Unshipped report) for this week, plus older orders past their delivery date that are still not invoiced while their cases are still in the inventory count. They reduce what you can sell again.</span><span class="jlz-tf">Σ this week's orders + not invoiced</span></span></span></div><div class="bp-st-v"><span id="bp-committed-cs" class="bp-st-num" style="background:none;border:none;padding:0;color:#7c3aed">—</span><span class="bp-st-sub" id="bp-committed-sub">reserved</span></div></div>
     <div class="bp-st-stat"><div class="bp-st-l"><span class="jlz-gloss">Available<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Available · free to sell</span><span class="jlz-td">What's truly free to sell now: on-hand minus committed, minus expected shrink on the lots.</span><span class="jlz-tf">= free lots × (1 − shrink%)</span></span></span> <span style="font-weight:400;color:var(--gray-400);font-size:9px">free</span></div><div class="bp-st-v"><input type="number" id="bp-stock-lbs" value="56520" readonly title="Free to sell — derived from your inventory lots (manage them in the Inventory module)" class="bp-st-num" style="background:var(--gray-50);color:var(--gray-600);cursor:default"/><span class="bp-st-sub">lb · <span id="bp-stock-cases">— cases</span></span></div></div>
     <div class="bp-st-stat"><div class="bp-st-l"><span class="jlz-gloss">Coverage<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Coverage</span><span class="jlz-td">How many weeks your free stock lasts at the current sales pace.</span><span class="jlz-tf">= Available ÷ weekly demand</span></span></span></div><div class="bp-st-v"><span id="bp-coverage" style="color:var(--green-700)">—</span><span class="bp-st-sub">wks</span></div></div>
     <div class="bp-st-stat" style="border-right:none"><div class="bp-st-l"><span class="jlz-gloss">Avg age<span class="jlz-i">i</span><span class="jlz-tip"><span class="jlz-tt">Avg age</span><span class="jlz-td">Average days the lots have been in the cooler. FEFO order: the oldest sells first.</span></span></span></div><div class="bp-st-v"><span id="bp-status-age">—</span><span class="bp-st-sub">oldest <span id="bp-status-old">—</span></span></div></div>
     <div class="bp-st-flag" id="bp-status-flag"><span class="bp-st-ok">—</span></div>
     <div id="bp-snapshot-warning" class="bp-st-warn-stale" style="display:none">⚠ Snapshot is <span id="bp-snapshot-age">—</span> days old · refresh inventory</div>
+    <div id="bp-unbilled-note" class="bp-st-warn-stale" style="display:none"></div>
   </div>
 
   <!-- ── 4b. INVENTORY COST (orders you're holding) ───────────────── -->
@@ -12068,6 +12069,60 @@ function cmPlanEntries(){
   if(!Array.isArray(all)) return [];                 // store vacío o todavía sin cargar
   return all.filter(function(c){ return c && !(typeof _cmShipped === 'function' && _cmShipped(c)); });
 }
+// ── Órdenes SIN FACTURAR: sus cajas siguen en el conteo, pero no están libres ────────────────────
+// Dos reglas que por separado están bien y juntas inflaban el stock libre:
+//  · En el Inventory Report el W-lot de una orden conserva su Qty on Hand hasta que la orden se
+//    FACTURA, no cuando sale (serie 09-10 → 09-14: desaparecieron los W-lots de las órdenes facturadas
+//    y seguían llenos todos los de órdenes abiertas, incluida una de junio con 87 días "en piso").
+//  · El committed de semanas pasadas no lo resta nadie: committedInvForWeek va semana por semana y
+//    prodCommittedTotal cuenta desde la semana en curso.
+// Un lunes, toda orden de la semana anterior sin facturar quedaba DENTRO del bruto y FUERA del
+// committed: contaba como libre. El 2026-09-14 eran 846 cs de ginger (Sol-ti 700) — libre 2.835 cuando
+// eran ~1.990, y la orden por mar salía una semana tarde.
+// Se retiene solo lo que el conteo TODAVÍA tiene: el W-lot de la orden cargado en el inventario (un
+// W-lot es de una sola orden; un lote real lo comparten muchas y no prueba nada). Si la mercadería salió
+// y el almacén ya bajó el lote, no hay nada que retener: retenerlo igual descontaría dos veces, que fue
+// el caso Sol-ti del 2026-09-03.
+// Entran:
+//  · las de semanas pasadas — las de la semana en curso ya las resta el committed;
+//  · las marcadas "shipped" de cualquier semana: salieron, pero mientras su W-lot siga en el conteo esas
+//    cajas son fantasma, y sin esto la marca volvía a inflar el libre.
+// No entran lo cargado a mano (no se refresca con el import) ni lo cruzado (nunca estuvo en la cámara).
+// `opts.store === 'bp'` mira el store de ginger-Perú (filas W:<lote>); si no, el de los otros productos.
+// Cada pantalla retiene contra el MISMO inventario del que saca su stock.
+function cmUnbilled(p, origin, opts){
+  var out = { held: 0, lines: [] };
+  try{
+    var wk0 = dmWeekKey(new Date());
+    var left = {};
+    if(opts && opts.store === 'bp'){
+      var rows = (bpInvState() || {}).rows || {};
+      Object.keys(rows).forEach(function(k){ if(/^W:/.test(k)) left[k.slice(2)] = +((rows[k] || {}).cases) || 0; });
+    } else {
+      ((prodInvFor(p) || {}).lots || []).forEach(function(l){
+        if(l && l.lot && !l.excluded) left[String(l.lot)] = (left[String(l.lot)] || 0) + (+l.cases || 0);
+      });
+    }
+    var cd = _cmCrossDock(p);
+    // El store completo, no cmPlanEntries(): la despachada sin facturar también está en el conteo.
+    getCommitted().forEach(function(c){
+      if(!c || c.type !== 'inv' || c.source !== 'import' || _cmProd(c) !== p) return;
+      var shipped = _cmShipped(c);
+      if(!c.wk || (!shipped && String(c.wk) >= wk0)) return;
+      if(_cmIsCrossDock(c, cd)) return;
+      if(origin && origin !== 'all'){ var o = _cmOriginFor(c); if(o && o !== origin) return; }
+      var cases = cmCasesInBuyPack(c, p), lot = String(c.lot || '');
+      var inCount = (lot && invmIsWLot(lot)) ? (left[lot] || 0) : 0;
+      var held = Math.max(0, Math.min(cases, inCount));
+      if(held) left[lot] = inCount - held;
+      out.lines.push({ key: _cmKey(c), customer: c.customer || '', orderNo: c.orderNo || '', date: c.date || '',
+                       lot: lot, cases: cases, held: held, shipped: shipped, stale: !!c.stale });
+      out.held += held;
+    });
+    out.lines.sort(function(a, b){ return (b.held - a.held) || (b.cases - a.cases); });
+  }catch(e){}
+  return out;
+}
 // ── El committed CRUZADO no consume stock: esa mercadería nunca entró ────────────────────────────
 // Va del puerto al cliente, así que no está en el físico. Restarla del stock libre lo hunde por
 // mercadería que nadie tiene en cámara — el mismo doble descuento que ya se cerró en la proyección.
@@ -12318,7 +12373,8 @@ function parseOpenOrders(rows, fulfilledMax) {
     var stale = !!(staleISO && iso < staleISO);
     var pending = !stale && !!(fulfilledMax && iso <= fulfilledMax);
     if(stale) st.stale++; else if(pending) st.pending++;
-    out.push({ customer: cust, wk: wk, date: iso, cases: cases, type: 'inv', source: 'import', shipped: /^SHIPPED$/i.test(String(r['Status'] || '').trim()), orderNo: String(r['Order No'] || ''), sku: sku, pending: pending, stale: stale, product: cls.product, origin: ooOriginFromSku(sku, cls.product) });
+    var lot = String(r['Lot #'] != null ? r['Lot #'] : (r['Lot'] != null ? r['Lot'] : '')).trim();
+    out.push({ customer: cust, wk: wk, date: iso, cases: cases, type: 'inv', source: 'import', shipped: /^SHIPPED$/i.test(String(r['Status'] || '').trim()), orderNo: String(r['Order No'] || ''), sku: sku, pending: pending, stale: stale, product: cls.product, origin: ooOriginFromSku(sku, cls.product), lot: lot });
     st.kept++;
     st.byProduct[cls.product] = (st.byProduct[cls.product] || 0) + 1;
   });
@@ -12389,8 +12445,10 @@ function dmcNormalizeUnshipped(rows) {
     var sku = String(r['SKU'] == null ? '' : r['SKU']).trim();
     if (!sku) return;                                                      // sub-total / blank line
     var st = String(r['Status'] == null ? '' : r['Status']).trim() || curStat;
+    // El lote va en la línea. Con él se sabe si las cajas de una orden sin facturar siguen en el conteo
+    // de inventario (su W-lot) — ver cmUnbilled.
     out.push({ 'SKU': sku, 'Fulfillment Date': curDate, 'Order No': curOrd, 'Order qty': r['Total Billable Qty'],
-               'Customer Name': curCust, 'Status': st });
+               'Customer Name': curCust, 'Status': st, 'Lot #': r['Lot #'] });
   });
   return out;
 }
@@ -16466,6 +16524,9 @@ function invmProductStats(p,origin){
   // NOTE: on-hand here is the PHYSICAL lot count. Load it gross (including reserved cases) so this
   // subtraction nets once; loading it already-net double-counts. prodCommittedTotal is current-week only.
   var committedCases=(typeof prodCommittedTotal==='function')?prodCommittedTotal(p,origin):0;
+  // Órdenes sin facturar de semanas pasadas cuyas cajas el conteo todavía tiene: tampoco están libres.
+  var _unb=(typeof cmUnbilled==='function')?cmUnbilled(p,origin):{held:0,lines:[]};
+  var unbilledCases=_unb.held||0;
   // ── La merma va del lado de la DEMANDA, no del stock ──────────────────────────────────────────
   // Antes el disponible salía de `effOnHandCases` (= físico × (1−merma)), así que con 48 cajas en
   // cámara la pantalla decía 46 y parecía que dos se habían evaporado del conteo. Físicamente están:
@@ -16474,7 +16535,7 @@ function invmProductStats(p,origin){
   // que era la otra mitad de la inconsistencia.
   // La cobertura da igual (es la misma división puesta al revés); lo que cambia es que el número que
   // se muestra como disponible ahora es el real.
-  var availCases=Math.max(0, onHandCases-committedCases), availLbs=availCases*caseLb;
+  var availCases=Math.max(0, onHandCases-committedCases-unbilledCases), availLbs=availCases*caseLb;
   var weeklyLbsBuy=(shrinkF>0)?(weeklyLbs/shrinkF):weeklyLbs;      // lo que hay que SACAR de cámara por semana
   var weeklyCasesBuy=weeklyLbsBuy>0?weeklyLbsBuy/caseLb:0;
   // Record this week's on-hand so the past-weeks block becomes exact going forward (same as ginger).
@@ -16510,7 +16571,7 @@ function invmProductStats(p,origin){
   if(weeklyLbs>0){ if(coverPosWks<leadWks) status='ur'; else if(coverPosWks<targetWks) status='re'; }
   return {p:p,meta:meta,label:meta.label||p,caseLb:caseLb,lots:lots,allLots:allLots,onHandCases:onHandCases,onHandLbs:onHandLbs,costVal:costVal,excludedCases:excludedCases,excludedLbs:excludedLbs,
     origin:origin,origins:origins,supList:supList,
-    shrinkPct:shrinkPct,effOnHandCases:effOnHandCases,effOnHandLbs:effOnHandLbs,committedCases:committedCases,availCases:availCases,availLbs:availLbs,directShipCases:directShipCases,
+    shrinkPct:shrinkPct,effOnHandCases:effOnHandCases,effOnHandLbs:effOnHandLbs,committedCases:committedCases,unbilledCases:unbilledCases,unbilledLines:_unb.lines,availCases:availCases,availLbs:availLbs,directShipCases:directShipCases,
     hasModel:!!m,rr13:rr13,win:win,presMix:(m&&m.presMix)||[],weeklyLbs:weeklyLbs,weeklyCases:weeklyCases,
     weeklyLbsBuy:weeklyLbsBuy,weeklyCasesBuy:weeklyCasesBuy,mtoCases:_mto,demandOverride:ovr,cv:cv,nWeeks:vals.length,
     lead:lead,leadWks:leadWks,z:z,serviceLevel:svc,safetyWks:safetyWks,targetWks:targetWks,coverWks:coverWks,
@@ -17301,7 +17362,10 @@ function invmProjectionHTML(s){
   var _projSnap=null;
   try{ var _pst=(typeof prodInvState==='function')?prodInvState():null;
        if(_pst && _pst._savedAt) _projSnap=new Date(_pst._savedAt+'T00:00:00'); }catch(e){}
-  var weeks=[], start=hasCommWk ? s.onHandCases : (s.availCases!=null?s.availCases:s.onHandCases), firstShort=null;
+  // Lo sin facturar (cmUnbilled) sale de la foto, como el committed: `availCases` ya lo trae neto, el
+  // físico no.
+  var _unbCs=+s.unbilledCases||0;
+  var weeks=[], start=hasCommWk ? (s.onHandCases-_unbCs) : (s.availCases!=null?s.availCases:s.onHandCases), firstShort=null;
   for(var i=0;i<N;i++){
     var dd=new Date(baseDate.getTime()+i*7*86400000);
     var wkISO; try{ wkISO=(typeof dmWeekKey==='function')?dmWeekKey(dd):dd.toISOString().slice(0,10); }catch(e){ wkISO=dd.toISOString().slice(0,10); }
@@ -17418,7 +17482,7 @@ function invmProjectionHTML(s){
         var _hinfl=(s.shrinkPct>0)?(1/(1-Math.min(0.6,s.shrinkPct/100))):1;
         hw.forEach(function(w){ w.arrivals=_harr[w.week]||[]; w.arrCases=w.arrivals.reduce(function(t,a){return t+a.cases;},0); w.out=Math.round(w.sold*_hinfl); });
         var _hsnaps=(typeof stockSnapFor==='function')?stockSnapFor(s.p):{};
-        var _hcursor=(hasCommWk ? s.onHandCases : (s.availCases!=null?s.availCases:s.onHandCases));
+        var _hcursor=(hasCommWk ? (s.onHandCases-_unbCs) : (s.availCases!=null?s.availCases:s.onHandCases));
         for(var _i=hw.length-1;_i>=0;_i--){ var _w=hw[_i];
           _w.end=_hcursor; _w.start=_hcursor+_w.out-_w.arrCases; _w.est=true;
           if(_hsnaps[_w.week]!=null){ _w.end=_hsnaps[_w.week]; _w.start=_hsnaps[_w.week]+_w.out-_w.arrCases; _w.est=false; }
@@ -17495,11 +17559,12 @@ function invmProjectionHTML(s){
       // no cierra y que manda a buscar a la cámara 25 cajas que nadie descontó. Donde la proyección SÍ
       // arranca del físico con merma (hasCommWk), la nota de la derecha dice de dónde sale ese número.
       +'<div style="color:var(--gray-300);font-size:18px;font-weight:300">&minus;</div>'
-      +'<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-family:var(--fb);font-weight:600">Committed</div><div style="font-size:17px;font-weight:700;color:#7c3aed;font-family:var(--fm)">'+f(s.committedCases)+'<span style="font-size:10px;color:var(--gray-400);font-weight:400"> cs</span></div></div>'
+      +'<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-family:var(--fb);font-weight:600">Committed</div><div style="font-size:17px;font-weight:700;color:#7c3aed;font-family:var(--fm)">'+f(s.committedCases+_unbCs)+'<span style="font-size:10px;color:var(--gray-400);font-weight:400"> cs</span></div>'
+        +((_unbCs>0)?('<div style="font-size:9px;color:var(--amber-700);font-family:var(--fm)" title="Orders past their delivery date that are still not invoiced. Their cases are still in the inventory count, so they are not available until they are invoiced.">incl. '+f(_unbCs)+' not invoiced</div>'):'')+'</div>'
       +'<div style="color:var(--gray-300);font-size:18px;font-weight:300">=</div>'
       +'<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--jlz);font-family:var(--fb);font-weight:600">Available to sell</div><div style="font-size:17px;font-weight:700;color:var(--jlz);font-family:var(--fm)">'+f(s.availCases)+'<span style="font-size:10px;color:var(--gray-400);font-weight:400"> cs</span></div></div>'
       +'<div style="margin-left:auto;font-size:10px;color:var(--gray-400);max-width:230px;line-height:1.45">'+(hasCommWk
-          ? ('Projection starts at <b style="color:var(--gray-600)">'+f(s.onHandCases)+' cs</b> (on-hand'+((s.shrinkPct>0)?('; the '+f1(s.shrinkPct)+'% shrink is added to weekly demand'):'')+') and books committed in its own week.')
+          ? ('Projection starts at <b style="color:var(--gray-600)">'+f(s.onHandCases-_unbCs)+' cs</b> (on-hand'+((_unbCs>0)?(' minus '+f(_unbCs)+' not invoiced'):'')+((s.shrinkPct>0)?('; the '+f1(s.shrinkPct)+'% shrink is added to weekly demand'):'')+') and books committed in its own week.')
           : ('Projection starts at <b style="color:var(--gray-600)">'+f(s.availCases)+' cs</b> (available).'))+'</div>'
     +'</div>'
     + histHtml
@@ -17889,7 +17954,8 @@ function invmRunway(p, origin, weeks, opts){
     if(p==='ginger' && origin==='Peru'){                 // store propio: bruto − committed
       try{ var st=bpInvState();
            var br=Object.keys(st.rows||{}).reduce(function(a,k){ return a+(+((st.rows[k]||{}).cases)||0); },0);
-           start=br-((typeof committedInvForWeek==='function')?(committedInvForWeek(dmWeekKey(new Date()),'ginger')||0):0);
+           start=br-((typeof committedInvForWeek==='function')?(committedInvForWeek(dmWeekKey(new Date()),'ginger')||0):0)
+                   -((typeof cmUnbilled==='function')?(cmUnbilled('ginger','all',{store:'bp'}).held||0):0);   // sin facturar, todavía en el conteo
       }catch(e){}
     }
     var shelf=null;
@@ -19111,8 +19177,12 @@ function renderBuyPlanner() {
   const committedNowCases = (_bpNowWk && typeof committedInvForWeek === 'function') ? (committedInvForWeek(_bpNowWk, 'ginger') || 0) : 0;
   // El store ya guarda lo FÍSICO (v2), así que el bruto es directamente lo cargado y lo libre se
   // obtiene restando, igual que en turmeric/garlic/shallots.
+  // Órdenes sin facturar cuyo W-lot sigue en el conteo (ver cmUnbilled): no están libres. Salen de la
+  // foto una sola vez, igual que el committed de la semana.
+  const unbilled = (typeof cmUnbilled === 'function') ? cmUnbilled('ginger', 'all', { store:'bp' }) : { held:0, lines:[] };
+  const unbilledCases = unbilled.held || 0;
   const stockCasesGross = stockCases;
-  const stockCasesFree = Math.max(0, stockCases - committedNowCases);
+  const stockCasesFree = Math.max(0, stockCases - committedNowCases - unbilledCases);
   // Record this week's real on-hand so the history becomes exact from here on (overwrites within the same
   // week, so it always holds the latest reading). Only when there is actual stock loaded.
   try{ if (stockCases > 0 && typeof stockSnapRecord === 'function') stockSnapRecord('ginger', stockCasesFree); }catch(e){}   // la serie viene en LIBRE desde siempre; no se mezcla
@@ -19219,12 +19289,31 @@ function renderBuyPlanner() {
     shown.textContent = Math.round(freeCases * 30).toLocaleString();
     return freeCases;
   }
-  bpShowAvailableFree(stockLbs, committedNowCases);
+  bpShowAvailableFree(stockLbs, committedNowCases + unbilledCases);
   // Phase 2: fill the gross-on-hand and committed summary boxes (Available = the input above).
   const _ohgEl = document.getElementById('bp-onhand-gross');
   if (_ohgEl) _ohgEl.textContent = Math.round(stockCasesGross).toLocaleString();
+  // Lo sin facturar va DENTRO de Committed, así la cuenta de la caja cierra: on hand − committed = available.
+  const _reservedCs = committedNowCases + unbilledCases;
   const _cmEl = document.getElementById('bp-committed-cs');
-  if (_cmEl) _cmEl.textContent = (committedNowCases > 0 ? '−' : '') + Math.round(committedNowCases).toLocaleString();
+  if (_cmEl) _cmEl.textContent = (_reservedCs > 0 ? '−' : '') + Math.round(_reservedCs).toLocaleString();
+  const _cmSub = document.getElementById('bp-committed-sub');
+  if (_cmSub) _cmSub.textContent = unbilledCases > 0 ? ('reserved · incl. ' + Math.round(unbilledCases).toLocaleString() + ' not invoiced') : 'reserved';
+  const _unbEl = document.getElementById('bp-unbilled-note');
+  if (_unbEl) {
+    const _held = (unbilled.lines || []).filter(l => l.held > 0);
+    if (_held.length) {
+      const _e = (typeof libEsc === 'function') ? libEsc : (s => String(s == null ? '' : s).replace(/[&<>"']/g, ''));
+      const _day = iso => ((typeof dmcDateLabel === 'function' && dmcDateLabel(iso)) || String(iso || '').slice(5));
+      const _list = _held.slice(0, 4).map(l => '<b>' + _e(l.customer) + '</b> ' + Math.round(l.held).toLocaleString() + ' cs'
+        + (l.date ? ' (due ' + _e(_day(l.date)) + ')' : '')).join(' · ');
+      _unbEl.innerHTML = '⚠ <b>' + Math.round(unbilledCases).toLocaleString() + ' cs not invoiced yet</b> — '
+        + _held.length + ' order' + (_held.length === 1 ? '' : 's') + ' past delivery, still open in WholesaleWare: ' + _list
+        + (_held.length > 4 ? (' · +' + (_held.length - 4) + ' more') : '')
+        + '. They are not available until they are invoiced.';
+      _unbEl.style.display = '';
+    } else { _unbEl.innerHTML = ''; _unbEl.style.display = 'none'; }
+  }
 
   const sales = bpGetSales();
   const avg4  = bpRollingAvg(sales, 4);
@@ -19364,7 +19453,7 @@ function renderBuyPlanner() {
   // se le escapa es justamente la que hace que un conteo de mitad de semana se consuma dos veces.
   const _snapDate = snapDateStr ? new Date(snapDateStr + 'T00:00:00') : null;
   const _snapWkKey = (_snapDate && typeof dmWeekKey === 'function') ? dmWeekKey(_snapDate) : null;
-  let runningStock = stockCasesGross - (weeksElapsed * weeklyDemand);   // Phase 2: start from gross on-hand; committed is consumed per week below
+  let runningStock = stockCasesGross - unbilledCases - (weeksElapsed * weeklyDemand);   // Phase 2: start from gross on-hand (minus what is not invoiced); committed is consumed per week below
   const rows = futureWeeks.map(fw => {
     const arrivals = pipelineByWeek[fw.week] || [];
     // Frente B: direct-ship cases go port -> customer, never entering the warehouse,
@@ -19479,7 +19568,7 @@ function renderBuyPlanner() {
       // Anchor on the SAME figure the forecast starts from (gross on-hand), so the last historical
       // "Ending stock" lines up exactly with the forecast's first "Starting stock" instead of differing
       // by the committed cases.
-      let cursor = stockCasesGross;
+      let cursor = stockCasesGross - unbilledCases;
       for(let i = wks.length - 1; i >= 0; i--){
         const w = wks[i];
         w.end = cursor;
@@ -24067,6 +24156,8 @@ function simRenderProjection(realOrders, hypoOrders) {
   // El store v2 ya guarda lo bruto, así que no hay nada que sumarle. El committed se sigue consumiendo
   // semana por semana más abajo, que es donde corresponde.
   const stockCasesGross = stockCases;
+  // Igual que el Buy Planner: lo sin facturar que el conteo todavía tiene sale de la foto (cmUnbilled).
+  const unbilledCases = (typeof cmUnbilled === 'function') ? (cmUnbilled('ginger', 'all', { store:'bp' }).held || 0) : 0;
   const baseline = parseInt(document.getElementById('bp-baseline')?.value || '8');
   const shrinkPctInput = parseFloat(document.getElementById('bp-shrink-pct')?.value);
   const shrinkPct = (isFinite(shrinkPctInput) && shrinkPctInput >= 0) ? shrinkPctInput / 100 : 0.14;
@@ -24144,7 +24235,7 @@ function simRenderProjection(realOrders, hypoOrders) {
   const todayWk = isoWeek(new Date().toISOString().slice(0,10));
   const snapWk = snapDateStr ? isoWeek(snapDateStr) : todayWk;
   const weeksElapsed = Math.max(0, todayWk - snapWk);
-  running = stockCasesGross - (weeksElapsed * weeklyDemand);   // Phase 2: start from gross on-hand; committed consumed per week below
+  running = stockCasesGross - unbilledCases - (weeksElapsed * weeklyDemand);   // Phase 2: start from gross on-hand (minus what is not invoiced); committed consumed per week below
 
   let html = '<thead><tr style="background:var(--gray-50);border-bottom:2px solid var(--gray-200)">'
     + '<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em">Week</th>'
@@ -24300,7 +24391,7 @@ function simRenderProjection(realOrders, hypoOrders) {
         { startCases:_simProjRows[0].startingStock, safetyCases:_ssC, leadDays:_lead,
           perOrder:_cpS.perContainer, count:_cpS.containers, calendar: BP_PE_CALENDAR });
       window._simDigest = { scenario:true, stockCases:stockCasesGross, weeklyDemand:weeklyDemand,
-        salesDemand:salesDemand, coverage:(weeklyDemand>0?stockCasesGross/weeklyDemand:0),
+        salesDemand:salesDemand, coverage:(weeklyDemand>0?(stockCasesGross-unbilledCases)/weeklyDemand:0),
         safety:safety, protect:_plS, schedule:_schS,
         rec:{ containers:_cpS.containers, netCases:_cpS.netCases, netNeeded:_cpS.netNeeded,
               orderUpTo:_cpS.orderUpTo, projAtArrival:_cpS.projAtArrival, coverWks:_cpS.coverWks,
