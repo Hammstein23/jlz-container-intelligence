@@ -469,6 +469,11 @@ Si algo no cuadra, **pará ahí**. Contexto de qué prueba cada capa: `tests/REA
 
 Tabla corta: run-rate y cobertura por producto, y qué comprar según el Buy Planner.
 
+Y el **Repack follow-up** de Inventory (sale de los tres imports de hoy): lo **rojo** se limpia en
+WholesaleWare (órdenes de hace semanas, lotes devueltos o facturados que siguen contados), lo
+**ámbar** se le pregunta al almacén (entrega vencida, sigue en picking), lo **violeta** hay que
+facturarlo. Nombrá lo que pese en cajas. La fecha de despacho no está en ningún reporte: no la inventes.
+
 - **Marcá cualquier movimiento grande contra la semana pasada.** Un run-rate que salta de golpe
   casi siempre es un dato raro, no una tendencia.
 - **Ventana de reacción:** ginger 6 semanas, los otros 3. Solo la de ginger alimenta el Buy Planner

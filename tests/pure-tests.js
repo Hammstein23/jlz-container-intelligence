@@ -52,7 +52,9 @@ var _PRISTINO_NOMBRES = [
   // document de otro test, no la encontraba y proyectaba cero filas.
   'document','localStorage',
   // Los grupos de "sin facturar" reemplazan el que decide qué se retiene y su fuente de cross-dock.
-  'cmUnbilled','_cmCrossDock','ooOriginFromSku','stockSnapRecord'
+  'cmUnbilled','_cmCrossDock','ooOriginFromSku','stockSnapRecord',
+  // El seguimiento de reempaques fija el formato de fecha para comparar días, no texto de pantalla.
+  'dmcDateLabel'
 ];
 var _PRISTINO = {};
 _PRISTINO_NOMBRES.forEach(function(n){ try { _PRISTINO[n] = eval(n); } catch (e) {} });
@@ -5515,6 +5517,121 @@ group('invmProductStats · el disponible resta lo sin facturar');
   check('el físico no se toca', s.onHandCases, 200);
 })();
 } catch (_e) { ok('invmProductStats con sin facturar no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
+// ═══ Seguimiento de reempaques: qué pasó con cada W-lot y cuándo ═══════════
+// Juan, 2026-09-14: "qué cosa le aviso y qué cosa está pendiente… qué pasó antes y cuándo pasó".
+try {
+group('Reempaques · el Inventory Report guarda TODOS los W-lots de producto');
+(function(){
+  var R = function(o){ var r = { 'Vendor':'JLZ Produce Manufacturing', 'Qty Received (Base UOM)':0, 'Qty Sold (Base UOM) for Lot':0, 'Days on Floor':3 };
+                       for (var k in o) r[k] = o[k]; return r; };
+  var parsed = invmParseInventoryReport([
+    R({ 'SKU':'OG-GIN-30Lbs-PR', 'Lot #':'W2939A2674126', 'Qty on Hand (Base UOM)':700, 'Received Date':'09/05/2026', 'Item':'Organic Ginger 30Lbs Premium', 'Days on Floor':9 }),
+    R({ 'SKU':'OG-TUR-5Lbs-PR-FJ',  'Lot #':'W2942A2678668', 'Qty on Hand (Base UOM)':120, 'Received Date':'09/08/2026' }),
+    R({ 'SKU':'OG-GIN-10Lbs-PR-HI', 'Lot #':'W2289A2223435', 'Qty on Hand (Base UOM)':4, 'Received Date':'04/08/2026' }),
+    R({ 'SKU':'RRO-30#',            'Lot #':'W2958A2687212', 'Qty on Hand (Base UOM)':1800 }),     // caja de empaque
+    R({ 'SKU':'OG-GAR-5 LBS',       'Lot #':'W2999A0000001', 'Qty on Hand (Base UOM)':0 }),        // agotado
+    R({ 'SKU':'OG-GIN-30Lbs-PR',    'Lot #':'2523058-0001', 'Vendor':'Interloom SAC', 'PO #':'2523058',
+        'Qty Received (Base UOM)':1320, 'Qty Sold (Base UOM) for Lot':395, 'Qty on Hand (Base UOM)':1252 })   // lote real
+  ]);
+  var lots = parsed.repacks.map(function(x){ return x.lot; });
+  check('guarda los tres W-lots de producto, de cualquier presentación', lots.join(','), 'W2939A2674126,W2942A2678668,W2289A2223435');
+  ok('las cajas de empaque no son producto', lots.indexOf('W2958A2687212') < 0);
+  ok('un W-lot agotado no está en el conteo', lots.indexOf('W2999A0000001') < 0);
+  ok('un lote real no es un reempaque', lots.indexOf('2523058-0001') < 0);
+  var sol = parsed.repacks[0];
+  check('con producto, cajas, fecha de reempaque y días', [sol.product, sol.cases, sol.received, sol.days].join('|'), 'ginger|700|2026-09-05|9');
+  check('el stock de compra no cambia: solo el de 30 lb de Perú y el lote real', parsed.lots.length, 2);
+  var plan = invmInvReportPlan(parsed, [{ jlzPo:'2523058', status:'Arrived' }], { rows:{} }, {});
+  check('y el plan los lleva hasta el Confirm', (plan.repacks || []).length, 3);
+})();
+} catch (_e) { ok('reempaques del Inventory Report no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
+try {
+group('Reempaques · cada W-lot sabe de qué orden es');
+(function(){
+  var n = dmcNormalizeUnshipped([
+    { 'Order #':'2673691', 'Fulfillment Date':46276.29, 'Customer':'Sol-ti', 'Status':'PICKING' },
+    { 'SKU':'', 'Status':'SHIPPED', 'Total Billable Qty':700 },
+    { 'SKU':'OG-GIN-30Lbs-PR', 'Lot #':'W2939A2674126', 'Total Billable Qty':700, 'Status':'PICKING' },
+    { 'Order #':'2679069', 'Fulfillment Date':46275.29, 'Customer':"Albert's <b>Organics</b>", 'Status':'PICKING' },
+    { 'SKU':'OG-GIN-5LBS-PR', 'Lot #':'W2945A2679079', 'Total Billable Qty':20, 'Status':'SHIPPED' },
+    { 'SKU':'OG-TUR-30Lbs-cat2-FJ', 'Lot #':'2674160-0001', 'Total Billable Qty':700, 'Status':'PICKING' }
+  ]);
+  var L = wlotOrderLines(n), s = (L['W2939A2674126'] || [])[0] || {};
+  check('Sol-ti: su orden, su entrega y su estado', [s.orderNo, s.due, s.status].join('|'), '2673691|2026-09-11|PICKING');
+  ok('la línea de 5 lb de ginger también entra (el committed no la importa)', !!L['W2945A2679079']);
+  check('con el estado de SU línea, no el de la cabecera', ((L['W2945A2679079'] || [])[0] || {}).status, 'SHIPPED');
+  ok('un lote real no es un reempaque', !L['2674160-0001']);
+  ok('el nombre del cliente entra limpio', !/[<>]/.test(((L['W2945A2679079'] || [])[0] || {}).customer || '<'));
+})();
+} catch (_e) { ok('órdenes de los reempaques no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
+try {
+group('Reempaques · estado y línea de tiempo de cada W-lot');
+(function(){
+  dmcDateLabel = function(iso){ return iso; };        // el test compara fechas, no el formato de pantalla
+  var T = '2026-09-14', G = function(lot, sku, cases, received, days){ return { lot:lot, sku:sku, product:(/TUR/.test(sku) ? 'turmeric' : 'ginger'), cases:cases, received:received, days:days }; };
+  var snap = { savedAt:T, lots:[
+    G('W2939A2674126', 'OG-GIN-30Lbs-PR', 700, '2026-09-05', 9),
+    G('W2964A2692119', 'OG-GIN-30Lbs-PR', 35, '2026-09-12', 2),
+    G('W2968A2693379', 'OG-GIN-30Lbs-PR', 60, '2026-09-12', 2),
+    G('W2572A2430969', 'OG-GIN-30Lbs-PR', 36, '2026-06-16', 87),
+    G('W2945A2679079', 'OG-GIN-5LBS-PR', 20, '2026-09-08', 6),
+    G('W1832B1917641', 'OG-GIN-10Lbs-PR', 72, '2025-12-12', 270),
+    G('W2957A2686667', 'OG-GIN-30Lbs-PR', 5, '2026-09-10', 4),
+    G('W2289A2223435', 'OG-GIN-10Lbs-PR-HI', 4, '2026-04-08', 137),
+    G('W2800A0000001', 'OG-GIN-30Lbs-PR', 45, '2026-09-09', 5),
+    G('W2801A0000002', 'OG-GIN-30Lbs-PR', 40, '2026-08-20', 25),
+    G('W2942A2678668', 'OG-TUR-5Lbs-PR-FJ', 120, '2026-09-08', 6)
+  ] };
+  var orders = { importedAt:T, lines:{
+    'W2939A2674126':[{ orderNo:'2673691', customer:'Sol-ti', due:'2026-09-11', status:'PICKING' }],
+    'W2964A2692119':[{ orderNo:'2692096', customer:"Earl's", due:'2026-09-14', status:'PICKING' }],
+    'W2968A2693379':[{ orderNo:'2693374', customer:'Whole Foods', due:'2026-09-15', status:'PICKING' }],
+    'W2572A2430969':[{ orderNo:'2430854', customer:"Earl's", due:'2026-06-16', status:'PICKING' }],
+    'W2945A2679079':[{ orderNo:'2679069', customer:"Albert's", due:'2026-09-10', status:'SHIPPED' }]
+  } };
+  var sales = [
+    { lot:'W1832B1917641', type:'Sale',   d:'2025-12-16', c:'Whole Foods', ord:'1917633', units:72 },
+    { lot:'W1832B1917641', type:'RETURN', d:'2025-12-17', c:'Whole Foods', ord:'1917633', units:-72 },
+    { lot:'W2800A0000001', type:'Sale',   d:'2026-09-10', c:'Whole Foods', ord:'2681752', units:45 },
+    { lot:'W2801A0000002', type:'Sale',   d:'2026-08-24', c:'Co-op', ord:'2600000', units:40 }
+  ];
+  var rows = wlotStatusRows('ginger', 'Peru', { snap:snap, orders:orders, sales:sales, committed:[], today:T });
+  var by = {}; rows.forEach(function(r){ by[r.lot] = r; });
+  var tl = function(r){ return r.steps.map(function(s){ return s.label + ':' + s.state; }).join(','); };
+
+  check('Sol-ti: 3 días tarde, sin facturar', by['W2939A2674126'].tone + '|' + by['W2939A2674126'].label, 'late|Not invoiced · 3 d late');
+  check('su línea: reempacada, entrega atrasada, lo demás pendiente', tl(by['W2939A2674126']), 'Repacked:done,Due:late,Shipped:todo,Invoiced:todo');
+  check('lo hecho lleva su fecha', by['W2939A2674126'].steps[0].when, '2026-09-05');
+  check('y la entrega dice cuánto se atrasó', by['W2939A2674126'].steps[1].when, '2026-09-11 · 3 d late');
+  check('Earl de hoy: sale hoy', by['W2964A2692119'].label, 'Ships today');
+  check('Whole Foods de mañana: en camino', by['W2968A2693379'].tone + '|' + by['W2968A2693379'].label, 'wait|Ships 2026-09-15');
+  check('la de junio: más de 14 días tarde pide revisión', by['W2572A2430969'].tone + '|' + by['W2572A2430969'].action, 'bad|Check it in WholesaleWare');
+  check('WholesaleWare dice SHIPPED: despachada sin facturar', by['W2945A2679079'].tone + '|' + by['W2945A2679079'].label, 'ship|Shipped · not invoiced');
+  check('y la factura queda como lo que falta', tl(by['W2945A2679079']), 'Repacked:done,Due:done,Shipped:done,Invoiced:late');
+  check('facturada, devuelta y todavía contada: limpiar', by['W1832B1917641'].tone + '|' + by['W1832B1917641'].label, 'bad|Returned · still counted');
+  check('con la fecha de la devolución', by['W1832B1917641'].steps[2].when, '2025-12-17');
+  check('sin orden y reciente: stock reempacado libre', by['W2957A2686667'].tone + '|' + by['W2957A2686667'].label, 'free|No order yet');
+  check('facturada después del conteo: se va sola', by['W2800A0000001'].tone + '|' + by['W2800A0000001'].action, 'ok|Leaves the count on the next import');
+  check('facturada hace semanas y sigue contada: limpiar', by['W2801A0000002'].tone + '|' + by['W2801A0000002'].label, 'bad|Invoiced · still counted');
+  ok('la fecha de despacho nunca se inventa', by['W2800A0000001'].steps[2].when === 'date not in reports');
+  ok('Hawaii no se mezcla con Perú', !by['W2289A2223435']);
+  ok('turmeric tampoco', !by['W2942A2678668']);
+  check('lo que pide acción va arriba', rows.slice(0, 4).map(function(r){ return r.tone; }).join(','), 'bad,bad,bad,late');
+
+  var marcada = wlotStatusRows('ginger', 'Peru', { snap:snap, orders:orders, sales:[], committed:[{ lot:'W2939A2674126', shipped:true }], today:T });
+  check('marcada a mano como despachada, aunque WholesaleWare diga PICKING', marcada.filter(function(r){ return r.lot === 'W2939A2674126'; })[0].label, 'Shipped · not invoiced');
+
+  var hi = wlotStatusRows('ginger', 'Hawaii', { snap:snap, orders:orders, sales:sales, committed:[], today:T });
+  check('Hawaii: el de 137 días sin orden pide revisión', hi.length + '|' + hi[0].tone + '|' + hi[0].label, '1|bad|No order · 137 days');
+
+  var S = wlotStatusSummary(rows);
+  check('el resumen suma cajas por estado', [S.bad.cs, S.late.cs, S.ship.cs, S.wait.cs, S.ok.cs, S.free.cs].join(','), '148,700,20,95,45,5');
+  check('sin foto de inventario no hay filas', wlotStatusRows('ginger', 'Peru', { today:T }).length, 0);
+})();
+} catch (_e) { ok('estado de reempaques no tira excepción: ' + ((_e && _e.message) || _e), false); }
 
 // ═══ El entorno se limpia entre grupos ══════════════════════════════════════
 // Guardián del arreglo de arriba. Si alguien saca la restauración de `group()`, esto falla y

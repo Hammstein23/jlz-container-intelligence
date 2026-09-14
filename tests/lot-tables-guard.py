@@ -109,6 +109,19 @@ if _fl and re.search(r'd\s*==\s*null\s*\|\|', _fl.group(1)):
 else:
     bad('el filtro esconde los lotes sin fecha: son justo los que hay que completar')
 
+# ── Seguimiento de reempaques (2026-09-14) ──────────────────────────────────────────────────────
+# Cada W-lot muestra en qué paso está y cuándo pasó cada cosa. Sale de tres imports: si uno deja de
+# guardar su parte, la sección se queda sin datos sin que nada falle.
+for fn, b in [('invmRenderProduct', m.group(1) if m else ''), ('invmLots', m2.group(1) if m2 else '')]:
+    if 'wlotStatusHTML(' in b: ok('%s muestra el seguimiento de reempaques' % fn)
+    else: bad('%s dejo de mostrar el seguimiento de reempaques' % fn)
+for fn, needle, what in [('invrConfirm', 'WLOT_SNAP_LS', 'el import de inventario guarda la foto de los reempaques'),
+                         ('dmcImportFile', 'wlotOrderLines(', 'el import del Unshipped guarda la orden de cada W-lot'),
+                         ('dmParseWorkbook', "r['Lot Number']", 'la carga de ventas guarda el lote de cada venta')]:
+    fb = re.search(r'function ' + fn + r'\((.*?)\n\}', src, re.S)
+    if fb and needle in fb.group(1): ok(what)
+    else: bad('%s dejo de guardar su parte (%s)' % (fn, what))
+
 print()
 if fails:
     print('  %d problema(s) en las tablas de lotes' % len(fails)); sys.exit(1)

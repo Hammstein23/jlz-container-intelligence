@@ -15329,6 +15329,7 @@ function invmLots(m,t){
   h+=_tabla(_prov,'Supplier lots','what the grower shipped you');
   if(_rep.length) h+=_tabla(_rep,'Repacked — River Road','already repacked by JLZ Produce Manufacturing · same cases, new presentation');
   h+='<div class="invm-lead" style="margin-top:10px;color:var(--gray-500);font-weight:400">Both tables are physically in the cooler and both count toward the <b>'+invmF(t.cases)+' cs</b> on hand.</div>';
+  h+=(typeof wlotStatusHTML==='function') ? wlotStatusHTML('ginger','Peru') : '';   // dónde está cada reempaque
   return h;
 }
 function renderInventory(){
@@ -15497,9 +15498,19 @@ function invmParseInventoryReport(rows){
     if(/^\d+(\.\d+)?$/.test(s) && typeof dmcExcelDate === 'function') s = dmcExcelDate(s);
     return (typeof ooDateToISO === 'function') ? ooDateToISO(s) : '';
   };
-  var out = { lots: [], flags: [], stats: { total: 0, kept: 0, offSku: 0, depleted: 0, wlots: 0, wcases: 0 } };
+  var out = { lots: [], repacks: [], flags: [], stats: { total: 0, kept: 0, offSku: 0, depleted: 0, wlots: 0, wcases: 0 } };
+  var REPACK_PROD = { GIN: 'ginger', TUR: 'turmeric', GAR: 'garlic', SHA: 'shallots' };
   (rows || []).forEach(function(r){
     out.stats.total++;
+    // ── Seguimiento de reempaques: TODOS los W-lots de producto, cualquier presentación ─────────────
+    // Van aparte de `lots` (el stock de compra): un W-lot de 5 lb no suma cajas de 30, pero es una orden
+    // a la que hay que seguir. Las cajas de empaque (RRO-30#, RRO-10#) también son W-lots y no van.
+    var _rl = str(r['Lot #']), _rs = str(r['SKU']), _rm = _rs.toUpperCase().match(/^OG-(GIN|TUR|GAR|SHA)-/);
+    if(_rm && invmIsWLot(_rl) && num(r['Qty on Hand (Base UOM)']) > 0){
+      out.repacks.push({ lot: _rl, sku: _rs, item: str(r['Item']), product: REPACK_PROD[_rm[1]],
+                         cases: Math.round(num(r['Qty on Hand (Base UOM)'])), received: iso(r['Received Date']),
+                         days: Math.round(num(r['Days on Floor'])) });
+    }
     var sku = invmCanonSku(r['SKU']);                    // normaliza mayusculas y descarta '__proto__'
     var meta = sku ? INVM_BUY_SKUS[sku] : null;
     if(!meta){ out.stats.offSku++; return; }              // 5/10/20 lb, empaque, vLot, otros productos
@@ -15531,7 +15542,8 @@ function invmInvReportIsBpLot(l){ return l && l.product === 'ginger' && l.origin
 // solo lo aplica, asi que lo que Juan ve es literalmente lo que se va a guardar.
 function invmInvReportPlan(parsed, orders, bpSt, prodSt){
   var plan = { groups: [], bpRows: {}, bpMissing: [], prodLots: {}, keptExcluded: [], goneExcluded: [],
-               pipeline: [], flags: (parsed && parsed.flags) || [], stats: (parsed && parsed.stats) || {} };
+               pipeline: [], flags: (parsed && parsed.flags) || [], stats: (parsed && parsed.stats) || {},
+               repacks: (parsed && parsed.repacks) || [] };
   var lots = (parsed && parsed.lots) || [];
   orders = orders || []; bpSt = bpSt || {}; prodSt = prodSt || {};
 
@@ -15643,6 +15655,178 @@ function invmInvReportPlan(parsed, orders, bpSt, prodSt){
     }
   });
   return plan;
+}
+
+// ============ SEGUIMIENTO DE REEMPAQUES (W-lots) ============
+// Juan, 2026-09-14: "qué cosa le aviso y qué cosa está pendiente… qué pasó antes y cuándo pasó".
+// Cada W-lot es una línea de orden reempacada. Su vida se arma con los tres reportes que ya se cargan:
+//   · Inventory Report → cuándo se reempacó y cuántas cajas siguen en el conteo      (WLOT_SNAP_LS)
+//   · Unshipped Report  → de qué orden es, cuándo se entrega, si WholesaleWare dice SHIPPED (WLOT_ORDERS_LS)
+//   · Sales By Account  → cuándo se facturó o se devolvió (cada fila de venta trae su lote)
+// La fecha de DESPACHO no está en ningún reporte: se muestra "despachado" sin fecha, nunca una inventada.
+// Fase 1: los lotes que siguen en el conteo. El historial de los ya terminados necesita guardar cada lote
+// de un lunes a otro — eso es la fase 2.
+var WLOT_SNAP_LS = 'jlz_wlot_snap_v1', WLOT_ORDERS_LS = 'jlz_wlot_orders_v1', WLOT_REVIEW_DAYS = 14;
+function wlotLoadStore(key){
+  try{ var v = JSON.parse(localStorage.getItem(key) || 'null'); return (v && typeof v === 'object') ? v : null; }
+  catch(e){ return null; }
+}
+function wlotSaveStore(key, obj){ try{ localStorage.setItem(key, JSON.stringify(obj)); }catch(e){} }
+// Lote → líneas de orden, desde las filas ya normalizadas del Unshipped (dmcNormalizeUnshipped). Puro.
+// Toma TODAS las líneas con W-lot: el committed deja afuera los packs chicos de ginger, esto no.
+function wlotOrderLines(rows){
+  var out = {}, clean = function(v){ return String(v == null ? '' : v).trim().replace(/[<>"]/g, ''); };
+  (rows || []).forEach(function(r){
+    var lot = clean(r && r['Lot #']);
+    if(!lot || !invmIsWLot(lot)) return;
+    (out[lot] = out[lot] || []).push({ orderNo: clean(r['Order No']), customer: clean(r['Customer Name']),
+      due: ooDateToISO(clean(r['Fulfillment Date'])) || '', status: clean(r['Status']).toUpperCase(),
+      sku: clean(r['SKU']), qty: +r['Order qty'] || 0 });
+  });
+  return out;
+}
+// Estado y línea de tiempo de cada W-lot de un producto. PURO: todo entra por `ctx`.
+//   ctx = { snap:{savedAt,lots}, orders:{importedAt,lines}, sales:[filas de venta], committed:[...], today }
+// tone: bad (limpiar) · late (atrasada) · ship (despachada sin facturar) · wait (en camino) · ok (facturada)
+// · free (sin orden). Cada paso: done con su fecha, late/bad si se pasó, todo si falta.
+function wlotStatusRows(p, origin, ctx){
+  ctx = ctx || {};
+  var today = ctx.today || '', DAY = 86400000;
+  var gap = function(a, b){ return (a && b) ? Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / DAY) : null; };
+  var day = function(iso){ return iso ? ((typeof dmcDateLabel === 'function' && dmcDateLabel(iso)) || String(iso).slice(5)) : ''; };
+  var snap = ctx.snap || {}, lines = (ctx.orders && ctx.orders.lines) || {};
+  var sold = {}, marked = {};
+  (ctx.sales || []).forEach(function(r){ if(r && r.lot && invmIsWLot(r.lot)) (sold[r.lot] = sold[r.lot] || []).push(r); });
+  (ctx.committed || []).forEach(function(c){ if(c && c.lot && c.shipped) marked[c.lot] = 1; });
+  var RANK = { bad:0, late:1, ship:2, wait:3, ok:4, free:5 };
+  var out = [];
+  (snap.lots || []).forEach(function(l){
+    if(!l || l.product !== p) return;
+    var org = ooOriginFromSku(l.sku, p);
+    if(origin && origin !== 'all' && org !== origin) return;
+    var row = { lot: l.lot, sku: l.sku, item: l.item || '', cases: +l.cases || 0, days: +l.days || 0, received: l.received || '',
+                origin: org, customer: '', orderNo: '', due: '', tone: 'free', label: '', action: '', steps: [] };
+    var rep = { label: 'Repacked', state: 'done', when: day(l.received) || 'no date in report' };
+    var s = sold[l.lot] || [];
+    var sale = s.filter(function(r){ return r.type === 'Sale'; }).sort(function(a, b){ return a.d < b.d ? -1 : 1; })[0];
+    var back = s.filter(function(r){ return r.type === 'RETURN' || r.type === 'CREDIT'; }).sort(function(a, b){ return a.d < b.d ? 1 : -1; })[0];
+    var ln = (lines[l.lot] || []).slice().sort(function(a, b){ return (a.due || '9') < (b.due || '9') ? -1 : 1; })[0];
+    if(sale){ row.customer = sale.c || ''; row.orderNo = sale.ord || ''; row.due = sale.d || ''; }
+    if(ln){ row.customer = ln.customer || row.customer; row.orderNo = ln.orderNo || row.orderNo; row.due = ln.due || row.due; }
+    if(sale && back){
+      // Se facturó, se devolvió, y el lote sigue en el conteo: esas cajas casi seguro ya no existen.
+      row.tone = 'bad'; row.label = 'Returned · still counted'; row.action = 'Clear it in WholesaleWare';
+      row.steps = [rep, { label: 'Invoiced', state: 'done', when: day(sale.d) },
+                   { label: 'Returned', state: 'bad', when: day(back.d) },
+                   { label: 'Still counted', state: 'bad', when: row.days + ' days on the floor' }];
+    } else if(sale){
+      // Facturada. Si el conteo es de ANTES de facturar, se va sola en el próximo import; si pasó más de
+      // una semana y sigue, el almacén no la dio de baja.
+      var since = gap(sale.d, snap.savedAt), viejo = since != null && since > 7;
+      row.tone = viejo ? 'bad' : 'ok';
+      row.label = viejo ? 'Invoiced · still counted' : 'Invoiced';
+      row.action = viejo ? 'Clear it in WholesaleWare' : 'Leaves the count on the next import';
+      row.steps = [rep, { label: 'Due', state: 'done', when: day(sale.d) },
+                   { label: 'Shipped', state: 'done', when: 'date not in reports' },
+                   { label: 'Invoiced', state: viejo ? 'bad' : 'done', when: day(sale.d) + (viejo ? (' · counted ' + since + ' d later') : '') }];
+    } else if(ln){
+      var late = gap(ln.due, today), shipped = (ln.status === 'SHIPPED') || !!marked[l.lot];
+      var due = { label: 'Due', state: 'todo', when: ln.due ? day(ln.due) : 'no date' };
+      if(shipped){
+        row.tone = 'ship'; row.label = 'Shipped · not invoiced'; row.action = 'Invoice it in WholesaleWare';
+        due.state = 'done';
+        row.steps = [rep, due, { label: 'Shipped', state: 'done', when: (ln.status === 'SHIPPED')
+                                   ? ('per WholesaleWare, ' + day((ctx.orders || {}).importedAt)) : 'marked by hand' },
+                     { label: 'Invoiced', state: 'late', when: 'pending' }];
+      } else if(late != null && late > 0){
+        var grave = late > WLOT_REVIEW_DAYS;
+        row.tone = grave ? 'bad' : 'late';
+        row.label = 'Not invoiced · ' + late + ' d late';
+        row.action = grave ? 'Check it in WholesaleWare' : 'Ask the warehouse if it left';
+        due.state = grave ? 'bad' : 'late'; due.when = day(ln.due) + ' · ' + late + ' d late';
+        row.steps = [rep, due, { label: 'Shipped', state: 'todo', when: 'still ' + (ln.status ? ln.status.toLowerCase() : 'open') },
+                     { label: 'Invoiced', state: 'todo', when: 'pending' }];
+      } else {
+        row.tone = 'wait'; row.action = 'On track';
+        row.label = (late === 0) ? 'Ships today' : ('Ships ' + day(ln.due));
+        if(late === 0) due.when = 'today';
+        row.steps = [rep, due, { label: 'Shipped', state: 'todo', when: 'pending' }, { label: 'Invoiced', state: 'todo', when: 'pending' }];
+      }
+    } else {
+      var aging = row.days > WLOT_REVIEW_DAYS;
+      row.tone = aging ? 'bad' : 'free';
+      row.label = aging ? ('No order · ' + row.days + ' days') : 'No order yet';
+      row.action = aging ? 'Check it in WholesaleWare' : 'Repacked stock, free to sell';
+      row.steps = [rep, { label: 'Order', state: aging ? 'bad' : 'todo', when: 'none open' },
+                   { label: 'Shipped', state: 'todo', when: '—' }, { label: 'Invoiced', state: 'todo', when: '—' }];
+    }
+    out.push(row);
+  });
+  out.sort(function(a, b){ return (RANK[a.tone] - RANK[b.tone]) || (b.cases - a.cases); });
+  return out;
+}
+function wlotStatusSummary(rows){
+  var s = { bad: { n: 0, cs: 0 }, late: { n: 0, cs: 0 }, ship: { n: 0, cs: 0 }, wait: { n: 0, cs: 0 }, ok: { n: 0, cs: 0 }, free: { n: 0, cs: 0 } };
+  (rows || []).forEach(function(r){ var g = s[r.tone]; if(g){ g.n++; g.cs += (+r.cases || 0); } });
+  return s;
+}
+// La sección de Inventory: arriba lo que pide acción, abajo lo que va bien. Cada paso hecho lleva su fecha.
+function wlotStatusHTML(p, origin){
+  var esc = (typeof libEsc === 'function') ? libEsc : function(x){ return String(x == null ? '' : x).replace(/[<>"&]/g, ''); };
+  var f = function(n){ return Math.round(n || 0).toLocaleString('en-US'); };
+  var ctx = { snap: wlotLoadStore(WLOT_SNAP_LS), orders: wlotLoadStore(WLOT_ORDERS_LS),
+              sales: (typeof _dmRawAll !== 'undefined' && Array.isArray(_dmRawAll)) ? _dmRawAll : [],
+              committed: (typeof getCommitted === 'function') ? getCommitted() : [],
+              today: (typeof dmISOLocal === 'function') ? dmISOLocal(new Date()) : new Date().toISOString().slice(0, 10) };
+  var head = function(msg){
+    return '<div class="invm-lead" style="margin-top:18px"><b>Repack follow-up</b> &middot; <span style="font-weight:400;color:var(--gray-500)">' + msg + '</span></div>';
+  };
+  if(!ctx.snap) return head('import the Inventory Report to see where each repacked lot is');
+  var rows = [];
+  try{ rows = wlotStatusRows(p, origin, ctx); }catch(e){ rows = []; }
+  if(!rows.length) return '';
+  var dm = (typeof dmGlobalDataMax === 'function') ? dmGlobalDataMax() : '';
+  var day = function(iso){ return iso ? ((typeof dmcDateLabel === 'function' && dmcDateLabel(iso)) || String(iso).slice(5)) : '—'; };
+  var h = head('where each repacked lot is &middot; inventory ' + esc(day(ctx.snap.savedAt))
+        + ' &middot; orders ' + esc(day(ctx.orders && ctx.orders.importedAt)) + ' &middot; sales to ' + esc(day(dm)));
+  var avisos = [];
+  if(!ctx.orders) avisos.push('Import the Unshipped report to link each lot to its order.');
+  else if(ctx.snap.savedAt && ctx.orders.importedAt && ctx.orders.importedAt < ctx.snap.savedAt)
+    avisos.push('The orders are older than the inventory — import the Unshipped report again.');
+  if(!ctx.sales.some(function(r){ return r && r.lot; })) avisos.push('Upload the Sales By Account again to see which lots were invoiced or returned.');
+  if(avisos.length) h += '<div style="font-size:11px;color:var(--amber-700);font-family:var(--fm);margin:4px 0 8px">&#9888; ' + avisos.map(esc).join(' ') + '</div>';
+  var TONE = { bad: ['#991B1B', '#FEF2F2', '#FECACA'], late: ['#92400E', '#FFFBEB', '#FDE68A'], ship: ['#5B21B6', '#F5F3FF', '#DDD6FE'],
+               wait: ['var(--gray-600)', 'var(--gray-50)', 'var(--gray-200)'], ok: ['#166534', '#F0FDF4', '#BBF7D0'], free: ['var(--gray-600)', 'var(--gray-50)', 'var(--gray-200)'] };
+  var STEP = { done: '#16a34a', late: '#d97706', bad: '#dc2626', todo: 'var(--gray-200)' };
+  var sum = wlotStatusSummary(rows);
+  var tiles = [['bad', 'Needs cleanup'], ['late', 'Not invoiced, late'], ['ship', 'Shipped, not invoiced'], ['wait', 'Ships soon'], ['free', 'No order yet']]
+    .filter(function(t){ return sum[t[0]].n > 0; })
+    .map(function(t){ var c = TONE[t[0]];
+      return '<div style="background:' + c[1] + ';border:1px solid ' + c[2] + ';border-radius:8px;padding:7px 11px;min-width:120px">'
+        + '<div style="font-size:10px;color:' + c[0] + ';font-family:var(--fb);font-weight:600;text-transform:uppercase;letter-spacing:.04em">' + t[1] + '</div>'
+        + '<div style="font-size:15px;font-weight:700;color:' + c[0] + ';font-family:var(--fm)">' + f(sum[t[0]].cs) + ' cs <span style="font-size:11px;font-weight:400">· ' + sum[t[0]].n + ' lot' + (sum[t[0]].n === 1 ? '' : 's') + '</span></div></div>'; });
+  h += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 10px">' + tiles.join('') + '</div>';
+  h += '<div style="background:var(--white);border:1px solid var(--gray-200);border-radius:10px;overflow:hidden;margin-bottom:14px">';
+  rows.forEach(function(r, i){
+    var c = TONE[r.tone] || TONE.free;
+    h += '<div class="wlot-row" data-lot="' + esc(r.lot) + '" style="padding:10px 14px' + (i ? ';border-top:1px solid var(--gray-100)' : '') + '">'
+      + '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline;margin-bottom:7px">'
+      + '<div style="font-size:12.5px;color:var(--gray-800)"><b>' + (r.customer ? esc(r.customer) : '<span style="color:var(--gray-500);font-weight:600">No open order</span>') + '</b>'
+      + ' &middot; ' + f(r.cases) + ' cs <span style="color:var(--gray-500)">' + esc(r.sku) + '</span>'
+      + ' <span style="font-family:var(--fm);font-size:11px;color:var(--gray-400)">' + esc(r.lot) + (r.orderNo ? (' &middot; order ' + esc(r.orderNo)) : '') + '</span></div>'
+      + '<div style="display:flex;gap:8px;align-items:center"><span style="font-size:11px;color:var(--gray-500)">' + esc(r.action) + '</span>'
+      + '<span class="wlot-tone" style="font-size:11px;font-weight:700;padding:2px 9px;border-radius:999px;background:' + c[1] + ';color:' + c[0] + ';border:1px solid ' + c[2] + ';white-space:nowrap">' + esc(r.label) + '</span></div></div>'
+      + '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px">'
+      + r.steps.map(function(st){
+          var col = STEP[st.state] || STEP.todo, on = (st.state !== 'todo');
+          return '<div class="wlot-step" data-state="' + st.state + '" style="border-top:3px solid ' + col + ';padding-top:4px">'
+            + '<div style="font-size:11.5px;font-weight:700;color:' + (on ? col : 'var(--gray-400)') + '">' + esc(st.label) + '</div>'
+            + '<div style="font-size:10.5px;color:var(--gray-500);font-family:var(--fm)">' + esc(st.when) + '</div></div>';
+        }).join('')
+      + '</div></div>';
+  });
+  h += '</div>';
+  return h;
 }
 
 // ============ IMPORT INVENTORY REPORT — UI ============
@@ -15826,6 +16010,8 @@ function invrConfirm(){
     ps[prod].lots = p.prodLots[prod];
   });
   prodInvSave(ps);
+  // La foto de los reempaques para su seguimiento (wlotStatusRows). Reemplazo total, como el inventario.
+  try{ if(typeof wlotSaveStore === 'function') wlotSaveStore(WLOT_SNAP_LS, { savedAt: dmISOLocal(new Date()), lots: p.repacks || [] }); }catch(e){}
   var tot = p.groups.reduce(function(s,g){ return s + g.after; }, 0);
   invrClose();
   if(typeof invmReRender === 'function') invmReRender(); else if(typeof renderInventory === 'function') renderInventory();
@@ -17721,6 +17907,7 @@ function invmRenderProduct(p){
     + 'Both tables are physically in the cooler and both count toward the <b>'+f(s.onHandCases)+' cs</b> on hand. '
     + (_escCs>0?('<span style="color:var(--amber-700)">The '+minAge+'+ days filter is hiding <b>'+f(_escCs)+' cs</b> in newer lots, so the totals above add up to '+f(_visCs)+' cs, not '+f(s.onHandCases)+'.</span> '):'')
     + 'The repacked ones are the cases that already changed presentation.</div>';
+  html += (typeof wlotStatusHTML==='function') ? wlotStatusHTML(p, s.origin) : '';   // dónde está cada reempaque
   html += '<div style="font-size:11.5px;color:var(--gray-600);background:var(--sky-50,#eff6ff);border:1px solid var(--sky-200,#bfdbfe);border-radius:8px;padding:11px 13px">'
     + '<b style="color:var(--sky-700,#1d4ed8)">Update on-hand:</b> tell me "update the '+esc(s.label)+' inventory" and I\'ll generate a <b>Sales Desk</b> snippet (Floor Count, excl. W/vLot lots) to paste in the console — same as the Monday ginger routine. <b>Received date</b> = the PO\'s scheduled delivery date (WholesaleWare → Purchase Orders); it drives storage days + FEFO. Set it per lot above or I\'ll pull it with the update.</div>';
   return html;
@@ -26920,6 +27107,7 @@ function dmParseWorkbook(buf){
       oitem: dmOriginFromItem(item) || prodHomeOrigin(prod),   // origin from the Item; else the product's home origin (single-origin products never dropped)
       pack: dmPackLabel(item),                  // sales presentation label (e.g. "5 lb", "9 oz") for buy-vs-sell breakdown
       packLb: lbpc,                             // lb per sold unit of that presentation
+      lot: String(r['Lot Number'] || '').trim().replace(/[<>"]/g, ''),   // el W-lot de la venta: con él se sabe cuándo se facturó o devolvió
       type
     });
     const rc = recAdd(prod); rc.kept++; rc.lbs += lbsv; rc.gross += gsv;
@@ -29113,6 +29301,8 @@ function dmcImportFile(input) {
       var ws = wb.Sheets[wb.SheetNames[0]];
       var rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
       if (dmcIsUnshippedFormat(rows)) rows = dmcNormalizeUnshipped(rows);   // accept WholesaleWare's native Unshipped Sales Order Report directly
+      // Qué orden tiene cada W-lot, de TODAS las líneas (también las de 5/10 lb que el committed no importa).
+      try { if (typeof wlotOrderLines === 'function') wlotSaveStore(WLOT_ORDERS_LS, { importedAt: dmISOLocal(new Date()), lines: wlotOrderLines(rows) }); } catch(e3) {}
       var fulfilledMax = (typeof dmGlobalDataMax === 'function' && dmGlobalDataMax()) ? dmGlobalDataMax() : ((typeof _dmModel !== 'undefined' && _dmModel && _dmModel.dataMax) ? _dmModel.dataMax : '');
       var res = parseOpenOrders(rows, fulfilledMax);
       importCommittedOpenOrders(res.entries);
