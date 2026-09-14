@@ -115,6 +115,10 @@ else:
 for fn, b in [('invmRenderProduct', m.group(1) if m else ''), ('invmLots', m2.group(1) if m2 else '')]:
     if 'wlotStatusHTML(' in b: ok('%s muestra el seguimiento de reempaques' % fn)
     else: bad('%s dejo de mostrar el seguimiento de reempaques' % fn)
+if m and 'wlotOriginsFor(' in m.group(1):
+    ok('los reempaques de un origen sin solapa propia (turmeric-Hawaii) igual se muestran')
+else:
+    bad('invmRenderProduct solo muestra el origen elegido: los reempaques de turmeric-Hawaii quedan invisibles')
 for fn, needle, what in [('invrConfirm', 'WLOT_SNAP_LS', 'el import de inventario guarda la foto de los reempaques'),
                          ('dmcImportFile', 'wlotOrderLines(', 'el import del Unshipped guarda la orden de cada W-lot'),
                          ('dmParseWorkbook', "r['Lot Number']", 'la carga de ventas guarda el lote de cada venta')]:

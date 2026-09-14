@@ -15765,6 +15765,18 @@ function wlotStatusRows(p, origin, ctx){
   out.sort(function(a, b){ return (RANK[a.tone] - RANK[b.tone]) || (b.cases - a.cases); });
   return out;
 }
+// Los orígenes que tienen reempaques de un producto, sacados de la foto (el origen sale del SKU).
+// Hace falta porque Inventory solo muestra los orígenes con lotes de COMPRA: turmeric-Hawaii no tiene
+// ninguno, así que sus reempaques —entre ellos 72 cs devueltas hace 9 meses— no aparecían en ninguna vista.
+function wlotOriginsFor(p, snap){
+  var seen = {}, out = [];
+  ((snap || wlotLoadStore(WLOT_SNAP_LS) || {}).lots || []).forEach(function(l){
+    if(!l || l.product !== p) return;
+    var o = ooOriginFromSku(l.sku, p);
+    if(o && !seen[o]){ seen[o] = 1; out.push(o); }
+  });
+  return out;
+}
 function wlotStatusSummary(rows){
   var s = { bad: { n: 0, cs: 0 }, late: { n: 0, cs: 0 }, ship: { n: 0, cs: 0 }, wait: { n: 0, cs: 0 }, ok: { n: 0, cs: 0 }, free: { n: 0, cs: 0 } };
   (rows || []).forEach(function(r){ var g = s[r.tone]; if(g){ g.n++; g.cs += (+r.cases || 0); } });
@@ -15778,8 +15790,9 @@ function wlotStatusHTML(p, origin){
               sales: (typeof _dmRawAll !== 'undefined' && Array.isArray(_dmRawAll)) ? _dmRawAll : [],
               committed: (typeof getCommitted === 'function') ? getCommitted() : [],
               today: (typeof dmISOLocal === 'function') ? dmISOLocal(new Date()) : new Date().toISOString().slice(0, 10) };
+  // El origen va en el título: un bloque por origen, nunca mezclados en los mismos totales.
   var head = function(msg){
-    return '<div class="invm-lead" style="margin-top:18px"><b>Repack follow-up</b> &middot; <span style="font-weight:400;color:var(--gray-500)">' + msg + '</span></div>';
+    return '<div class="invm-lead" style="margin-top:18px"><b>Repack follow-up' + ((origin && origin !== 'all') ? (' — ' + esc(origin)) : '') + '</b> &middot; <span style="font-weight:400;color:var(--gray-500)">' + msg + '</span></div>';
   };
   if(!ctx.snap) return head('import the Inventory Report to see where each repacked lot is');
   var rows = [];
@@ -17908,6 +17921,11 @@ function invmRenderProduct(p){
     + (_escCs>0?('<span style="color:var(--amber-700)">The '+minAge+'+ days filter is hiding <b>'+f(_escCs)+' cs</b> in newer lots, so the totals above add up to '+f(_visCs)+' cs, not '+f(s.onHandCases)+'.</span> '):'')
     + 'The repacked ones are the cases that already changed presentation.</div>';
   html += (typeof wlotStatusHTML==='function') ? wlotStatusHTML(p, s.origin) : '';   // dónde está cada reempaque
+  // Un origen sin lotes de compra no tiene solapa acá (turmeric-Hawaii), pero sus reempaques igual hay que
+  // seguirlos: van en su propio bloque. Ginger no: Perú y Hawaii ya tienen cada uno su vista.
+  if(p!=='ginger' && typeof wlotOriginsFor==='function'){
+    wlotOriginsFor(p).forEach(function(o){ if(o!==s.origin && (s.origins||[]).indexOf(o)<0) html += wlotStatusHTML(p, o); });
+  }
   html += '<div style="font-size:11.5px;color:var(--gray-600);background:var(--sky-50,#eff6ff);border:1px solid var(--sky-200,#bfdbfe);border-radius:8px;padding:11px 13px">'
     + '<b style="color:var(--sky-700,#1d4ed8)">Update on-hand:</b> tell me "update the '+esc(s.label)+' inventory" and I\'ll generate a <b>Sales Desk</b> snippet (Floor Count, excl. W/vLot lots) to paste in the console — same as the Monday ginger routine. <b>Received date</b> = the PO\'s scheduled delivery date (WholesaleWare → Purchase Orders); it drives storage days + FEFO. Set it per lot above or I\'ll pull it with the update.</div>';
   return html;

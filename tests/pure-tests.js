@@ -5630,6 +5630,13 @@ group('Reempaques · estado y línea de tiempo de cada W-lot');
   var S = wlotStatusSummary(rows);
   check('el resumen suma cajas por estado', [S.bad.cs, S.late.cs, S.ship.cs, S.wait.cs, S.ok.cs, S.free.cs].join(','), '148,700,20,95,45,5');
   check('sin foto de inventario no hay filas', wlotStatusRows('ginger', 'Peru', { today:T }).length, 0);
+
+  // Inventory solo tiene solapa para los orígenes con lotes de COMPRA. turmeric-Hawaii no tiene ninguno, y sus
+  // reempaques (72 cs devueltas hace 9 meses) no aparecían en ninguna vista.
+  var tur = { lots:[ G('W2942A2678668', 'OG-TUR-5Lbs-PR-FJ', 120, '2026-09-08', 6), G('W1832B1917641', 'OG-TUR-10Lbs-PR-HI', 72, '2025-12-12', 270),
+                     G('W2573A2430975', 'OG-TUR-10Lbs-PR-HI', 2, '2026-06-16', 87) ] };
+  check('los orígenes con reempaques salen de la foto, cada uno una vez', wlotOriginsFor('turmeric', tur).join(','), 'Fiji,Hawaii');
+  check('y ginger no inventa orígenes que no tiene', wlotOriginsFor('ginger', tur).join(','), '');
 })();
 } catch (_e) { ok('estado de reempaques no tira excepción: ' + ((_e && _e.message) || _e), false); }
 
