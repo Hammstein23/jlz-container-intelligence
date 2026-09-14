@@ -12069,11 +12069,42 @@ function _cmCrossDock(p){
       ? (mtoByCustomer(p,(typeof dmWindow==='function')?dmWindow(p):13,{crossDockOnly:true})||{}) : {}; }
   catch(e){ return {}; }
 }
+// Una orden de una cuenta cross-dock se trata como cruzada —no toca la cámara— salvo que se la marque
+// "ships from cooler". No hay dato que una la orden committed con su PO cruzada (la orden trae el número
+// de venta de WholesaleWare; la marca de la PO, solo cliente y cajas), así que la marca es la excepción a
+// mano. TODOS los lectores de stock y demanda deciden con esta función: si uno usa otra regla, divergen.
+function _cmIsCrossDock(c, cd){
+  return !!(c && c.customer && !c.fromCooler && cd && Object.prototype.hasOwnProperty.call(cd, c.customer));
+}
+// Cuánto committed de cada cuenta cross-dock no está cubierto por cajas cruzadas marcadas en sus POs. Si hay
+// de más, parte puede estar saliendo de la cámara, y mientras no se marque no resta stock.
+function cmCrossDockGap(prod){
+  var cd = _cmCrossDock(prod), names = Object.keys(cd || {}), out = [];
+  if(!names.length) return out;
+  var wk0 = null, desde = null;
+  try{ wk0 = dmWeekKey(new Date()); desde = dmWeekKey(new Date(Date.now() - 13*7*86400000)); }catch(e){}
+  var com = {}, marked = {};
+  cmPlanEntries().forEach(function(c){
+    if(!c || c.type !== 'inv' || _cmProd(c) !== prod || !_cmIsCrossDock(c, cd)) return;
+    if(wk0 && c.wk && c.wk < wk0) return;
+    com[c.customer] = (com[c.customer] || 0) + cmCasesInBuyPack(c, prod);
+  });
+  (typeof getOrders === 'function' ? (getOrders() || []) : []).forEach(function(o){
+    if(!o || o.status === 'Cancelled' || _ordProd(o) !== prod || !Array.isArray(o.directShip)) return;
+    var eta = String(o.arrivalActual || o.arrivalEstimated || '').slice(0,10), ek = null;
+    try{ if(eta) ek = dmWeekKey(new Date(eta + 'T12:00:00')); }catch(e){}
+    if(ek && desde && ek < desde) return;                    // una PO vieja ya no cubre órdenes de hoy
+    o.directShip.forEach(function(d){ if(d && d.customer && !d.viaWarehouse) marked[d.customer] = (marked[d.customer] || 0) + (+d.cases || 0); });
+  });
+  names.forEach(function(n){ var cm = Math.round(com[n] || 0), mk = Math.round(marked[n] || 0);
+    if(cm > mk) out.push({ customer:n, committed:cm, marked:mk, gap:cm - mk }); });
+  return out;
+}
 function committedInvForWeek(wk, product) {
   var p = product || 'ginger';
   var cd = _cmCrossDock(p);
   return cmPlanEntries().reduce(function(s, c){
-    if(c && c.customer && Object.prototype.hasOwnProperty.call(cd, c.customer)) return s;
+    if(_cmIsCrossDock(c, cd)) return s;
     return s + ((c.wk === wk && c.type === 'inv' && _cmProd(c) === p) ? cmCasesInBuyPack(c, p) : 0); }, 0);
 }
 // Hybrid weekly sales demand (raw cases, pre-shrink). Starts from the run-rate baseline (salesDemand)
@@ -12125,9 +12156,13 @@ function hybridSalesForWeek(wk, salesDemand, model, product, extraOrders, origin
   // `origin` es opcional: quien no lo pasa (el Buy Planner, que compra ginger de todos los orígenes)
   // se comporta exactamente igual que antes.
   var _hpOrg = (origin && origin !== 'All' && origin !== 'all') ? origin : '';
+  var _hpCooler = 0;
   cmPlanEntries().forEach(function(c){
     if (!c || c.type !== 'inv' || !c.wk || _cmProd(c) !== _hp) return;
     if (_hpOrg && typeof _cmOriginFor === 'function'){ var _o = _cmOriginFor(c); if (_o && _o !== _hpOrg) return; }
+    // La cuenta contra orden sale de la demanda de stock, salvo la orden marcada "ships from cooler": esa sí
+    // sale de la cámara en su semana, y la cuenta no tiene run-rate que la cubra, así que suma completa.
+    if (c.fromCooler && _hpDS(c.customer)) { if (c.wk === wk) _hpCooler += cmCasesInBuyPack(c, _hp); return; }
     _acc(c.customer, c.wk, cmCasesInBuyPack(c, _hp));   // en el pack de compra: se compara contra el run-rate
   });
   // ── Un escenario suma en SU semana; no corre el horizonte conocido ─────────────────────────────
@@ -12165,7 +12200,7 @@ function hybridSalesForWeek(wk, salesDemand, model, product, extraOrders, origin
     }
   });
   Object.keys(comThis).forEach(function(cust){ if (!seen[cust] && !_hpDS(cust)) adj += comThis[cust]; });   // unknown accounts → full committed (contra-orden excluido)
-  return Math.max(0, salesDemand + adj);
+  return Math.max(0, salesDemand + adj + _hpCooler);
 }
 // ── Direct-ship (per-container, on the order object) ──
 function getDirectShip(po) {
@@ -12293,6 +12328,10 @@ function importCommittedOpenOrders(entries) {
   var restored = 0;
   (entries || []).forEach(function(c){ if(wasShipped[_cmKey(c)]){ c.shipped = true; restored++; } });
   window._dmcShippedKept = restored;
+  // La marca "ships from cooler" sobrevive igual, por la misma razón.
+  var wasCooler = {};
+  prev.forEach(function(c){ if(c && c.fromCooler) wasCooler[_cmKey(c)] = 1; });
+  (entries || []).forEach(function(c){ if(wasCooler[_cmKey(c)]) c.fromCooler = true; });
   var kept = prev.filter(function(c){ return c.source !== 'import'; });
   var all = kept.concat(entries || []);
   saveCommitted(all);
@@ -16195,7 +16234,7 @@ function nowcastProductModel(m, p, origin){
       cmPlanEntries().forEach(function(c){
         if(!c || c.type!=='inv' || !c.wk || _cmProd(c)!==p) return;
         if(odCust[c.customer]) return;                                  // order-driven: held out, as above
-        if(Object.prototype.hasOwnProperty.call(_cdCust, c.customer)) return;   // cruzado: fuera de cbw, fuera de la fila
+        if(_cmIsCrossDock(c, _cdCust)) return;   // cruzado: fuera de cbw, fuera de la fila
         if(!out.nowcastWeeks[c.wk]) return;                             // only the weeks actually completed
         if(origin && origin!=='all' && typeof _cmOriginFor==='function'){ var o=_cmOriginFor(c); if(o && o!==origin) return; }
         (comCust[c.wk]=comCust[c.wk]||{})[c.customer]=(comCust[c.wk][c.customer]||0)+(parseFloat(c.cases)||0);
@@ -16284,7 +16323,7 @@ function prodCommittedTotal(p,origin){
   // Lo CRUZADO nunca entró a cámara, así que no puede descontarse del stock libre.
   var _cd=(typeof _cmCrossDock==='function')?_cmCrossDock(p):{};
   var all=cmPlanEntries().filter(function(c){ return c && c.type==='inv' && _cmProd(c)===p && (!nowWk || (c.wk && String(c.wk)>=nowWk))
-                                                     && !(c.customer && Object.prototype.hasOwnProperty.call(_cd, c.customer)); });
+                                                     && !_cmIsCrossDock(c, _cd); });
   // ── Solo el committed del MISMO pack que se compra ──────────────────────────────────────────────
   // Los packs chicos (5/10/20 lb) son producto YA TRABAJADO y viven en sus propios lotes — los W-lots de
   // River Road, que el inventario excluye a propósito. Restar su committed del inventario de 30/50 lb
@@ -16902,7 +16941,7 @@ function invmCommittedByWeek(p, origin, fromWk){
   var _mtoCust={};
   try{ _mtoCust=(typeof mtoByCustomer==='function')
         ? (mtoByCustomer(p,(typeof dmWindow==='function')?dmWindow(p):13,{crossDockOnly:true})||{}) : {}; }catch(e){}
-  all=all.filter(function(c){ return !Object.prototype.hasOwnProperty.call(_mtoCust, c.customer); });
+  all=all.filter(function(c){ return !_cmIsCrossDock(c, _mtoCust); });
   if(origin && origin!=='all'){
     var tagged=all.filter(function(c){ return _cmOriginFor(c); });
     if(!tagged.length) return {};                       // no origin field AND no SKU → can't attribute → lump fallback
@@ -27530,7 +27569,7 @@ function dmWeekStatus(){
       if(!c || c.type !== 'inv' || c.wk !== wk) return;
       if(((typeof _cmProd === 'function') ? _cmProd(c) : 'ginger') !== prod) return;
       if(_org && typeof _cmOriginFor === 'function'){ var o = _cmOriginFor(c); if(o && o !== _org) return; }
-      if(_isDS(c.customer)) return;                          // direct-ship no toca el almacén
+      if(_isDS(c.customer) && !c.fromCooler) return;                          // direct-ship no toca el almacén
       namedCs += (+c.cases || 0);
       named.push({ c: c.customer || '(sin nombre)', cs: (+c.cases || 0) });
     });
@@ -28191,10 +28230,18 @@ function dmcRenderChips() {
   // importadas son OG-GIN-30Lbs-PR). Mismo criterio que el build-up: una entrada SIN origen (cargada a
   // mano) se muestra siempre; solo se descarta la que declara OTRO origen.
   var _chipOrigin = (typeof _dmOrigin !== 'undefined' && _dmOrigin && _dmOrigin !== 'All' && _dmOrigin !== 'all') ? _dmOrigin : '';
+  var _cdChips = (typeof _cmCrossDock === 'function') ? _cmCrossDock(prod) : {};
   getCommitted().forEach(function(c, i) {
     if(_cmProd(c) !== prod) return;                 // this product only; i stays the true array index for removal
     if(_chipOrigin && typeof _cmOriginFor === 'function'){ var _co = _cmOriginFor(c); if(_co && _co !== _chipOrigin) return; }
     var manualBadge = (c.source === 'manual') ? '<span class="dmc-tag manual" title="Entered by hand — not from the Unshipped import.">manual</span>' : '';
+    var _isXD = !!(c.customer && Object.prototype.hasOwnProperty.call(_cdChips, c.customer));
+    if(_isXD) manualBadge += c.fromCooler
+      ? '<span class="dmc-tag" title="Marked as shipping from the cooler: it reduces stock and counts as this week\u2019s demand.">ships from cooler</span>'
+      : '<span class="dmc-tag direct" title="This customer is marked cross-dock on a purchase order, so its orders do not reduce warehouse stock. If this order ships from the cooler, click \u201cships from cooler\u201d.">cross-dock</span>';
+    var xdBtn = _isXD ? ('<button class="dmc-sh" onclick="dmcToggleCooler(' + i + ')" title="'
+      + (c.fromCooler ? 'Undo \u2014 this order is cross-dock after all' : 'This order ships from the cooler: it will reduce stock and count as this week\u2019s demand.')
+      + '">' + (c.fromCooler ? 'undo cooler' : 'ships from cooler') + '</button>') : '';
     var tag = _cmShipped(c) ? '<span class="dmc-tag shipped" title="Already left the warehouse, invoice not issued yet. Counts as volume moved, but does NOT reduce stock — the physical count is already net of these cases.">shipped · not invoiced</span>'
             : c.stale ? '<span class="dmc-tag stale" title="Badly overdue and still open — likely a stray. Still counted; remove with × if it is dead.">stale · review</span>'
             : c.pending ? '<span class="dmc-tag pending" title="Fulfillment date has passed but no invoice yet — still counted in demand, just awaiting invoice.">pending invoice</span>'
@@ -28206,7 +28253,7 @@ function dmcRenderChips() {
       + (_cmShipped(c) ? 'Undo — it is still in the warehouse' : 'Already shipped, invoice pending. Stops reducing stock, but the volume stays visible.')
       + '">' + (_cmShipped(c) ? 'undo' : 'mark shipped') + '</button>';
     html += '<div class="dmc-chip' + accent + '"><span><b>' + libEsc(c.customer) + '</b> · ' + when + ' · ' + c.cases + ' cs ' + manualBadge + tag + '</span>'
-      + shBtn + '<button class="dmc-rm" onclick="dmcRemoveInv(' + i + ')" title="Remove">×</button></div>';
+      + xdBtn + shBtn + '<button class="dmc-rm" onclick="dmcRemoveInv(' + i + ')" title="Remove">×</button></div>';
   });
   if(prod === 'ginger'){
     (typeof getOrders === 'function' ? getOrders() : []).forEach(function(o) {
@@ -28217,7 +28264,21 @@ function dmcRenderChips() {
       });
     });
   }
+  try{ (typeof cmCrossDockGap === 'function' ? cmCrossDockGap(prod) : []).forEach(function(g){
+    html = '<div class="dmc-hint" style="background:#FFFBEB;border:1px solid #FDE68A;color:#92400E;padding:6px 9px;border-radius:6px;margin-bottom:6px">'
+      + '&#9888; <b>' + libEsc(g.customer) + '</b> has ' + g.committed + ' cs committed but only ' + g.marked + ' cs marked cross-dock on its purchase orders. '
+      + 'If some of it ships from the cooler, click \u201cships from cooler\u201d on those orders \u2014 until then they do not reduce stock.</div>' + html;
+  }); }catch(e){}
   box.innerHTML = html || '<div class="dmc-hint">Nothing committed yet.</div>';
+}
+function dmcToggleCooler(i) {
+  var all = getCommitted(); if(!all[i]) return;
+  all[i].fromCooler = !all[i].fromCooler;
+  saveCommitted(all);
+  renderCommittedPanel();
+  if(typeof renderBuildupPanel === 'function') renderBuildupPanel();
+  if(typeof renderBuyPlanner === 'function') try{ renderBuyPlanner(); }catch(e){}
+  if(typeof invmReRender === 'function') try{ invmReRender(); }catch(e){}
 }
 function dmcToggleShipped(i) {
   var all = getCommitted(); if(!all[i]) return;
@@ -29311,7 +29372,7 @@ function renderDemandAccuracy(){
     // viene en la caja VENDIDA: se pasa al pack de compra antes de compararlo con el run-rate, o infla.
     // Turmeric: una orden cruzada de Sol-ti de 700 cs pedía "buy >= 700 cs" de cajas que nunca tocan cámara.
     const _cd = (typeof _cmCrossDock === 'function') ? (_cmCrossDock(fp) || {}) : {};
-    cmPlanEntries().forEach(function(x){ if (x && x.wk && x.wk >= _monNow && _cmProd(x) === fp && !(x.customer && Object.prototype.hasOwnProperty.call(_cd, x.customer))) _byWk[x.wk] = (_byWk[x.wk] || 0) + cmCasesInBuyPack(x, fp); });
+    cmPlanEntries().forEach(function(x){ if (x && x.wk && x.wk >= _monNow && _cmProd(x) === fp && !_cmIsCrossDock(x, _cd)) _byWk[x.wk] = (_byWk[x.wk] || 0) + cmCasesInBuyPack(x, fp); });
     const _wks = Object.keys(_byWk).sort();
     committedWks = _wks.length;
     committedCs = _wks.reduce(function(s,w){ return s + _byWk[w]; }, 0);

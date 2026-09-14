@@ -5286,6 +5286,41 @@ ok('el Buy Planner publica el colchón exacto', /coverage, safety, ssCases/.test
 ok('el Simulator lo usa para su línea LOW', /_bpDigest\.ssCases/.test(String(simRenderProjection)));
 } catch (_e) { ok('U07 no tira excepción: ' + ((_e && _e.message) || _e), false); }
 
+try {
+group('U25 · una orden de cuenta cross-dock puede marcarse "ships from cooler"');
+(function(){
+  var cd = { 'Sol-ti': 1 };
+  check('la orden de una cuenta cross-dock no toca la cámara', _cmIsCrossDock({ customer:'Sol-ti', cases:700 }, cd), true);
+  check('marcada "ships from cooler", sí la toca', _cmIsCrossDock({ customer:'Sol-ti', cases:50, fromCooler:true }, cd), false);
+  check('una cuenta que no es cross-dock nunca', _cmIsCrossDock({ customer:"Earl's", cases:20 }, cd), false);
+
+  // El aviso: 750 cs committed contra 700 marcadas cross-dock en sus POs.
+  _cmCrossDock = function(){ return cd; };
+  _cmProd = function(c){ return c.product || 'turmeric'; };
+  _ordProd = function(o){ return o.product || 'turmeric'; };
+  var fut = dmWeekKey(new Date(Date.now() + 14*86400000));
+  cmPlanEntries = function(){ return [
+    { type:'inv', customer:'Sol-ti', wk:fut, cases:700, product:'turmeric' },
+    { type:'inv', customer:'Sol-ti', wk:fut, cases:50,  product:'turmeric' },
+    { type:'inv', customer:"Earl's", wk:fut, cases:20,  product:'turmeric' } ]; };
+  getOrders = function(){ return [ { jlzPo:'P1', product:'turmeric', status:'In Transit', cases:850,
+    arrivalEstimated: dmISOLocal(new Date(Date.now() + 10*86400000)), directShip:[{ customer:'Sol-ti', cases:700 }] } ]; };
+  var g = cmCrossDockGap('turmeric');
+  check('avisa la diferencia de Sol-ti', (g[0] || {}).gap, 50);
+  cmPlanEntries = function(){ return [
+    { type:'inv', customer:'Sol-ti', wk:fut, cases:700, product:'turmeric' },
+    { type:'inv', customer:'Sol-ti', wk:fut, cases:50,  product:'turmeric', fromCooler:true } ]; };
+  check('marcada la de 50, el aviso se va', cmCrossDockGap('turmeric').length, 0);
+
+  // La marca sobrevive al re-import del lunes, igual que "shipped".
+  var STORE = [{ type:'inv', source:'import', customer:'Sol-ti', orderNo:'SO-9', sku:'OG-TUR-30Lbs-PR-FJ', wk:fut, cases:50, fromCooler:true }];
+  getCommitted = function(){ return STORE; };
+  saveCommitted = function(x){ STORE = x; };
+  var out = importCommittedOpenOrders([{ type:'inv', source:'import', customer:'Sol-ti', orderNo:'SO-9', sku:'OG-TUR-30Lbs-PR-FJ', wk:fut, cases:50 }]);
+  ok('la marca "ships from cooler" sobrevive al re-import', !!(out.filter(function(c){ return c.orderNo === 'SO-9'; })[0] || {}).fromCooler);
+})();
+} catch (_e) { ok('U25 no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
 // ═══ El entorno se limpia entre grupos ══════════════════════════════════════
 // Guardián del arreglo de arriba. Si alguien saca la restauración de `group()`, esto falla y
 // dice por qué — en vez de que un test futuro mida un stub ajeno y nadie se entere.

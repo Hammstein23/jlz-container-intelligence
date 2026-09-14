@@ -27,6 +27,7 @@ ALLOWED = {
     'importCommittedOpenOrders':'re-importa y preserva las marcas shipped existentes',
     'dmcRenderChips':           'panel de Committed orders: la despachada se muestra con su badge',
     'dmcToggleShipped':         'es el que pone y saca la marca',
+    'dmcToggleCooler':          'es el que pone y saca la marca ships from cooler',
     'renderBuildupPanel':       'vista de volumen: esas cajas se movieron y tienen que verse',
 }
 

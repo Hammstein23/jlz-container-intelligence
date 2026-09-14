@@ -27,10 +27,10 @@ else:
         ok('el committed contra-orden sale de la demanda de almacen')
     else:
         bad('invmCommittedByWeek no excluye las cuentas contra-orden: vuelve el doble castigo')
-    if re.search(r'hasOwnProperty\.call\(_mtoCust,\s*c\.customer\)', body):
+    if re.search(r'_cmIsCrossDock\(c,\s*_mtoCust\)', body):
         ok('y se excluye por cliente, igual que hybridSalesForWeek')
     else:
-        bad('la exclusion no es por cliente; hybridSalesForWeek usa esa regla y tienen que coincidir')
+        bad('invmCommittedByWeek no usa _cmIsCrossDock: la regla (y la marca ships-from-cooler) tiene que ser una sola')
     if 'dmWindow' in body:
         ok('sobre la ventana del producto, la misma del neteo')
     else:
@@ -95,7 +95,7 @@ for fn in ['committedInvForWeek', 'prodCommittedTotal']:
     # No alcanza con LLAMAR a _cmCrossDock: el filtro tiene que aplicarse de verdad. Con solo la
     # llamada, borrar la linea del filtro dejaba pasar el chequeo.
     cuerpo = m3.group(1)
-    if re.search(r'hasOwnProperty\.call\(_?cd,\s*c\.customer\)', cuerpo):
+    if re.search(r'_cmIsCrossDock\(c,\s*_?cd\)', cuerpo):
         ok('%s no resta el cruzado del stock libre' % fn)
     else:
         bad('%s resta committed cruzado: descuenta mercaderia que nunca entro' % fn)
@@ -107,6 +107,19 @@ else:
     bad('_cmCrossDock no sale de mtoByCustomer con crossDockOnly')
 
 print()
+# La regla es UNA: _cmIsCrossDock. Tiene que respetar la marca "ships from cooler", o una orden de una cuenta
+# cross-dock que sí sale de la cámara deja de restar stock en silencio.
+_h = re.search(r'function _cmIsCrossDock\(c, cd\)\{(.*?)\n\}', src, re.S)
+if _h and 'fromCooler' in _h.group(1):
+    ok('_cmIsCrossDock respeta la marca ships from cooler')
+else:
+    bad('_cmIsCrossDock no existe o ignora fromCooler')
+_hy = re.search(r'function hybridSalesForWeek\(.*?\)\s*\{(.*?)\n\}', src, re.S)
+if _hy and 'fromCooler' in _hy.group(1) and '_hpCooler' in _hy.group(1):
+    ok('hybridSalesForWeek suma la orden ships-from-cooler a la demanda')
+else:
+    bad('hybridSalesForWeek ignora la marca ships from cooler')
+
 if fails:
     print('  %d problema(s): el contra-orden vuelve a contarse contra el inventario' % len(fails)); sys.exit(1)
 print('  ok   el contra-orden no toca el inventario, por ninguna de las dos puntas')
