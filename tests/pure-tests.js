@@ -5339,8 +5339,8 @@ group('ginger-Perú · el contenedor se ENTREGA el jueves y la orden se cierra e
   check('si el tránsito no cae en miércoles, se corre al miércoles anterior (nunca después)', (con37.protect||{}).orderBy, '2026-09-16');
   ok('el calendario de contenedores también lo usa', (bpOrderSchedule(rows, { startCases:4000, safetyCases:1400, leadDays:36,
       perOrder:1320, count:1, today:'2026-09-01T12:00:00', calendar:CAL })[0] || {}).orderBy === '2026-09-23');
-  ok('solo ginger-Perú lo pasa: Buy Planner', /calendar: BP_PE_CALENDAR/.test(String(renderBuyPlanner)));
-  ok('solo ginger-Perú lo pasa: Simulator', /calendar: BP_PE_CALENDAR/.test(String(simRenderProjection)));
+  check('Buy Planner: el plan Y el calendario de contenedores lo pasan', (String(renderBuyPlanner).match(/calendar: BP_PE_CALENDAR/g) || []).length, 2);
+  check('Simulator: el plan Y el calendario de contenedores lo pasan', (String(simRenderProjection).match(/calendar: BP_PE_CALENDAR/g) || []).length, 2);
   ok('los otros cuatro productos NO', !/BP_PE_CALENDAR/.test(String(invmBuySuggestion)));
 })();
 } catch (_e) { ok('calendario ginger-Perú no tira excepción: ' + ((_e && _e.message) || _e), false); }
