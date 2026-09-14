@@ -4418,9 +4418,14 @@ group('U08 · la tarjeta del Simulator lee los mismos plazos que la del Buy Plan
 
   ok('el digest trae el plazo de mar', !!(S.seaDeadline && S.seaDeadline.date));
   ok('el digest trae el plazo de aire', !!(S.airDeadline && S.airDeadline.date));
-  check('plazo de mar = semana del quiebre - lead de mar',
-        S.seaDeadline ? dmISOLocal(new Date(S.seaDeadline.date)) : null, dmISOLocal(mar.date));
-  check('días al plazo de mar', S.seaDeadline ? S.seaDeadline.daysLeft : null, mar.daysLeft);
+  // Ginger-Perú: el plazo sale del plan con calendario. Sin fecha que proteja, es la PRIMERA orden posible
+  // (miércoles de cierre, nunca en el pasado). Antes era el quiebre menos el lead: podía estar vencido y no
+  // sabía del cierre del miércoles ni de la entrega del jueves.
+  var _pb = S.protect && S.protect.best;
+  check('plazo de mar = la primera orden posible del plan',
+        S.seaDeadline ? dmISOLocal(new Date(S.seaDeadline.date)) : null, _pb ? _pb.orderBy : null);
+  ok('y cae en miércoles, sin estar vencido',
+     !!(S.seaDeadline && new Date(S.seaDeadline.date).getDay() === 3 && S.seaDeadline.daysLeft >= 0));
   ok('con el plazo vencido la tarjeta tiene con qué ponerse roja',
      !!(S.seaDeadline && S.seaDeadline.daysLeft != null && S.seaDeadline.daysLeft <= 7));
 
@@ -5233,7 +5238,7 @@ check('lo importado ya viene en caja de compra: 7 son 7',
 try {
 group('U41 · Home muestra la misma fecha de orden que la tarjeta del Buy Planner');
 ok('lee el plan de protección antes que el plazo del quiebre',
-   /dg\.protect && dg\.protect\.protect/.test(String(renderHome)));
+   /bpSeaAnchor\(dg\.protect\)/.test(String(renderHome)));
 } catch (_e) { ok('U41 no tira excepción: ' + ((_e && _e.message) || _e), false); }
 
 try {
@@ -5344,6 +5349,29 @@ group('ginger-Perú · el contenedor se ENTREGA el jueves y la orden se cierra e
   ok('los otros cuatro productos NO', !/BP_PE_CALENDAR/.test(String(invmBuySuggestion)));
 })();
 } catch (_e) { ok('calendario ginger-Perú no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
+try {
+group('ginger-Perú · todas las fechas de mar salen del mismo plan con calendario');
+(function(){
+  var prot = { orderBy:'2026-09-16', daysLeft:2, deliveryDate:'2026-10-22', landsWk:'2026-10-19' };
+  var best = { orderBy:'2026-09-16', daysLeft:2, deliveryDate:'2026-10-29', landsWk:'2026-10-26' };
+  var borde = { orderBy:'2026-09-23', daysLeft:9, deliveryDate:'2026-11-05', landsWk:'2026-11-02' };
+  check('si hay fecha que protege, esa', (bpSeaAnchor({ protect:prot, best:best, stockout:borde }) || {}).deliveryDate, '2026-10-22');
+  check('si ninguna protege (piso inevitable), la PRIMERA posible, no el borde',
+        (bpSeaAnchor({ protect:null, best:best, stockout:borde, floorUnavoidable:true }) || {}).orderBy, '2026-09-16');
+  ok('sin plan no inventa fecha', bpSeaAnchor(null) === null && bpSeaAnchor({ horizonShort:true }) === null);
+  var dl = bpDeadlineFromAnchor(best);
+  ok('la convierte a la forma que leen tarjeta, Home y Sea', dl && dl.daysLeft === 2 && dl.deliveryDate === '2026-10-29' && dl.fromPlan);
+  ok('la tarjeta lee el plan también sin fecha que proteja', /bpSeaAnchor\(P\)/.test(String(bpGingerSuggestionHTML)));
+  ok('el Buy Planner reescribe seaDeadline desde el plan', /_bpDigest\.seaDeadline = _seaCal/.test(String(renderBuyPlanner)));
+  ok('la tarjeta Sea usa ese plazo', /dg\.seaDeadline \|\| seaDeadline/.test(String(renderBuyPlanner)));
+  ok('el Simulator también', /bpDeadlineFromAnchor\(bpSeaAnchor\(_plS\)\)/.test(String(simRenderProjection)));
+  ok('Home: si ninguna fecha cuida el colchón, dice ORDER NOW con la primera posible',
+     /No order date keeps the safety buffer anymore/.test(String(renderHome)));
+  ok('las dos tablas muestran el stock del jueves antes de la entrega',
+     /Thu before delivery/.test(String(renderBuyPlanner)) && /Thu before delivery/.test(String(simRenderProjection)));
+})();
+} catch (_e) { ok('fechas de mar ginger no tira excepción: ' + ((_e && _e.message) || _e), false); }
 
 // ═══ El entorno se limpia entre grupos ══════════════════════════════════════
 // Guardián del arreglo de arriba. Si alguien saca la restauración de `group()`, esto falla y

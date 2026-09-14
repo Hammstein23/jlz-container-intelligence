@@ -16851,6 +16851,21 @@ function bpProtectPlan(rows, opts){
            noOrder:noOrder, unavoidable:unavoidable, safetyCases:Math.round(safety),
            floorUnavoidable:(troughIf(first, first).trough < safety) };
 }
+// La fecha de orden de mar de ginger-Perú sale del plan con calendario: la que protege el colchón o, si
+// ninguna alcanza (piso inevitable), la PRIMERA posible — ordenar ya. Nunca el lunes del quiebre menos el
+// tránsito armado a mano: esa cuenta no sabe del cierre del miércoles ni de la entrega del jueves, y fue
+// la que mostró "order by 26/9" cuando el plan decía miércoles 16/9. Tarjeta, Home, la tarjeta Sea y el
+// Simulator leen de acá.
+function bpSeaAnchor(P){
+  if(!P || P.horizonShort) return null;
+  return P.protect || (P.floorUnavoidable ? P.best : null) || P.stockout || null;
+}
+function bpDeadlineFromAnchor(a){
+  if(!a || !a.orderBy) return null;
+  return { date:new Date(a.orderBy + 'T12:00:00'), daysLeft:a.daysLeft,
+           wk:(typeof isoWeek === 'function') ? isoWeek(a.orderBy) : null,
+           deliveryDate:a.deliveryDate || null, landsWk:a.landsWk || null, fromPlan:true };
+}
 function invmProductArrivals(p, origin){
   var out={};
   var orders=(typeof getOrders==='function')?getOrders():[];
@@ -18230,7 +18245,7 @@ function bpGingerSuggestionHTML(src){
   // ── El titular va anclado a la fecha que PROTEGE ──────────────────────────────────────────────
   // Antes apuntaba al quiebre: ordenar ahí aterrizaba el contenedor la semana en que el stock es
   // cero. El plazo que sirve es el último que no baja del colchón en ninguna semana de espera.
-  var P=d.protect||null, prot=(P&&P.protect)||null;
+  var P=d.protect||null, prot=(typeof bpSeaAnchor==='function') ? bpSeaAnchor(P) : ((P&&P.protect)||null);
   var plazoISO = prot ? prot.orderBy : (sea?iso(sea.date):null);
   var plazoDias= prot ? prot.daysLeft : dias;
   var lands = prot ? (prot.deliveryDate || prot.landsWk) : '';   // con calendario, el día de ENTREGA (jueves)
@@ -19400,6 +19415,11 @@ function renderBuyPlanner() {
       + '<td style="padding:8px 12px;text-align:right;color:' + (r.arrivalCases > 0 ? 'var(--green-700);font-weight:600' : 'var(--gray-300)') + '">'
         + (r.arrivalCases > 0 ? '+' + r.arrivalCases.toLocaleString() : '—')
         + (r.arrivalCases > 0 ? '<div style="font-size:9px;color:var(--gray-400);font-weight:400">' + arrivalsTxt + '</div>' : '')
+        + (r.arrivalCases > 0 ? (function(){
+            var thu = Math.round((+r.startingStock||0) - BP_PE_CALENDAR.preDeliveryShare*(+r.demand||0));
+            return '<div style="font-size:9px;font-weight:600;color:' + (thu < ssCases ? 'var(--amber-700)' : 'var(--gray-500)')
+              + '" title="The container reaches port Monday and is delivered Thursday: Monday to Wednesday sells from the stock already here.">Thu before delivery: '
+              + thu.toLocaleString() + ' cs</div>'; })() : '')
       + '</td>'
       + '<td style="padding:8px 12px;text-align:right;color:var(--red-600)">−' + Math.round(r.demand).toLocaleString() + '</td>'
       + '<td style="padding:8px 12px;text-align:right;font-weight:700;color:' + (r.endingStock <= 0 ? 'var(--red-600)' : 'var(--gray-800)') + '">' + Math.round(r.endingStock).toLocaleString() + '</td>'
@@ -19979,6 +19999,9 @@ function renderBuyPlanner() {
                                          arrivals: +r.arrivalCases||0, demand: +r.demand||0 }; }),
           { startCases:+rows[0].startingStock||0, safetyCases:ssCases, leadDays:lt.sea_total,
             perOrder:grossCasesPerContainer, count:recContainers, calendar: BP_PE_CALENDAR });
+        // La fecha de mar que ven la tarjeta, Home y la tarjeta Sea sale de ESTE plan, no del quiebre menos tránsito.
+        var _seaCal = bpDeadlineFromAnchor(bpSeaAnchor(window._bpDigest.protect));
+        if(_seaCal) window._bpDigest.seaDeadline = _seaCal;
       }
     }catch(e){}
     // La tarjeta del Buy Planner sale de ESTOS datos: sin escenarios. La del Simulator sale de los
@@ -20125,7 +20148,14 @@ function renderBuyPlanner() {
       + recHtml
       + guardHtml
       + '<div style="display:flex;gap:8px;margin-bottom:8px">'
-        + modeCard('sea', seaDeadline, seaEtaWk, seaEtaDate, lt.sea_total)
+        + (function(){
+            // Con calendario: el plazo es el del plan, y "si ordenás hoy" llega el jueves de la primera semana posible.
+            var dg = window._bpDigest || {}, b = dg.protect && dg.protect.best;
+            var etaIso = b && b.deliveryDate;
+            return modeCard('sea', dg.seaDeadline || seaDeadline,
+              (etaIso && typeof isoWeek === 'function') ? isoWeek(etaIso) : seaEtaWk,
+              etaIso ? new Date(etaIso + 'T12:00:00') : seaEtaDate, lt.sea_total);
+          })()
         + modeCard('air', airDeadline, airEtaWk, airEtaDate, lt.air_total)
       + '</div>'
       + detailsHtml;
@@ -24033,6 +24063,11 @@ function simRenderProjection(realOrders, hypoOrders) {
       + '<td style="padding:8px 12px;text-align:right;color:' + (arrivalCases > 0 ? (hasHypo ? '#7C3AED;font-weight:600' : 'var(--green-700);font-weight:600') : 'var(--gray-300)') + '">'
         + (arrivalCases > 0 ? '+' + arrivalCases.toLocaleString() : '—')
         + (arrivalCases > 0 ? '<div style="font-size:9px;color:var(--gray-400);font-weight:400">' + arrivalText + '</div>' : '')
+        + (arrivalCases > 0 ? (function(){
+            var thu = Math.round((+startStock||0) - BP_PE_CALENDAR.preDeliveryShare*(+wkDemand||0));
+            return '<div style="font-size:9px;font-weight:600;color:' + (thu < safetyThreshold ? 'var(--amber-700)' : 'var(--gray-500)')
+              + '" title="The container reaches port Monday and is delivered Thursday: Monday to Wednesday sells from the stock already here.">Thu before delivery: '
+              + thu.toLocaleString() + ' cs</div>'; })() : '')
         + (downgradedArrivals.length ? '<div style="font-size:9px;color:var(--amber-700);font-weight:600;text-decoration:line-through;text-decoration-color:var(--amber-300)">' + downgradedText + '</div>' : '')
       + '</td>'
       + '<td style="padding:8px 12px;text-align:right;color:var(--red-600)">−' + Math.round(wkDemand).toLocaleString() + ((typeof _hypoSalesWk !== 'undefined' && _hypoSalesWk > 0) ? '<div style="font-size:9px;color:#7C3AED;font-weight:600">🧪 scenario</div>' : '') + '</td>'
@@ -24107,7 +24142,7 @@ function simRenderProjection(realOrders, hypoOrders) {
         return { date:dd, daysLeft:Math.round((dd-new Date())/86400000),
                  wk:(typeof isoWeek==='function' && typeof dmISOLocal==='function')?isoWeek(dmISOLocal(dd)):null };
       };
-      window._simDigest.seaDeadline=_dlS(_lead);
+      window._simDigest.seaDeadline=((typeof bpSeaAnchor==='function') ? bpDeadlineFromAnchor(bpSeaAnchor(_plS)) : null) || _dlS(_lead);
       window._simDigest.airDeadline=_dlS(_ltS?_ltS.air_total:NaN);
     }
   }catch(e){ console.warn('sim digest', e); }
@@ -25514,13 +25549,19 @@ function renderHome() {
       const fmtD = d => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       // La fecha de ORDEN es la de la tarjeta del Buy Planner: la última que no baja del colchón
       // (bpProtectPlan). Anclada al quiebre, Home daba ~3 semanas más de las que hay. Sin plan, la del quiebre.
-      const _prot = dg.protect && dg.protect.protect;
+      const _prot = (typeof bpSeaAnchor === 'function') ? bpSeaAnchor(dg.protect) : (dg.protect && dg.protect.protect);
       const sea = _prot ? { date: _prot.orderBy + 'T12:00:00', daysLeft: _prot.daysLeft } : dg.seaDeadline, air = dg.airDeadline;
 
       let chip, chipBg, chipBorder, advice;
       if (!dg.shortfall) {
         chip = 'COVERED'; chipBg = 'var(--green-50)'; chipBorder = 'var(--green-600)';
         advice = 'No shortfall inside the 12-week projection at current demand. Keep the snapshot fresh in the Buy Planner.';
+      } else if (sea && dg.protect && dg.protect.floorUnavoidable && sea.fromPlan !== false && _prot) {
+        // Ninguna fecha cuida el colchón: la primera orden posible ES la urgencia, aunque falten días.
+        chip = 'ORDER NOW'; chipBg = 'var(--red-50)'; chipBorder = 'var(--red-600)';
+        advice = 'No order date keeps the safety buffer anymore. Place the sea order by <strong>' + fmtD(sea.date) + '</strong> ('
+          + sea.daysLeft + ' days), the earliest that still arrives'
+          + (_prot.deliveryDate ? ' — delivered <strong>' + fmtD(_prot.deliveryDate + 'T12:00:00') + '</strong>' : '') + '.';
       } else if (sea && sea.daysLeft <= 0) {
         chip = 'ORDER NOW'; chipBg = 'var(--red-50)'; chipBorder = 'var(--red-600)';
         advice = 'The sea order deadline (<strong>' + fmtD(sea.date) + '</strong>) has passed for the Wk ' + dg.shortfall.weekNum + ' shortfall'
