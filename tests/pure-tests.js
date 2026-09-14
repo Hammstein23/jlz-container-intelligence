@@ -5321,6 +5321,30 @@ group('U25 · una orden de cuenta cross-dock puede marcarse "ships from cooler"'
 })();
 } catch (_e) { ok('U25 no tira excepción: ' + ((_e && _e.message) || _e), false); }
 
+try {
+group('ginger-Perú · el contenedor se ENTREGA el jueves y la orden se cierra el miércoles');
+(function(){
+  var CAL = { orderDow: 3, deliveryOffset: 3, preDeliveryShare: 3/6 };
+  var rows = ['2026-10-05','2026-10-12','2026-10-19','2026-10-26','2026-11-02','2026-11-09','2026-11-16']
+    .map(function(w){ return { wkISO:w, arrivals:0, demand:600 }; });
+  var base = { startCases:4000, safetyCases:1400, leadDays:36, addCases:1320, today:'2026-09-01T12:00:00' };
+  var sin = bpProtectPlan(rows, base);
+  var con = bpProtectPlan(rows, Object.assign({ calendar:CAL }, base));
+  check('sin calendario (los otros productos) nada cambia: llega la semana del 2-nov', (sin.protect||{}).landsWk, '2026-11-02');
+  check('con calendario el jueves quedaría bajo el colchón: adelanta a la semana del 26-oct', (con.protect||{}).landsWk, '2026-10-26');
+  check('y dice el día de entrega real, el jueves', (con.protect||{}).deliveryDate, '2026-10-29');
+  check('con el stock ANTES de la entrega: 2.200 el lunes menos media semana de venta', (con.protect||{}).stockBeforeDelivery, 1900);
+  check('la orden cae el miércoles de cierre: jueves 29-oct menos 36 días', (con.protect||{}).orderBy, '2026-09-23');
+  var con37 = bpProtectPlan(rows, Object.assign({ calendar:CAL }, base, { leadDays:37 }));
+  check('si el tránsito no cae en miércoles, se corre al miércoles anterior (nunca después)', (con37.protect||{}).orderBy, '2026-09-16');
+  ok('el calendario de contenedores también lo usa', (bpOrderSchedule(rows, { startCases:4000, safetyCases:1400, leadDays:36,
+      perOrder:1320, count:1, today:'2026-09-01T12:00:00', calendar:CAL })[0] || {}).orderBy === '2026-09-23');
+  ok('solo ginger-Perú lo pasa: Buy Planner', /calendar: BP_PE_CALENDAR/.test(String(renderBuyPlanner)));
+  ok('solo ginger-Perú lo pasa: Simulator', /calendar: BP_PE_CALENDAR/.test(String(simRenderProjection)));
+  ok('los otros cuatro productos NO', !/BP_PE_CALENDAR/.test(String(invmBuySuggestion)));
+})();
+} catch (_e) { ok('calendario ginger-Perú no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
 // ═══ El entorno se limpia entre grupos ══════════════════════════════════════
 // Guardián del arreglo de arriba. Si alguien saca la restauración de `group()`, esto falla y
 // dice por qué — en vez de que un test futuro mida un stub ajeno y nadie se entere.

@@ -14731,6 +14731,12 @@ function confirmImport() {
 //                          some product on hand (10d default).
 //     inland_to_airport  — truck from facility to Lima airport + airline
 //                          cut-off / consolidator handling (~3d).
+// Calendario del contenedor de ginger-Perú (Juan, 2026-09-14). La orden se cierra el MIÉRCOLES, embarca el
+// sábado, llega a puerto el lunes y se entrega en el almacén 2-3 días después: se toma el JUEVES, lado
+// seguro. De lunes a miércoles se vende del stock viejo (3 de los 6 días de venta). SOLO ginger-Perú: los
+// otros productos llegan por aire o por tierra con otro ritmo. Los días de tránsito siguen en los campos de
+// lead time del Buy Planner; esto solo dice QUÉ DÍA de la semana se ordena y se entrega.
+var BP_PE_CALENDAR = { orderDow: 3, deliveryOffset: 3, preDeliveryShare: 3/6 };
 const BP_LEAD_DEFAULTS = {
   sea_harvest_proc:   12,
   sea_inland_to_port:  4,
@@ -16721,7 +16727,7 @@ function bpOrderSchedule(rows, opts){
     // nada. Y arranca la semana SIGUIENTE: dos contenedores el mismo día es justo lo que se quiere
     // evitar — si aun así no alcanza, la entrada sale marcada `late` y la pantalla lo dice.
     var pl = bpProtectPlan(sub, { startCases:st, safetyCases:opts.safetyCases,
-                                  leadDays:opts.leadDays, addCases:per, today:opts.today });
+                                  leadDays:opts.leadDays, addCases:per, today:opts.today, calendar:opts.calendar });
     if(!pl || pl.horizonShort) break;
     var vivo = !!(pl.protect && pl.protect.orderBy);
     var ancla = vivo ? pl.protect : pl.best;
@@ -16769,9 +16775,18 @@ function bpProtectPlan(rows, opts){
   var add    = Math.max(0, +opts.addCases || 0);
   var start  = +opts.startCases || 0;
   var hoy    = opts.today ? new Date(opts.today) : new Date();
+  // Calendario opcional (hoy solo ginger-Perú, BP_PE_CALENDAR). Sin él, todo como siempre: el pedido
+  // cuenta desde el lunes de su semana y se puede ordenar cualquier día.
+  var cal = opts.calendar || null;
+  var entregaDia = cal ? Math.max(0, +cal.deliveryOffset || 0) : 0;          // días después del lunes
+  var cierre = (cal && cal.orderDow != null) ? (+cal.orderDow) : null;         // 0 = domingo … 3 = miércoles
+  var previa = cal ? Math.max(0, Math.min(1, +cal.preDeliveryShare || 0)) : 0; // venta de la semana antes de la entrega
   var iso = function(d){ return d ? ((typeof dmISOLocal==='function') ? dmISOLocal(d) : d.toISOString().slice(0,10)) : null; };
   var wkDate  = function(i){ var w = rows[i] && rows[i].wkISO; return w ? new Date(String(w)+'T12:00:00') : null; };
-  var orderBy = function(i){ var d = wkDate(i); return d ? new Date(d.getTime() - lead*DIA) : null; };
+  var orderBy = function(i){ var d = wkDate(i); if(!d) return null;
+    var o = new Date(d.getTime() + (entregaDia - lead)*DIA);   // entrega menos tránsito
+    if(cierre != null){ while(o.getDay() !== cierre) o = new Date(o.getTime() - DIA); }   // al cierre anterior
+    return o; };
   var dias    = function(d){ return d ? Math.round((d - hoy)/DIA) : null; };
   // El piso si el pedido aterriza en la semana `land` (-1 = no ordenar nada). `from` acota DESDE
   // dónde se mira: el pozo que cae antes de que cualquier orden nueva pueda llegar ya está decidido
@@ -16785,7 +16800,14 @@ function bpProtectPlan(rows, opts){
       // Misma definición que el `projAtArrival` del Buy Planner de ginger (`startingStock` de la
       // semana de llegada), para que las cinco líneas midan la cantidad con la misma vara.
       if(i === land) atLanding = st;
-      st += (+(rows[i].arrivals)||0) + ((i===land) ? add : 0) - (+(rows[i].demand)||0);
+      var llega = (+(rows[i].arrivals)||0) + ((i===land) ? add : 0);
+      // Con calendario, una semana con contenedor tiene su punto más bajo ANTES de la entrega: el lunes
+      // a miércoles se vende del stock viejo. Ese punto también tiene que respetar el colchón.
+      if(previa > 0 && llega > 0 && i >= from){
+        var antes = st - previa*(+(rows[i].demand)||0);
+        if(antes < min){ min = antes; minWk = rows[i].wkISO; }
+      }
+      st += llega - (+(rows[i].demand)||0);
       if(i >= from && st < min){ min = st; minWk = rows[i].wkISO; }
       if(i === land) break;
     }
@@ -16800,7 +16822,9 @@ function bpProtectPlan(rows, opts){
   var pack = function(i,from){ if(i < 0) return null; var t = troughIf(i,from||0), ob = orderBy(i);
     return { landsWk:rows[i].wkISO, orderBy:iso(ob), daysLeft:dias(ob),
              trough:Math.round(t.trough), troughWk:t.troughWk,
-             stockAtLanding:Math.round(t.atLanding) }; };
+             stockAtLanding:Math.round(t.atLanding),
+             deliveryDate: cal ? iso(new Date(wkDate(i).getTime() + entregaDia*DIA)) : null,
+             stockBeforeDelivery: cal ? Math.round(t.atLanding - previa*(+(rows[i].demand)||0)) : null }; };
   // `best`/`free` se miden sobre TODO el horizonte: de ahí sale que esperar no cueste nada cuando el
   // pozo ya cayó. `protect`/`stockout` se miden desde `first`, que es lo único que una orden nueva
   // puede cambiar.
@@ -18209,7 +18233,7 @@ function bpGingerSuggestionHTML(src){
   var P=d.protect||null, prot=(P&&P.protect)||null;
   var plazoISO = prot ? prot.orderBy : (sea?iso(sea.date):null);
   var plazoDias= prot ? prot.daysLeft : dias;
-  var lands = prot ? prot.landsWk : '';
+  var lands = prot ? (prot.deliveryDate || prot.landsWk) : '';   // con calendario, el día de ENTREGA (jueves)
   if(!prot){ try{ var l=(sea&&sea.date)?new Date(sea.date):new Date();
                   l.setDate(l.getDate()+Math.round((R.leadWks||0)*7)); lands=iso(l); }catch(e){} }
   var ya = (P && P.floorUnavoidable);
@@ -19947,13 +19971,14 @@ function renderBuyPlanner() {
           rows.map(function(r){ return { wkISO: dmISOLocal(new Date(r.weekStartDate)),
                                          arrivals: +r.arrivalCases||0, demand: +r.demand||0 }; }),
           { startCases: +rows[0].startingStock||0, safetyCases: ssCases,
-            leadDays: lt.sea_total, addCases: grossCasesPerContainer*Math.max(1,recContainers) });
+            leadDays: lt.sea_total, addCases: grossCasesPerContainer*Math.max(1,recContainers),
+            calendar: BP_PE_CALENDAR });
         // Y el calendario: una fecha por contenedor, no todas la misma.
         window._bpDigest.schedule = bpOrderSchedule(
           rows.map(function(r){ return { wkISO: dmISOLocal(new Date(r.weekStartDate)),
                                          arrivals: +r.arrivalCases||0, demand: +r.demand||0 }; }),
           { startCases:+rows[0].startingStock||0, safetyCases:ssCases, leadDays:lt.sea_total,
-            perOrder:grossCasesPerContainer, count:recContainers });
+            perOrder:grossCasesPerContainer, count:recContainers, calendar: BP_PE_CALENDAR });
       }
     }catch(e){}
     // La tarjeta del Buy Planner sale de ESTOS datos: sin escenarios. La del Simulator sale de los
@@ -24057,11 +24082,11 @@ function simRenderProjection(realOrders, hypoOrders) {
       var _plS=bpProtectPlan(_simProjRows.filter(function(r){ return !!r.wkISO; })
                   .map(function(r){ return { wkISO:r.wkISO, arrivals:r.arrivals, demand:r.demand }; }),
         { startCases:_simProjRows[0].startingStock, safetyCases:_ssC, leadDays:_lead,
-          addCases:_cpS.netCases });
+          addCases:_cpS.netCases, calendar: BP_PE_CALENDAR });
       var _schS=bpOrderSchedule(_simProjRows.filter(function(r){ return !!r.wkISO; })
                   .map(function(r){ return { wkISO:r.wkISO, arrivals:r.arrivals, demand:r.demand }; }),
         { startCases:_simProjRows[0].startingStock, safetyCases:_ssC, leadDays:_lead,
-          perOrder:_cpS.perContainer, count:_cpS.containers });
+          perOrder:_cpS.perContainer, count:_cpS.containers, calendar: BP_PE_CALENDAR });
       window._simDigest = { scenario:true, stockCases:stockCasesGross, weeklyDemand:weeklyDemand,
         salesDemand:salesDemand, coverage:(weeklyDemand>0?stockCasesGross/weeklyDemand:0),
         safety:safety, protect:_plS, schedule:_schS,

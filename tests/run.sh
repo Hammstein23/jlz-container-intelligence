@@ -86,7 +86,7 @@ python3 "$DIR/extract.py" "$HTML" "$TMP/app.js" \
   bpInvLot bpOrderById bpOrderCifLb bpOrderPerCaseLb bpInvRate bpDaysSince bpEtaOf invmCanonSku bpArrivalNetCases bpGetPipelineByWeek bpRenderFifo dmcAdd ordAfterBoughtForChange ordMergeLocalOnly _mtoMarkList _mtoMarksMap getOrders saveOrders renderCommittedPanel simGingerPeruOrders simRenderProduct bpShowAvailableFree dmForwardWeeks dmMondayISO invmAnalysisHTML invmRenderProduct prodCommittedTotal renderBuyPlanner renderDemandAccuracy renderDmRunRate simRenderProjection isoWeek normalizeDate _cmCrossDock renderHome invmProductModel _cmIsCrossDock cmCrossDockGap importCommittedOpenOrders _cmKey invmProductModel
 # Constantes top-level que las funciones extraídas necesitan. extract.py solo saca funciones,
 # así que sin esto el test las leería de un stub y estaría probando el stub, no producción.
-for _c in DM_SELL_DAYS BP_INV_LS BP_INV_LS_V1; do
+for _c in DM_SELL_DAYS BP_INV_LS BP_INV_LS_V1 BP_PE_CALENDAR; do
   grep -E "^var $_c *=" "$HTML" >> "$TMP/app.js" \
     || { echo "  FAIL no se encontró $_c en el HTML"; FAILED=1; }
 done
