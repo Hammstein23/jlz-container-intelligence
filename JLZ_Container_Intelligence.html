@@ -19554,7 +19554,7 @@ function renderBuyPlanner() {
   // Compact digest consumed by the Home command center (renderHome) —
   // Home mirrors these numbers instead of duplicating planner logic.
   window._bpDigest = {
-    stockCases, salesDemand, weeklyDemand, coverage, safety,
+    stockCases, salesDemand, weeklyDemand, coverage, safety, ssCases,   // ssCases: el colchón exacto; `safety` son semanas redondeadas, solo para mostrar
     snapDateStr, snapAgeDays,
     shortfall: deadlineTarget ? { weekNum: deadlineTarget.weekNum, date: deadlineTarget.weekStartDate } : null,
     safetyDip: safetyDipTarget ? { weekNum: safetyDipTarget.weekNum, date: safetyDipTarget.weekStartDate } : null,
@@ -23824,7 +23824,11 @@ function simRenderProjection(realOrders, hypoOrders) {
   const weeklyDemand = (typeof window !== 'undefined' && window._bpDigest && window._bpDigest.weeklyDemand > 0)
     ? window._bpDigest.weeklyDemand
     : (salesDemand / (1 - shrinkPct));
-  const safetyThreshold = weeklyDemand * safety;
+  // La línea LOW es el colchón EXACTO del Buy Planner, no semanas × demanda: `safety` viene redondeado
+  // a un decimal y rearmarla con eso la corría hasta ±0.05 semanas — LOW en una pantalla, OK en la otra.
+  const _bpSsCases = (typeof window !== 'undefined' && window._bpDigest && window._bpDigest.ssCases != null
+    && isFinite(window._bpDigest.ssCases)) ? window._bpDigest.ssCases : null;
+  const safetyThreshold = (_bpSsCases != null) ? _bpSsCases : weeklyDemand * safety;
 
   const _simProjRows = [];
   // Combine real + hypo into "arrivals by week" map

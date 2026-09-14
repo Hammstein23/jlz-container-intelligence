@@ -5278,6 +5278,14 @@ group('U30 · el origen "all" no se salta el neteo de lo comprado contra orden')
 })();
 } catch (_e) { ok('U30 no tira excepción: ' + ((_e && _e.message) || _e), false); }
 
+try {
+group('U07 · el Simulator marca LOW contra el mismo colchón exacto que el Buy Planner');
+// `safety` viene redondeado a un decimal: rearmar el colchón como semanas × demanda lo corría hasta
+// ±0.05 semanas (1.155 cs contra 1.172), y una misma semana salía LOW en una pantalla y OK en la otra.
+ok('el Buy Planner publica el colchón exacto', /coverage, safety, ssCases/.test(String(renderBuyPlanner)));
+ok('el Simulator lo usa para su línea LOW', /_bpDigest\.ssCases/.test(String(simRenderProjection)));
+} catch (_e) { ok('U07 no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
 // ═══ El entorno se limpia entre grupos ══════════════════════════════════════
 // Guardián del arreglo de arriba. Si alguien saca la restauración de `group()`, esto falla y
 // dice por qué — en vez de que un test futuro mida un stub ajeno y nadie se entere.
