@@ -63,53 +63,82 @@ Cubre los 4 productos, pero **ginger solo importa `OG-GIN-30Lbs-PR`** (Perú, ca
 es una regla legacy deliberada de la que depende el plan de compra de ginger. **El committed de
 ginger-Hawaii NO entra por acá** — si hace falta, se carga a mano.
 
-### Las órdenes vencidas y sin facturar NO se dan por buenas — confirmá cada una
+### Las órdenes vencidas y sin facturar — la app las retiene; queda un caso para confirmar
 
-El import reporta al final `N pending invoice`. Son órdenes cuya **fecha de entrega ya pasó y
-siguen sin facturar**, y son exactamente el caso peligroso: **la mercadería ya salió del almacén
-pero WholesaleWare no lo registró**. La orden se queda en *Picking*, sigue apareciendo en el
-Unshipped Report, y el app la cuenta como committed contra un stock que **ya no la tiene**. El
-mismo producto se descuenta dos veces y el stock libre queda hundido.
+El import reporta al final `N pending invoice`: órdenes cuya **fecha de entrega ya pasó y siguen sin
+facturar**.
+**Que la orden esté abierta en WholesaleWare no prueba que el producto esté en el almacén** — y al
+revés tampoco: que el Inventory Report la muestre no prueba que siga ahí, porque **el W-lot de una
+orden conserva su `Qty on Hand` hasta que la orden se factura**.
+
+**Desde el 2026-09-14 la app lo resuelve sola** (`cmUnbilled`): si el W-lot de una orden abierta
+sigue en el inventario cargado, **esas cajas no están libres**, haya salido o no la mercadería.
+Se ven en el Buy Planner como *"N cs not invoiced yet"* (van dentro de Committed, así la cuenta de
+la caja cierra) y en Demand → Committed orders con la etiqueta **not invoiced · held**. Cuando
+WholesaleWare la factura, al lunes siguiente se van la orden y su W-lot juntos, y el número se
+corrige solo. **No las borres ni las marques "shipped" para liberar stock**: mientras su W-lot esté
+en el conteo, siguen retenidas igual (y borrarlas pierde el volumen del build-up).
+
+> **Por qué hizo falta (2026-09-14):** el committed de semanas pasadas no lo restaba nadie, así que
+> un lunes toda orden de la semana anterior sin facturar quedaba dentro del bruto y fuera del
+> committed. Eran **846 cs de ginger** (Sol-ti 2673691, 700 cs, entrega el viernes): libre 2.835
+> cuando eran ~1.990, y la orden por mar salía una semana tarde. El chequeo de antes filtraba por la
+> semana en curso y un lunes no veía ninguna.
+
+**Queda un solo caso que descuenta dos veces:** una orden de **esta semana**, ya despachada, cuyo
+W-lot **ya no está** en el conteo. El committed de la semana la sigue restando contra un stock que
+ya no la tiene.
 
 > **Pasó el 2026-09-03 con Sol-ti** (orden 2618081, **1.000 cajas** — el 46% del stock físico):
 > el plan mostró **1.324 cajas libres cuando había 2.184**, y la cobertura 1,7 semanas en vez de
 > 2,4. La orden estaba abierta en WholesaleWare, pero la mercadería ya se había ido.
 
-**Que la orden esté abierta en WholesaleWare no prueba que el producto esté en el almacén.** Son
-dos cosas distintas y hay que verificar la segunda:
+Corré esto **después de importar el inventario (Paso 3)**, porque mira los W-lots del conteo:
 
 ```javascript
-// Órdenes committed con la entrega ya vencida — candidatas a "ya salió, falta facturar".
+// Órdenes committed vencidas sin facturar, de CUALQUIER semana. Correr después del Paso 3.
 (function(){
-  var hoy = dmISOLocal ? dmISOLocal(new Date()) : new Date().toISOString().slice(0,10);
-  var wk  = dmWeekKey(new Date());
+  var hoy = dmISOLocal(new Date()), wk = dmWeekKey(new Date());
   var rows = bpInvState().rows || {};
   var stock = Object.keys(rows).reduce(function(s,k){ return s+(+((rows[k]||{}).cases)||0); }, 0);
-  var v = getCommitted().filter(function(c){
-      return c.type==='inv' && c.wk>=wk && c.date && c.date<=hoy; })
+  var enConteo = function(c){                  // null = importada sin lote (antes del 2026-09-14)
+    var p = c.product || 'ginger', lot = String(c.lot || '');
+    if(!lot) return null;
+    if(p === 'ginger' && rows['W:' + lot]) return true;
+    return ((prodInvFor(p) || {}).lots || []).some(function(l){ return String(l.lot) === lot && !l.excluded; });
+  };
+  var held = {};
+  [cmUnbilled('ginger','all',{store:'bp'})].concat(['ginger','turmeric','garlic','shallots'].map(function(p){ return cmUnbilled(p,'all'); }))
+    .forEach(function(u){ u.lines.forEach(function(l){ held[l.key] = (held[l.key] || 0) + l.held; }); });
+  var v = getCommitted().filter(function(c){ return c.type==='inv' && c.source==='import' && c.date && c.date<=hoy; })
     .sort(function(a,b){ return b.cases-a.cases; });
   if(!v.length){ console.log('%c OK · ninguna orden committed vencida ','background:#0d5026;color:#fff'); return; }
   var pesa = function(c){ return stock>0 && c.cases/stock >= 0.10; };
-  v.filter(pesa).forEach(function(c){
-    console.warn('FRENA EL PASO · '+(c.customer||'?')+' · '+c.cases+' cs ('+
-                 Math.round(c.cases/stock*100)+'% del stock) · '+(c.product||'ginger')+
-                 ' · entrega '+c.date+' vencida · orden '+(c.orderNo||'?'));
+  // Lo único que todavía descuenta dos veces: de ESTA semana, sin marcar, y su W-lot ya salió del conteo.
+  var dos = v.filter(function(c){ return c.wk>=wk && !_cmShipped(c) && /^W\d/.test(String(c.lot||'')) && enConteo(c) === false; });
+  dos.filter(pesa).forEach(function(c){
+    console.warn('FRENA EL PASO · '+(c.customer||'?')+' · '+c.cases+' cs ('+Math.round(c.cases/stock*100)+'% del stock) · '+
+                 (c.product||'ginger')+' · entrega '+c.date+' · orden '+(c.orderNo||'?')+' · su W-lot ya no está en el conteo');
   });
-  var chicas = v.filter(function(c){ return !pesa(c); });
-  if(chicas.length) console.log('  y '+chicas.length+' vencidas chicas (<10% del stock): '+
-    chicas.map(function(c){ return (c.customer||'?')+' '+c.cases+'cs'; }).join(', '));
+  var chicas = dos.filter(function(c){ return !pesa(c); });
+  if(chicas.length) console.warn('  y '+chicas.length+' chicas que también descuentan dos veces (<10% del stock): '+
+    chicas.map(function(c){ return (c.customer||'?')+' '+c.cases+'cs · orden '+(c.orderNo||'?'); }).join(', '));
+  var ret = v.filter(function(c){ return held[_cmKey(c)] > 0; });
+  console.log('retenidas por la app (siguen en el conteo, faltan facturar): '+(ret.length ? ret.map(function(c){
+    return (c.customer||'?')+' '+held[_cmKey(c)]+'cs · orden '+(c.orderNo||'?')+' · entrega '+c.date; }).join(' · ') : 'ninguna'));
+  var sinLote = v.filter(function(c){ return enConteo(c) === null; });
+  if(sinLote.length) console.warn(sinLote.length+' órdenes sin lote: importadas antes del arreglo — re-importá el Unshipped Report');
 })();
 ```
 
-Por cada una, preguntale a Juan: **¿esa mercadería ya salió del almacén?**
+Qué hacer con cada salida:
 
-- **Si ya salió** → no es committed. Sacala del store antes de cargar el inventario, o el stock
-  libre queda corto por esa cantidad. El arreglo de fondo es de **WholesaleWare** (facturarla o
-  marcarla despachada); mientras no se haga, **el lunes siguiente vuelve a entrar**.
-- **Si sigue en cámara** → es committed legítimo, se cuenta normal.
-
-Cualquiera que pese más del ~10% del stock **frena el paso**: no cargues el inventario hasta
-resolverla, porque mueve el plan de compra entero.
+- **FRENA EL PASO** (pesa ≥10% del stock) o **chicas que descuentan dos veces** → preguntale a Juan
+  si ya salió. Si salió: **"mark shipped"** en su chip de Committed orders (nunca borrarla). Si no
+  salió, el W-lot desapareció por otra razón: miralo en WholesaleWare antes de seguir.
+- **Retenidas** → nada que hacer en la app. Hay que **facturarlas en WholesaleWare**. Si pesan, decíselo
+  a Juan en el reporte: mueven la fecha de compra.
+- **Sin lote** → re-importá el Unshipped Report; sin el lote la app no puede saber si retenerlas.
 
 ## Paso 3 — Inventario físico de los 4 productos
 
@@ -309,15 +338,17 @@ Confirmalas con el chequeo del Paso 2 antes de seguir.
   hay.forEach(function(k){ console.log('  ' + k + ' — ' + sk[k].cases + ' cs fuera del descuento: ' + sk[k].skus.join(', ')); });
 })();
 
-// ginger-Perú (store propio): lo cargado = LIBRE; la app le suma el committed de la semana.
+// ginger-Perú (store propio): lo cargado = BRUTO; la app le resta el committed de la semana y lo
+// que sigue sin facturar con su W-lot en el conteo. El "Available" del Buy Planner tiene que dar esto.
 (function(){
   var st = bpInvState();
   var bruto = Object.keys(st.rows||{}).reduce(function(s,k){ return s+(+((st.rows[k]||{}).cases)||0); }, 0);
   var wk = dmWeekKey(new Date());
   var comm = (typeof committedInvForWeek==='function') ? (committedInvForWeek(wk,'ginger')||0) : 0;
+  var unb = (typeof cmUnbilled==='function') ? (cmUnbilled('ginger','all',{store:'bp'}).held||0) : 0;
   console.log('ginger · Peru   bruto (cargado) '+Math.round(bruto)+
-              '  − committed '+Math.round(comm)+'  = libre '+Math.round(bruto-comm)+
-              '   ('+Object.keys(st.rows||{}).length+' lots)');
+              '  − committed '+Math.round(comm)+'  − sin facturar '+Math.round(unb)+
+              '  = libre '+Math.round(bruto-comm-unb)+'   ('+Object.keys(st.rows||{}).length+' lots)');
 })();
 
 // Los otros cuatro: lo cargado = BRUTO; la app le resta el committed.
@@ -455,7 +486,8 @@ Tabla corta: run-rate y cobertura por producto, y qué comprar según el Buy Pla
 | Sheet sync *"unauthorized / timed out"* | Arranque en frío de Apps Script, **no** el token. Típico en el primer pull del día. Reintentá una vez. |
 | Cambios que no aparecen tras desplegar | Caché. **Cmd+Shift+R**. Ya se perdió una sesión entera de debugging por esto. |
 | PO sin fecha de llegada | Purchase Orders: el filtro por defecto es "Scheduled Delivery Date = Today" y deja la lista vacía. Elegí **Custom Date Range** y **tipeá** la fecha (setearla por JS no funciona, React la revierte). |
-| El stock libre da mucho menos que las cajas del Sales Desk | Una orden committed cuya mercadería **ya salió** pero sigue sin facturar (típico: se quedó en *Picking*). Se descuenta dos veces. Corré el chequeo de vencidas del Paso 2 y confirmá cada una. |
+| El stock libre da mucho menos que las cajas del Sales Desk | Una orden committed de **esta semana** cuya mercadería **ya salió** pero sigue sin facturar (típico: se quedó en *Picking*) y su W-lot ya no está en el conteo. Se descuenta dos veces. Corré el chequeo de vencidas del Paso 2 y confirmá cada una. |
+| El Buy Planner dice *"N cs not invoiced yet"* | Órdenes con la entrega vencida, abiertas en WholesaleWare, con su W-lot todavía en el conteo. **No están libres y está bien que no cuenten.** Se corrige solo cuando WholesaleWare las factura. No las borres ni las marques shipped para "liberar" stock. |
 | Un lote excluido volvió a contar | El reemplazo total pisó su marca. El snippet B ya lo previene; si pasó, re-marcalo con `invmProdToggleLotExcl`. |
 
 **Nunca:** pedirle a Juan que pegue el token de la API en el chat · borrar un lote "excluded" de la

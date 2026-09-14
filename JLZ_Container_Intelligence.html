@@ -28565,6 +28565,22 @@ function dmcRenderChips() {
   // mano) se muestra siempre; solo se descarta la que declara OTRO origen.
   var _chipOrigin = (typeof _dmOrigin !== 'undefined' && _dmOrigin && _dmOrigin !== 'All' && _dmOrigin !== 'all') ? _dmOrigin : '';
   var _cdChips = (typeof _cmCrossDock === 'function') ? _cmCrossDock(prod) : {};
+  // Lo sin facturar que el conteo todavía tiene (cmUnbilled), por orden, para decirlo en su chip. Ginger
+  // mira también el store de Perú, que es donde están sus W-lots.
+  var _hoy = (typeof dmISOLocal === 'function') ? dmISOLocal(new Date()) : new Date().toISOString().slice(0, 10);
+  var _wk0 = (typeof dmWeekKey === 'function') ? dmWeekKey(new Date()) : '';
+  var _heldBy = {}, _heldTot = 0, _heldN = 0;
+  try{
+    if(typeof cmUnbilled === 'function'){
+      var _uLists = [cmUnbilled(prod, _chipOrigin || 'all')];
+      if(prod === 'ginger' && (!_chipOrigin || _chipOrigin === 'Peru')) _uLists.push(cmUnbilled('ginger', 'all', { store:'bp' }));
+      _uLists.forEach(function(u){ (u.lines || []).forEach(function(l){
+        if(!(l.held > 0)) return;
+        if(!_heldBy[l.key]) _heldN++;
+        _heldBy[l.key] = (_heldBy[l.key] || 0) + l.held; _heldTot += l.held;
+      }); });
+    }
+  }catch(e){}
   getCommitted().forEach(function(c, i) {
     if(_cmProd(c) !== prod) return;                 // this product only; i stays the true array index for removal
     if(_chipOrigin && typeof _cmOriginFor === 'function'){ var _co = _cmOriginFor(c); if(_co && _co !== _chipOrigin) return; }
@@ -28576,12 +28592,18 @@ function dmcRenderChips() {
     var xdBtn = _isXD ? ('<button class="dmc-sh" onclick="dmcToggleCooler(' + i + ')" title="'
       + (c.fromCooler ? 'Undo \u2014 this order is cross-dock after all' : 'This order ships from the cooler: it will reduce stock and count as this week\u2019s demand.')
       + '">' + (c.fromCooler ? 'undo cooler' : 'ships from cooler') + '</button>') : '';
-    var tag = _cmShipped(c) ? '<span class="dmc-tag shipped" title="Already left the warehouse, invoice not issued yet. Counts as volume moved, but does NOT reduce stock — the physical count is already net of these cases.">shipped · not invoiced</span>'
-            : c.stale ? '<span class="dmc-tag stale" title="Badly overdue and still open — likely a stray. Still counted; remove with × if it is dead.">stale · review</span>'
+    var _held = _heldBy[_cmKey(c)] || 0;
+    var _pastDue = !_cmShipped(c) && c.source === 'import' && !!c.date && c.date < _hoy;
+    var _heldTxt = _held ? (' Its ' + _held + ' cs are still in the inventory count, so they are not available until it is invoiced.') : '';
+    var tag = _cmShipped(c) ? '<span class="dmc-tag shipped" title="Already left the warehouse, invoice not issued yet. Counts as volume moved.' + (_held ? _heldTxt : ' Its cases are no longer in the inventory count, so it does not reduce stock.') + '">shipped · not invoiced' + (_held ? ' · held' : '') + '</span>'
+            : c.stale ? '<span class="dmc-tag stale" title="Badly overdue and still open — likely a stray. Still counted; remove with × if it is dead.' + _heldTxt + '">stale · review</span>'
+            : _pastDue ? '<span class="dmc-tag pending" title="Delivery date has passed and WholesaleWare still lists this order as open.'
+                + (_held ? _heldTxt : (String(c.wk || '') >= _wk0 ? ' It still counts as reserved this week.' : ' Its cases are no longer in the inventory count, so nothing is held — invoice it in WholesaleWare.'))
+                + '">not invoiced' + (_held ? ' · held' : '') + '</span>'
             : c.pending ? '<span class="dmc-tag pending" title="Fulfillment date has passed but no invoice yet — still counted in demand, just awaiting invoice.">pending invoice</span>'
             : '<span class="dmc-tag">from warehouse</span>';
     var when = dmcDateLabel(c.date) || dmcWeekLabel(c.wk);
-    var accent = _cmShipped(c) ? ' csh' : (c.stale ? ' cst' : (c.pending ? ' cpe' : (c.source === 'manual' ? ' cmn' : '')));
+    var accent = _cmShipped(c) ? ' csh' : (c.stale ? ' cst' : ((_pastDue || c.pending) ? ' cpe' : (c.source === 'manual' ? ' cmn' : '')));
     // Marcar es SIEMPRE mejor que borrar: borrar hace desaparecer el volumen del build-up.
     var shBtn = '<button class="dmc-sh" onclick="dmcToggleShipped(' + i + ')" title="'
       + (_cmShipped(c) ? 'Undo — it is still in the warehouse' : 'Already shipped, invoice pending. Stops reducing stock, but the volume stays visible.')
@@ -28603,6 +28625,12 @@ function dmcRenderChips() {
       + '&#9888; <b>' + libEsc(g.customer) + '</b> has ' + g.committed + ' cs committed but only ' + g.marked + ' cs marked cross-dock on its purchase orders. '
       + 'If some of it ships from the cooler, click \u201cships from cooler\u201d on those orders \u2014 until then they do not reduce stock.</div>' + html;
   }); }catch(e){}
+  if(_heldTot > 0){
+    html = '<div class="dmc-hint" style="background:#FFFBEB;border:1px solid #FDE68A;color:#92400E;padding:6px 9px;border-radius:6px;margin-bottom:6px">'
+      + '&#9888; <b>' + Math.round(_heldTot) + ' cs not invoiced yet</b> \u2014 ' + _heldN + ' order' + (_heldN === 1 ? '' : 's')
+      + ' past delivery ' + (_heldN === 1 ? 'is' : 'are') + ' still open in WholesaleWare and still in the inventory count. '
+      + 'They are not available until they are invoiced.</div>' + html;
+  }
   box.innerHTML = html || '<div class="dmc-hint">Nothing committed yet.</div>';
 }
 function dmcToggleCooler(i) {

@@ -50,7 +50,9 @@ var _PRISTINO_NOMBRES = [
   'isoWeek','normalizeDate','simGetState','mtoNetModel','renderBuildupPanel',
   // Tres grupos viejos reemplazan `document` y no lo devuelven: el Simulator buscaba su tabla en el
   // document de otro test, no la encontraba y proyectaba cero filas.
-  'document','localStorage'
+  'document','localStorage',
+  // Los grupos de "sin facturar" reemplazan el que decide qué se retiene y su fuente de cross-dock.
+  'cmUnbilled','_cmCrossDock','ooOriginFromSku','stockSnapRecord'
 ];
 var _PRISTINO = {};
 _PRISTINO_NOMBRES.forEach(function(n){ try { _PRISTINO[n] = eval(n); } catch (e) {} });
@@ -5407,6 +5409,112 @@ group('Cody · el precorreo sale de las sugerencias y solo lleva lo que se pide'
   ok('en cero todo, dice que no hay nada que pedir', /Nothing to order this week/.test(codyEmailText(D.lines, st, 'Juan').body));
 })();
 } catch (_e) { ok('Cody no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
+// ═══ Sin facturar: lo que el conteo todavía tiene no está libre ═════════════
+// 2026-09-14: el W-lot de una orden sigue en el Inventory Report hasta que se FACTURA, y el committed de
+// semanas pasadas no lo restaba nadie. Un lunes, Sol-ti (700 cs, entrega el viernes, sin facturar) y
+// otras 146 cajas contaban como libres: 2.835 cuando eran ~1.990, y la orden por mar salía una semana tarde.
+try {
+group('cmUnbilled · lo que no se facturó y sigue en el conteo no está libre');
+(function(){
+  var DIA = 86400000;
+  var W0 = dmWeekKey(new Date()), W_1 = dmWeekKey(new Date(Date.now() - 7*DIA)), W_12 = dmWeekKey(new Date(Date.now() - 84*DIA));
+  var row = function(o){ var r = { prod:'ginger', type:'inv', source:'import', sku:'OG-GIN-30Lbs-PR', origin:'Peru', wk:W_1, date:W_1 };
+                         for (var k in o) r[k] = o[k]; return r; };
+  var ROWS = [
+    row({ customer:'Sol-ti',   orderNo:'2673691', cases:700, lot:'W2939A2674126' }),
+    row({ customer:'Albert',   orderNo:'2678652', cases:72,  lot:'W2941A2678661' }),           // su W-lot ya no está en el conteo
+    row({ customer:'Earl',     orderNo:'2692096', cases:35,  lot:'W2964A2692119', wk:W0 }),    // semana en curso: la resta el committed
+    row({ customer:'Manual',   orderNo:'',        cases:50,  lot:'W2999A0000001', source:'manual' }),
+    row({ customer:'Real',     orderNo:'2600001', cases:10,  lot:'2523058-0001' }),            // lote real: lo comparten muchas órdenes
+    row({ customer:'Salió',    orderNo:'2685420', cases:20,  lot:'W2954A2685432', wk:W0, shipped:true }),
+    row({ customer:'Vieja',    orderNo:'2430854', cases:36,  lot:'W2572A2430969', wk:W_12, stale:true }),
+    row({ customer:'Repetida', orderNo:'2673692', cases:30,  lot:'W2939A2674126' }),           // mismo W-lot que Sol-ti: ya se agotó
+    row({ customer:'XD',       orderNo:'2600002', cases:40,  lot:'W2800A0000002' })            // cuenta cross-dock
+  ];
+  getCommitted = function(){ return ROWS; };
+  _cmProd      = function(c){ return c.prod; };
+  _cmOriginFor = function(c){ return c.origin || ''; };
+  _cmShipped   = function(c){ return !!(c && c.shipped); };
+  _cmCrossDock = function(){ return { 'XD': 40 }; };
+  bpInvState   = function(){ return { rows:{ '2523058':{cases:925}, 'W:W2939A2674126':{cases:700}, 'W:W2964A2692119':{cases:35},
+      'W:W2954A2685432':{cases:20}, 'W:W2572A2430969':{cases:36}, 'W:W2800A0000002':{cases:40}, 'W:W2999A0000001':{cases:50} } }; };
+  prodInvFor   = function(){ return { lots:[] }; };
+
+  var u = cmUnbilled('ginger', 'all', { store:'bp' });
+  var by = {}; u.lines.forEach(function(l){ by[l.customer] = l; });
+  check('retiene Sol-ti 700 + la despachada 20 + la vieja 36', u.held, 756);
+  check('Sol-ti: sus 700 siguen en el conteo', (by['Sol-ti'] || {}).held, 700);
+  ok('la de la semana en curso no entra: ya la resta el committed', !by['Earl']);
+  ok('lo cargado a mano no se arrastra', !by['Manual']);
+  ok('lo cruzado nunca estuvo en la cámara', !by['XD']);
+  check('W-lot fuera del conteo: se lista, no se retiene', (by['Albert'] || {}).held, 0);
+  check('un lote real no prueba nada: no se retiene', (by['Real'] || {}).held, 0);
+  check('la marcada shipped con su W-lot en el conteo SÍ se retiene', (by['Salió'] || {}).held, 20);
+  check('la vieja también', (by['Vieja'] || {}).held, 36);
+  check('dos órdenes no retienen dos veces el mismo W-lot', (by['Repetida'] || {}).held, 0);
+  check('lo que más pesa va primero', u.lines[0].customer, 'Sol-ti');
+  // Cada pantalla retiene contra SU inventario: el store de los otros productos no ve los W-lots de Perú.
+  check('sin store bp, ginger no mira las filas de Perú', cmUnbilled('ginger', 'all').held, 0);
+
+  // Los otros productos: el lote tiene que estar en su store, y un lote "excluded" no es stock.
+  ROWS = [
+    row({ prod:'turmeric', customer:"Albert's", orderNo:'2686519', cases:5,  lot:'W2811A2596556', sku:'OG-TUR-30Lbs-PR-FJ', origin:'Fiji' }),
+    row({ prod:'turmeric', customer:'Erewhon',  orderNo:'2700001', cases:12, lot:'W2900A0000003', sku:'OG-TUR-30Lbs-PR-FJ', origin:'Fiji' }),
+    row({ prod:'turmeric', customer:'Kona',     orderNo:'2700002', cases:9,  lot:'W2901A0000004', sku:'OG-TUR-30Lbs-PR-HI', origin:'Hawaii' })
+  ];
+  prodInvFor = function(){ return { lots:[ { lot:'W2811A2596556', cases:5, excluded:true }, { lot:'W2900A0000003', cases:12 }, { lot:'W2901A0000004', cases:9 } ] }; };
+  _cmCrossDock = function(){ return {}; };
+  check('turmeric Fiji: el lote excluido no se retiene, el otro sí', cmUnbilled('turmeric', 'Fiji').held, 12);
+  check('y el origen se respeta', cmUnbilled('turmeric', 'Hawaii').held, 9);
+  check('sin origen, los dos', cmUnbilled('turmeric', 'all').held, 21);
+
+  getCommitted = function(){ return []; };
+  check('store vacío: nada que retener', cmUnbilled('ginger', 'all', { store:'bp' }).held, 0);
+})();
+} catch (_e) { ok('cmUnbilled no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
+try {
+group('Import del Unshipped · cada línea guarda su lote');
+(function(){
+  var n = dmcNormalizeUnshipped([
+    { 'Order #':'2673691', 'Fulfillment Date':46276.29, 'Customer':'Sol-ti', 'Status':'PICKING' },
+    { 'SKU':'', 'Status':'SHIPPED', 'Total Billable Qty':700 },
+    { 'SKU':'OG-GIN-30Lbs-PR', 'Lot #':'W2939A2674126', 'Total Billable Qty':700, 'Status':'PICKING' }
+  ]);
+  check('la línea normalizada trae el lote', (n[0] || {})['Lot #'], 'W2939A2674126');
+  ooClassifySku   = function(sku){ return /GIN-30/.test(sku) ? { product:'ginger', packLbs:30 } : null; };
+  ooOriginFromSku = function(){ return 'Peru'; };
+  var r = parseOpenOrders(n, '2026-09-10');
+  check('y la orden importada lo guarda', ((r.entries || [])[0] || {}).lot, 'W2939A2674126');
+  check('con sus 700 cajas', ((r.entries || [])[0] || {}).cases, 700);
+})();
+} catch (_e) { ok('el import con lote no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
+try {
+group('invmProductStats · el disponible resta lo sin facturar');
+(function(){
+  PRODUCTS = { turmeric:{ label:'Turmeric', caseLb:30, shrinkPct:0, suppliers:[ { name:'Sbimal LLC', origin:'Fiji', mode:'air', leadDays:10 } ] } };
+  prodInvFor          = function(){ return { serviceLevel:95, demandOverride:null, shrinkPct:0, lots:[
+      { lot:'A', origin:'Fiji', supplier:'Sbimal LLC', cases:200, avgCost:70, received:'2026-08-20', sku:'OG-TUR-30LBS-PR-FJ' } ] }; };
+  dmWindow            = function(){ return 3; };
+  prodCommittedTotal  = function(){ return 40; };
+  mtoCasesPerWeek     = function(){ return 0; };
+  dsWindow            = function(){ return 26; };
+  stockSnapRecord     = function(){};
+  invmProductArrivals = function(){ return {}; };
+  invmStockableWeekly = function(){ return [{wk:'a',lbs:9000},{wk:'b',lbs:9000},{wk:'c',lbs:9000}]; };
+  invmProductModel    = function(){ return { caseLb:30, runRate3:300*30, runRate6:300*30, runRate13:300*30, runRate26:300*30,
+      weeklyReliable:[{lbs:9000},{lbs:9000},{lbs:9000}] }; };
+  cmUnbilled = function(){ return { held:0, lines:[] }; };
+  check('sin nada vencido: físico menos committed', invmProductStats('turmeric','Fiji').availCases, 160);
+  cmUnbilled = function(){ return { held:25, lines:[{ customer:'Erewhon', held:25 }] }; };
+  var s = invmProductStats('turmeric','Fiji');
+  check('con 25 sin facturar en el conteo, quedan 135', s.availCases, 135);
+  check('y lo expone para mostrarlo', s.unbilledCases, 25);
+  check('el físico no se toca', s.onHandCases, 200);
+})();
+} catch (_e) { ok('invmProductStats con sin facturar no tira excepción: ' + ((_e && _e.message) || _e), false); }
 
 // ═══ El entorno se limpia entre grupos ══════════════════════════════════════
 // Guardián del arreglo de arriba. Si alguien saca la restauración de `group()`, esto falla y

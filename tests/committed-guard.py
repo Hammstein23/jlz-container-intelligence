@@ -29,6 +29,7 @@ ALLOWED = {
     'dmcToggleShipped':         'es el que pone y saca la marca',
     'dmcToggleCooler':          'es el que pone y saca la marca ships from cooler',
     'renderBuildupPanel':       'vista de volumen: esas cajas se movieron y tienen que verse',
+    'cmUnbilled':               'retiene lo que el conteo todavía tiene: una despachada sin facturar con su W-lot en el inventario también está ahí',
 }
 
 src = io.open(SRC, encoding='utf8').read()
@@ -132,6 +133,31 @@ if problems:
     sys.exit(1)
 
 print('  ok   merma: available es el conteo físico; la merma infla la demanda')
+
+# ── Cuarto guardián: lo sin facturar sale del stock en TODAS las pantallas que arrancan de la foto ──
+# El W-lot de una orden sigue en el Inventory Report hasta que se factura, y el committed de semanas
+# pasadas no lo resta nadie. El 2026-09-14 eso eran 846 cs de ginger contadas como libres. cmUnbilled
+# decide qué se retiene; cada pantalla que arranca del conteo tiene que restarlo, o dos pantallas
+# muestran libres distintos para la misma foto.
+UNBILLED = {
+    'renderBuyPlanner':    'Buy Planner de ginger-Perú (libre, cobertura y proyección)',
+    'simRenderProjection': 'Simulator de ginger-Perú',
+    'invmRunway':          'pista de la sugerencia de compra (arranque de ginger-Perú)',
+    'invmProductStats':    'disponible de turmeric/garlic/shallots + ginger-Hawaii',
+}
+sin = [(fn, what) for fn, what in UNBILLED.items() if 'cmUnbilled(' not in (body_of(fn) or '')]
+proj = body_of('invmProjectionHTML') or ''
+if 'unbilledCases' not in proj:
+    sin.append(('invmProjectionHTML', 'proyección de los otros productos: arranca del físico y no resta lo sin facturar'))
+m_av = re.search(r'var\s+availCases\s*=([^;]*);', stats)
+if not m_av or 'unbilledCases' not in m_av.group(1):
+    sin.append(('invmProductStats', 'availCases no resta unbilledCases'))
+if sin:
+    print('✗ una pantalla cuenta como libre lo que todavía no se facturó:\n')
+    for fn, what in sin: print('  %s()  — %s' % (fn, what))
+    print('\n  Las órdenes vencidas sin facturar con su W-lot en el conteo no están libres (cmUnbilled).\n')
+    sys.exit(1)
+print('  ok   sin facturar: las %d pantallas que arrancan del conteo restan cmUnbilled' % (len(UNBILLED) + 1))
 
 n_plan = len(re.findall(r'cmPlanEntries\(\)', src)) - 1   # menos la definición
 print('  ok   committed: %d lectores de plan por cmPlanEntries(), %d de volumen declarados'
