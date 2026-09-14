@@ -5223,6 +5223,8 @@ group('U36 · invmStockableWeekly netea lo marcado tambien la semana despues de 
 // ═══ Auditoría de los tres modos · tercera tanda ════════════════════════════════════════════
 try {
 group('U38 · el committed importado no se convierte dos veces');
+productCaseLb = function(p){ return (p === 'shallots') ? 50 : 30; };
+ooClassifySku = function(sku){ var m = String(sku||'').match(/(\d+)\s*Lbs?/i); return m ? { packLbs: parseInt(m[1],10) } : null; };
 check('lo importado ya viene en caja de compra: 7 son 7',
       cmCasesInBuyPack({ cases:7, sku:'OG-TUR-10Lbs-PR-FJ', source:'import' }, 'turmeric'), 7);
 // (La conversión de lo que NO viene del import la cubre el grupo 'cmCasesInBuyPack · una caja de 5 lb…'.)

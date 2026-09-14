@@ -22,10 +22,11 @@ entenderse sin explicación** — es el criterio de diseño #1, siempre.
   sigue el mismo criterio: nunca se mezcla en un agregado "orgánico"/"formal"
   existente. Antes de agregar algo nuevo, preguntar: ¿qué pregunta comercial
   responde este número, y a qué agregado NO debería sumarse?
-- **El committed viene en la caja que se VENDIÓ (5/10/20/30 lb); el run-rate y el plan trabajan en
-  la que se COMPRA.** Nunca los compares sin convertir por peso (`cmCasesInBuyPack`): el error
-  siempre infla, porque los packs chicos tienen más cajas por libra. Toda la mercadería entra en el
-  pack grande y se reempaca, así que una venta de 5 lb sí consume el granel.
+- **El committed se mide en la caja que se COMPRA, convertido por peso.** Una venta de 5 lb consume
+  el granel (todo entra en el pack grande y se reempaca). El import (`parseOpenOrders`) YA guarda
+  convertido (`qty × packLbs / caseLb`); `cmCasesInBuyPack` solo convierte lo que no pasó por el
+  import. Convertir dos veces hunde la demanda: pasó del 2026-09-04 al 09-14 (21 cajas de 10 lb →
+  el import guarda 7 → se contaban 2,33).
 - **El inventario de los cinco productos se carga igual: las cajas BRUTAS** (físicas, incluidas
   las reservadas) y la app resta el committed. Hasta 2026-09-03 ginger-Perú era al revés —
   guardaba el libre y la app sumaba— por herencia, no por diseño. No lo vuelvas a separar.
