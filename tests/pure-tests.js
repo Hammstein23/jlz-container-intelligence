@@ -5373,6 +5373,41 @@ group('ginger-Perú · todas las fechas de mar salen del mismo plan con calendar
 })();
 } catch (_e) { ok('fechas de mar ginger no tira excepción: ' + ((_e && _e.message) || _e), false); }
 
+try {
+group('Cody · el precorreo sale de las sugerencias y solo lleva lo que se pide');
+(function(){
+  PRODUCTS = { turmeric:{ suppliers:[{ name:'Sbimal LLC', origin:'Fiji', mode:'air', leadDays:10 }, { name:'Kailani', origin:'Hawaii', mode:'air', leadDays:14 }] },
+               garlic:{ suppliers:[{ name:'Christopher Ranch', origin:'California (Gilroy)', mode:'ground', leadDays:3 }] },
+               shallots:{ suppliers:[{ name:'Peri & Sons', origin:'AZ / CA', mode:'ground', leadDays:5 }] } };
+  invmOriginsFor = function(p){ return p === 'turmeric' ? ['Fiji'] : ['California']; };
+  productCaseLb = function(p){ return p === 'shallots' ? 50 : 30; };
+  invmBuySuggestion = function(p){
+    return p === 'turmeric' ? { label:'Turmeric', buy:154, orderBy:'2026-09-18', arrives:'2026-09-28', supplier:'Sbimal LLC' }
+         : p === 'shallots' ? { label:'Shallots', buy:2, orderBy:'2026-09-17', arrives:'2026-09-24', supplier:'Peri & Sons' }
+         : { label:'Garlic', buy:0 }; };
+  window._bpDigest = { rec:{ containers:1, perContainer:1320 },
+                       protect:{ protect:{ orderBy:'2026-09-30', deliveryDate:'2026-11-12', landsWk:'2026-11-09' } } };
+  var D = codyDraftData('bp');
+  check('ginger va solo como referencia, con la fecha del plan con calendario', (D.ginger || {}).arrive, '2026-11-12');
+  check('una línea por producto de Cody', D.lines.length, 3);
+  var tur = D.lines.filter(function(l){ return l.p === 'turmeric'; })[0], sha = D.lines.filter(function(l){ return l.p === 'shallots'; })[0];
+  check('turmeric Fiji ofrece solo sus proveedores de Fiji', tur.suppliers.map(function(x){ return x.name; }).join(','), 'Sbimal LLC');
+  check('shallots en sacos de 50 lb', sha.unit + '/' + sha.lb, 'sacks/50');
+  var st = {}; D.lines.forEach(function(l){ st[l.id] = { qty:l.sug, supIdx:l.supIdx, arrive:l.arrive, note:'' }; });
+  var m = codyEmailText(D.lines, st, 'Juan', '2026-09-16T12:00:00');
+  ok('lleva cantidad, libras, proveedor y fecha', /Turmeric \(Fiji\) — 154 cases \(4,620 lb\) from Sbimal LLC\. Needs to arrive by/.test(m.body));
+  ok('lo que no se pide no va como orden, y se aclara', !/Garlic \(California\) —/.test(m.body) && /Nothing needed on garlic/.test(m.body));
+  ok('ginger nunca va en el correo de Cody', !/inger/.test(m.body));
+  check('el asunto dice el lunes de la semana', m.subject, 'Orders to place — week of Sep 14');
+  ok('lo firma quien lo manda', /Thanks,\nJuan$/.test(m.body));
+  st[sha.id].qty = 1; st[sha.id].note = 'deliver to dock 2';
+  var m2 = codyEmailText(D.lines, st, 'Michael', '2026-09-16T12:00:00');
+  ok('un saco va en singular, con su nota', /1 sack \(50 lb\)/.test(m2.body) && /Note: deliver to dock 2/.test(m2.body));
+  st[tur.id].qty = 0; st[sha.id].qty = 0;
+  ok('en cero todo, dice que no hay nada que pedir', /Nothing to order this week/.test(codyEmailText(D.lines, st, 'Juan').body));
+})();
+} catch (_e) { ok('Cody no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
 // ═══ El entorno se limpia entre grupos ══════════════════════════════════════
 // Guardián del arreglo de arriba. Si alguien saca la restauración de `group()`, esto falla y
 // dice por qué — en vez de que un test futuro mida un stub ajeno y nadie se entere.

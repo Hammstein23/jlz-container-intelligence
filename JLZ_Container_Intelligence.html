@@ -4461,6 +4461,10 @@ function authInjectLogo() {
       <p class="text-muted" style="margin:0;font-size:var(--text-12)">If you order today, when does it arrive and how much do you need?</p>
     </div>
     <div class="flex gap-2">
+      <button class="btn btn-primary" onclick="codyOpenDraft('bp')" title="Turn today’s suggestions into an email for Cody (turmeric, garlic, shallots)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><polyline points="4 6 12 13 20 6"/></svg>
+        Draft order email
+      </button>
       <button class="btn" onclick="pullSalesFromSheet()" title="Pull sales from Google Sheet (overwrites local)">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
         Sync
@@ -4847,6 +4851,10 @@ function authInjectLogo() {
       <p class="text-muted" style="margin:0;font-size:var(--text-12)">Model future orders against the active pipeline. Nothing here touches real Orders unless you promote it.</p>
     </div>
     <div class="flex gap-2">
+      <button class="btn btn-primary" onclick="codyOpenDraft('sim')" title="Turn this scenario’s suggestions into an email for Cody (turmeric, garlic, shallots)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><polyline points="4 6 12 13 20 6"/></svg>
+        Draft order email
+      </button>
       <button class="btn btn-secondary" onclick="simResetState()" title="Clear all hypothetical orders and quotes">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
         Reset
@@ -16866,6 +16874,175 @@ function bpDeadlineFromAnchor(a){
            wk:(typeof isoWeek === 'function') ? isoWeek(a.orderBy) : null,
            deliveryDate:a.deliveryDate || null, landsWk:a.landsWk || null, fromPlan:true };
 }
+// ── Precorreo de compra para Cody ───────────────────────────────────────────────────────────────
+// Cody coloca las órdenes de turmeric, garlic y shallots; ginger lo pide Juan y va solo como referencia.
+// La hoja NO manda nada: arma el texto y el PDF, y el envío lo hace una persona. Las cifras salen de la
+// misma sugerencia que muestra la pantalla desde la que se abre (Buy Planner = datos reales; Simulator =
+// el escenario cargado).
+var CODY_PRODUCTS = ['turmeric', 'garlic', 'shallots'];
+function codyDraftData(src){
+  var out = { src: (src === 'sim') ? 'sim' : 'bp', ginger: null, lines: [] };
+  try{
+    var d = (out.src === 'sim') ? (window._simDigest || {}) : (window._bpDigest || {});
+    var a = (typeof bpSeaAnchor === 'function') ? bpSeaAnchor(d.protect) : null, R = d.rec || {};
+    var cont = Math.max(0, Math.round(+R.containers || 0)), per = +R.perContainer || 1320;
+    out.ginger = { containers: cont, cases: cont * per, orderBy: (a && a.orderBy) || '', arrive: (a && (a.deliveryDate || a.landsWk)) || '' };
+  }catch(e){}
+  CODY_PRODUCTS.forEach(function(p){
+    var origins = []; try{ origins = (typeof invmOriginsFor === 'function') ? (invmOriginsFor(p) || []) : []; }catch(e){}
+    if(!origins.length) origins = ['all'];
+    origins.forEach(function(o){
+      var g = null; try{ g = invmBuySuggestion(p, o); }catch(e){}
+      var lb = (typeof productCaseLb === 'function') ? productCaseLb(p) : 30;
+      var todos = (((typeof PRODUCTS === 'object' && PRODUCTS && PRODUCTS[p]) || {}).suppliers || []).filter(function(s){ return s && s.name; });
+      // Un solo origen (garlic, shallots): todos sus proveedores. Varios (turmeric): los de ESE origen.
+      var sups = (o === 'all' || p === 'garlic' || p === 'shallots') ? todos : todos.filter(function(s){
+        return !s.origin || String(s.origin).toLowerCase().indexOf(String(o).toLowerCase()) > -1; });
+      if(!sups.length) sups = todos;
+      var idx = 0; sups.forEach(function(s, i){ if(g && s.name === g.supplier) idx = i; });
+      var llega = g && /^\d{4}-\d{2}-\d{2}/.test(String(g.arrives || '')) ? String(g.arrives).slice(0, 10) : '';
+      var nombre = String((g && g.label) || p); nombre = nombre.charAt(0).toUpperCase() + nombre.slice(1);
+      out.lines.push({ id: p + '|' + o, p: p, name: nombre, origin: (o === 'all') ? '' : o,
+        unit: (lb >= 50) ? 'sacks' : 'cases', lb: lb, sug: g ? Math.max(0, Math.round(+g.buy || 0)) : 0,
+        orderBy: (g && g.orderBy) || '', arrive: llega, supIdx: idx,
+        suppliers: sups.map(function(s){ return { name: s.name, origin: s.origin || '', mode: s.mode || '', leadDays: s.leadDays || null }; }) });
+    });
+  });
+  return out;
+}
+function codyEmailText(lines, state, sender, today){
+  var t = today ? new Date(today) : new Date();
+  var lunes = new Date(t.getFullYear(), t.getMonth(), t.getDate() - ((t.getDay() + 6) % 7), 12);
+  var dia = function(iso){ return new Date(String(iso).slice(0, 10) + 'T12:00:00').toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' }); };
+  var n = function(v){ return Number(v).toLocaleString('en-US'); };
+  var items = [], nada = [];
+  (lines || []).forEach(function(l){
+    var s = (state && state[l.id]) || {}, q = Math.max(0, Math.round(+s.qty || 0));
+    var cual = l.name + (l.origin ? ' (' + l.origin + ')' : '');
+    if(!(q > 0)){ nada.push(cual.charAt(0).toLowerCase() + cual.slice(1)); return; }
+    var sup = ((l.suppliers || [])[(s.supIdx != null) ? s.supIdx : l.supIdx] || {}).name || 'the usual supplier';
+    var fecha = (s.arrive != null) ? s.arrive : l.arrive;
+    items.push('• ' + cual + ' — ' + n(q) + ' ' + ((q === 1) ? l.unit.replace(/s$/, '') : l.unit) + ' (' + n(q * l.lb) + ' lb) from ' + sup + '. '
+      + (fecha ? 'Needs to arrive by ' + dia(fecha) + '.' : 'Needs to arrive as soon as possible.')
+      + (s.note && String(s.note).trim() ? '\n   Note: ' + String(s.note).trim() : ''));
+  });
+  var body = 'Hi Cody,\n\n';
+  if(items.length){
+    body += 'Please place these orders:\n\n' + items.join('\n') + '\n\n';
+    if(nada.length) body += 'Nothing needed on ' + nada.join(' or ') + ' this week.\n\n';
+    body += 'Let me know once they are confirmed, or if a supplier can’t make the date.\n\n';
+  } else {
+    body += 'Nothing to order this week for turmeric, garlic or shallots.\n\n';
+  }
+  return { subject: 'Orders to place — week of ' + lunes.toLocaleDateString('en-US', { month:'short', day:'numeric' }),
+           body: body + 'Thanks,\n' + (sender || 'Juan') };
+}
+var _cody = null;
+function codyOpenDraft(src){
+  var D = codyDraftData(src);
+  _cody = { D: D, st: {}, sender: (_cody && _cody.sender) || 'Juan' };
+  D.lines.forEach(function(l){ _cody.st[l.id] = { qty: l.sug, supIdx: l.supIdx, arrive: l.arrive, note: '' }; });
+  if(!document.getElementById('cody-draft-css')){
+    var css = document.createElement('style'); css.id = 'cody-draft-css';
+    css.textContent = '#cody-draft{position:fixed;inset:0;z-index:9999;background:rgba(17,24,39,.45);overflow:auto;padding:24px 16px}'
+      + '#cody-draft .cd-sheet{max-width:1120px;margin:0 auto;background:var(--gray-50);border-radius:10px;padding:18px;display:grid;gap:14px;font-family:var(--fb);color:var(--gray-800)}'
+      + '#cody-draft .cd-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:14px;align-items:start}'
+      + '@media (max-width:900px){#cody-draft .cd-grid{grid-template-columns:1fr}}'
+      + '#cody-draft .cd-panel{background:#fff;border:1px solid var(--gray-200);border-radius:10px;padding:14px;display:grid;gap:10px}'
+      + '#cody-draft h3{margin:0;font:600 15px var(--fd,var(--fb))}#cody-draft .cd-lbl{font:600 10.5px var(--fb);text-transform:uppercase;letter-spacing:.06em;color:var(--gray-400)}'
+      + '#cody-draft table{width:100%;border-collapse:collapse;font-size:13px}#cody-draft th{text-align:left;padding:0 6px 6px}#cody-draft td{padding:8px 6px;border-top:1px solid var(--gray-100)}'
+      + '#cody-draft .cd-num{font-family:var(--fm);font-variant-numeric:tabular-nums;white-space:nowrap}'
+      + '#cody-draft .cd-pill{font:600 10.5px var(--fb);padding:2px 8px;border-radius:999px;white-space:nowrap}'
+      + '#cody-draft .cd-line{display:grid;grid-template-columns:minmax(140px,1.1fr) 120px minmax(150px,1fr) 150px;gap:10px;align-items:end;padding:10px 0;border-top:1px solid var(--gray-100)}'
+      + '@media (max-width:640px){#cody-draft .cd-line{grid-template-columns:1fr 1fr}}'
+      + '#cody-draft label{display:grid;gap:3px}#cody-draft input,#cody-draft select{font:14px var(--fb);border:1px solid var(--gray-200);border-radius:5px;padding:6px 8px;width:100%;background:#fff;color:var(--gray-800)}'
+      + '#cody-draft .cd-mail{white-space:pre-wrap;font:14px/1.6 var(--fb);margin:0;padding:12px;border:1px solid var(--gray-200);border-radius:7px;background:#fff}'
+      + '@media print{body.cody-printing>*:not(#cody-draft){display:none!important}#cody-draft{position:static;background:#fff;padding:0}#cody-draft .cd-noprint{display:none!important}#cody-draft .cd-sheet{max-width:none;background:#fff}#cody-draft .cd-grid{grid-template-columns:1fr}}';
+    document.head.appendChild(css);
+  }
+  var old = document.getElementById('cody-draft'); if(old) old.remove();
+  var box = document.createElement('div'); box.id = 'cody-draft'; box.setAttribute('role', 'dialog'); box.setAttribute('aria-label', 'Draft order email');
+  box.addEventListener('click', function(e){ if(e.target === box) codyCloseDraft(); });
+  document.body.appendChild(box);
+  codyRenderDraft();
+}
+function codyCloseDraft(){ var b = document.getElementById('cody-draft'); if(b) b.remove(); document.body.classList.remove('cody-printing'); }
+function codyRenderDraft(){
+  var box = document.getElementById('cody-draft'); if(!box || !_cody) return;
+  var D = _cody.D, E = (typeof libEsc === 'function') ? libEsc : function(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return '&#' + c.charCodeAt(0) + ';'; }); };
+  var fd = function(iso){ return iso ? new Date(String(iso).slice(0, 10) + 'T12:00:00').toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' }) : '—'; };
+  var n = function(v){ return Number(v).toLocaleString('en-US'); };
+  var pill = function(txt, bg, fg){ return '<span class="cd-pill" style="background:' + bg + ';color:' + fg + '">' + txt + '</span>'; };
+  var g = D.ginger || {};
+  var rows = '<tr><td><b>Ginger</b><div style="color:var(--gray-500);font-size:12px">Peru · sea container</div></td>'
+    + '<td class="cd-num">' + (g.containers > 0 ? g.containers + ' container' + (g.containers > 1 ? 's' : '') + ' · ' + n(g.cases) + ' cs' : 'No order') + '</td>'
+    + '<td class="cd-num">' + fd(g.orderBy) + '</td><td class="cd-num">' + fd(g.arrive) + '</td>'
+    + '<td>' + pill('Juan · not in email', 'var(--gray-100)', 'var(--gray-600)') + '</td></tr>';
+  D.lines.forEach(function(l){
+    var has = l.sug > 0;
+    rows += '<tr><td><b>' + E(l.name) + '</b><div style="color:var(--gray-500);font-size:12px">' + E(l.origin || '—') + '</div></td>'
+      + '<td class="cd-num">' + (has ? n(l.sug) + ' ' + l.unit : 'No order') + '</td>'
+      + '<td class="cd-num">' + (has ? fd(l.orderBy) : '—') + '</td><td class="cd-num">' + (has ? fd(l.arrive) : '—') + '</td>'
+      + '<td>' + (has ? pill('Cody', 'var(--green-50)', 'var(--green-700)') : pill('Nothing to place', 'var(--gray-100)', 'var(--gray-500)')) + '</td></tr>';
+  });
+  var editor = D.lines.map(function(l){
+    var s = _cody.st[l.id];
+    var opts = l.suppliers.map(function(sp, i){ return '<option value="' + i + '"' + (i === s.supIdx ? ' selected' : '') + '>' + E(sp.name + (sp.origin ? ' · ' + sp.origin : '') + (sp.mode ? ' · ' + sp.mode : '') + (sp.leadDays ? ' ' + sp.leadDays + ' d' : '')) + '</option>'; }).join('');
+    var k = E(l.id);
+    return '<div class="cd-line" style="' + (s.qty > 0 ? '' : 'opacity:.55') + '">'
+      + '<div><b>' + E(l.name) + (l.origin ? ' · ' + E(l.origin) : '') + '</b><div class="cd-num" style="font-size:11px;color:var(--green-700)">Plan: ' + (l.sug > 0 ? n(l.sug) + ' ' + l.unit : 'no order') + '</div></div>'
+      + '<label><span class="cd-lbl">Quantity (' + l.unit + ')</span><input type="number" min="0" step="1" data-k="' + k + '" data-f="qty" value="' + s.qty + '"></label>'
+      + '<label><span class="cd-lbl">Supplier</span><select data-k="' + k + '" data-f="supIdx">' + opts + '</select></label>'
+      + '<label><span class="cd-lbl">Must arrive by</span><input type="date" data-k="' + k + '" data-f="arrive" value="' + E(s.arrive || '') + '"></label>'
+      + '<label style="grid-column:1/-1"><span class="cd-lbl">Note for Cody (optional)</span><input type="text" data-k="' + k + '" data-f="note" placeholder="e.g. split in two deliveries" value="' + E(s.note) + '"></label>'
+      + '</div>';
+  }).join('');
+  var m = codyEmailText(D.lines, _cody.st, _cody.sender);
+  box.innerHTML = '<div class="cd-sheet">'
+    + '<div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:10px">'
+      + '<div><h3 style="font-size:20px">Draft order email</h3><div style="font-size:13px;color:var(--gray-500)">From the ' + (D.src === 'sim' ? '<b>Simulator</b> · your scenario' : '<b>Buy Planner</b> · real data') + '. Nothing is sent from here.</div></div>'
+      + '<button class="btn cd-noprint" onclick="codyCloseDraft()">Close</button></div>'
+    + '<div class="cd-grid"><div style="display:grid;gap:14px">'
+      + '<div class="cd-panel"><h3>What the plan suggests</h3><div style="overflow-x:auto"><table><thead><tr>'
+        + '<th class="cd-lbl">Product</th><th class="cd-lbl">Suggested</th><th class="cd-lbl">Order by</th><th class="cd-lbl">Must arrive by</th><th class="cd-lbl">Placed by</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>'
+      + '<div class="cd-panel cd-noprint"><h3>Cody’s orders</h3><div style="font-size:12px;color:var(--gray-500)">Quantities start at the plan’s suggestion. Set a line to 0 to leave it out of the email.</div><div id="cd-editor">' + editor + '</div></div>'
+    + '</div><div class="cd-panel"><h3>Email to Cody</h3>'
+      + '<div style="font-size:13px"><span class="cd-lbl">To</span> Cody &nbsp; <span class="cd-lbl">Subject</span> <span id="cd-subj">' + E(m.subject) + '</span></div>'
+      + '<p class="cd-mail" id="cd-body"></p>'
+      + '<div class="cd-noprint" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">'
+        + '<label style="display:flex;gap:6px;align-items:center;font-size:13px;color:var(--gray-500)">Signed by <select id="cd-sender" style="width:auto"><option' + (_cody.sender === 'Juan' ? ' selected' : '') + '>Juan</option><option' + (_cody.sender === 'Michael' ? ' selected' : '') + '>Michael</option></select></label>'
+        + '<button class="btn btn-primary" id="cd-copy">Copy email</button><button class="btn" id="cd-pdf">Save as PDF</button><button class="btn" id="cd-reset">Reset to plan</button></div>'
+      + '<div class="cd-noprint" id="cd-toast" role="status" aria-live="polite" style="font-size:12.5px;color:var(--green-700);min-height:18px"></div>'
+    + '</div></div></div>';
+  document.getElementById('cd-body').textContent = m.body;
+  var say = function(t){ var el = document.getElementById('cd-toast'); if(el) el.textContent = t; };
+  var refresh = function(){ var mm = codyEmailText(D.lines, _cody.st, _cody.sender);
+    document.getElementById('cd-subj').textContent = mm.subject; document.getElementById('cd-body').textContent = mm.body; };
+  box.querySelectorAll('[data-k]').forEach(function(el){
+    el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', function(){
+      var s = _cody.st[el.getAttribute('data-k')]; if(!s) return;
+      var f = el.getAttribute('data-f');
+      s[f] = (f === 'qty') ? Math.max(0, Math.round(+el.value || 0)) : (f === 'supIdx') ? (+el.value || 0) : el.value;
+      if(f === 'qty'){ var row = el.closest('.cd-line'); if(row) row.style.opacity = (s.qty > 0) ? '' : '.55'; }
+      refresh();
+    });
+  });
+  document.getElementById('cd-sender').addEventListener('change', function(e){ _cody.sender = e.target.value; refresh(); });
+  document.getElementById('cd-reset').addEventListener('click', function(){ D.lines.forEach(function(l){ _cody.st[l.id] = { qty: l.sug, supIdx: l.supIdx, arrive: l.arrive, note: '' }; }); codyRenderDraft(); });
+  document.getElementById('cd-copy').addEventListener('click', function(){
+    var mm = codyEmailText(D.lines, _cody.st, _cody.sender), text = 'Subject: ' + mm.subject + '\n\n' + mm.body;
+    var fallback = function(){ var r = document.createRange(); r.selectNodeContents(document.getElementById('cd-body'));
+      var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r); say('Selected — press Cmd+C to copy.'); };
+    try{ navigator.clipboard.writeText(text).then(function(){ say('Copied. Paste it into a new email to Cody.'); }, fallback); }catch(e){ fallback(); }
+  });
+  document.getElementById('cd-pdf').addEventListener('click', function(){
+    document.body.classList.add('cody-printing');
+    var off = function(){ document.body.classList.remove('cody-printing'); window.removeEventListener('afterprint', off); };
+    window.addEventListener('afterprint', off);
+    try{ window.print(); }catch(e){ off(); }
+  });
+}
+document.addEventListener('keydown', function(e){ if(e.key === 'Escape' && document.getElementById('cody-draft')) codyCloseDraft(); });
 function invmProductArrivals(p, origin){
   var out={};
   var orders=(typeof getOrders==='function')?getOrders():[];
