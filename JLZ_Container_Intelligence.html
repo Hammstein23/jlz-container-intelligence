@@ -15289,7 +15289,8 @@ function invmLots(m,t){
     var addCell=(INVM_DAYSMODE==='auto')?('<span class="invm-cin lock" style="display:inline-block">'+l.add.toFixed(1)+'</span>'):('<input class="invm-cin" type="number" value="'+(l.addManual!=null?l.addManual:l.addAuto.toFixed(0))+'" onchange="invmSetManual(\''+l.id+'\',this.value)">');
     var zl=l.zone==='under'?'UNDERWATER':l.zone;
     return '<tr>'+
-      '<td class="l"><span class="invm-po">'+l.po+'</span>'+(l.directShip>0?'<br><span style="font-size:9px;font-family:var(--fm);color:#6d28d9;background:#ede9fe;padding:1px 5px;border-radius:99px;white-space:nowrap" title="Cross-dock: shipped supplier → customer, never entered the warehouse — not counted as stock or shrink">'+invmF(l.directShip)+' cs cross-docked</span>':'')+'</td>'+
+      '<td class="l"><span class="invm-po">'+l.po+'</span>'+(l.directShip>0?'<br><span style="font-size:9px;font-family:var(--fm);color:#6d28d9;background:#ede9fe;padding:1px 5px;border-radius:99px;white-space:nowrap" title="Cross-dock: shipped supplier → customer, never entered the warehouse — not counted as stock or shrink">'+invmF(l.directShip)+' cs cross-docked</span>':'')
+        +((l.repack && _wIdx[l.po] && typeof wlotBadgeHTML==='function') ? wlotBadgeHTML('ginger', _wIdx[l.po]) : '')+'</td>'+
       '<td class="l"><span class="invm-supn">'+l.sup+'</span></td>'+
       '<td class="l"><span class="invm-mc '+l.mode+'">'+(l.mode==='repack'?'REPACK':(l.mode==='air'?'AIR':'SEA'))+'</span></td>'+
       '<td class="invm-muted">'+(invmFmtDate(l.received)||'&mdash;')+'</td>'+
@@ -15325,11 +15326,23 @@ function invmLots(m,t){
   };
   var _rep=m.lots.filter(function(l){ return !!l.repack; });
   var _prov=m.lots.filter(function(l){ return !l.repack; });
+  // ── Seguimiento de reempaques, dentro de la tabla (Juan, 2026-09-15) ────────────────────────────
+  // El estado va debajo del número de lote y el clic abre la línea de tiempo en una ventana aparte: con
+  // la lista larga abajo había que subir y bajar para cruzar el lote con lo que le pasó. Los recuadros
+  // filtran esta tabla; lo que no es caja de compra (5/10 lb) va plegado debajo.
+  var _wScope='ginger|Peru', _wCtx=(typeof wlotCtx==='function')?wlotCtx():null;
+  var _wRows=(_wCtx && typeof wlotStatusRows==='function')?wlotStatusRows('ginger','Peru',_wCtx):[];
+  var _wIdx={}; _wRows.forEach(function(r){ _wIdx[r.lot]=r; });   // `_fila` lo lee: se arma antes de dibujar las tablas
+  var _wAct=(typeof wlotFilterOf==='function')?wlotFilterOf(_wScope):null;
+  var _repVis=_wAct?_rep.filter(function(l){ return (_wIdx[l.po]||{}).tone===_wAct; }):_rep;
   h+=(typeof invmLotControlsHTML==='function') ? invmLotControlsHTML('ginger-peru',{value:true}) : '';
   h+=_tabla(_prov,'Supplier lots','what the grower shipped you');
-  if(_rep.length) h+=_tabla(_rep,'Repacked — River Road','already repacked by JLZ Produce Manufacturing · same cases, new presentation');
-  h+='<div class="invm-lead" style="margin-top:10px;color:var(--gray-500);font-weight:400">Both tables are physically in the cooler and both count toward the <b>'+invmF(t.cases)+' cs</b> on hand.</div>';
-  h+=(typeof wlotStatusHTML==='function') ? wlotStatusHTML('ginger','Peru') : '';   // dónde está cada reempaque
+  h+=(typeof wlotTilesHTML==='function') ? wlotTilesHTML('ginger',_wRows,_wScope,_wCtx) : '';
+  if(_rep.length) h+=_tabla(_repVis,'Repacked — River Road','already repacked by JLZ Produce Manufacturing · same cases, new presentation'
+    +(_wAct?(' · '+(_rep.length-_repVis.length)+' lot(s) hidden by the status filter'):''));
+  h+=(typeof wlotSmallPacksHTML==='function') ? wlotSmallPacksHTML('ginger',_wRows,_wScope,_rep.map(function(l){ return l.po; }),!_rep.length) : '';
+  h+='<div class="invm-lead" style="margin-top:10px;color:var(--gray-500);font-weight:400">Both tables are physically in the cooler and both count toward the <b>'+invmF(t.cases)+' cs</b> on hand.'
+    +(_wAct?' <span style="color:var(--amber-700)">The status filter is hiding repacked lots, so the tables above add up to less.</span>':'')+'</div>';
   return h;
 }
 function renderInventory(){
@@ -15685,27 +15698,44 @@ function wlotOrderLines(rows){
   });
   return out;
 }
+// Presentación de un SKU de reempaque: '10 lb', '5 lb', '9 oz'. `lb` es null cuando el SKU no dice cuánto
+// pesa la CAJA: el retail de 9 oz trae bolsas, no el peso de la caja, y ahí no se inventa una conversión.
+function wlotPackOf(sku){
+  var m = String(sku == null ? '' : sku).match(/(\d+(?:\.\d+)?)\s*(lbs?|oz)/i);
+  if(!m) return { label: '', lb: null };
+  var n = parseFloat(m[1]), isLb = /^lb/i.test(m[2]);
+  return { label: n + (isLb ? ' lb' : ' oz'), lb: isLb ? n : null };
+}
 // Estado y línea de tiempo de cada W-lot de un producto. PURO: todo entra por `ctx`.
-//   ctx = { snap:{savedAt,lots}, orders:{importedAt,lines}, sales:[filas de venta], committed:[...], today }
-// tone: bad (limpiar) · late (atrasada) · ship (despachada sin facturar) · wait (en camino) · ok (facturada)
-// · free (sin orden). Cada paso: done con su fecha, late/bad si se pasó, todo si falta.
+//   ctx = { snap:{savedAt,lots}, orders:{importedAt,lines}, sales:[filas de venta], committed:[...], excluded:{lot:1}, today }
+// tone: bad (corregir en WholesaleWare) · late (fulfillment vencido, sin facturar) · ship (despachada sin
+// facturar) · wait (fulfillment por venir) · ok (facturada) · free (sin orden). Cada paso: done con su fecha,
+// late/bad si se pasó, todo si falta.
+// Vocabulario de Juan (2026-09-15): "Fulfillment", la palabra de WholesaleWare. "Due" se leía como un pago
+// vencido, y "cleanup" no decía qué hacer: cada estado dice la acción concreta.
 function wlotStatusRows(p, origin, ctx){
   ctx = ctx || {};
   var today = ctx.today || '', DAY = 86400000;
   var gap = function(a, b){ return (a && b) ? Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / DAY) : null; };
   var day = function(iso){ return iso ? ((typeof dmcDateLabel === 'function' && dmcDateLabel(iso)) || String(iso).slice(5)) : ''; };
-  var snap = ctx.snap || {}, lines = (ctx.orders && ctx.orders.lines) || {};
+  var snap = ctx.snap || {}, lines = (ctx.orders && ctx.orders.lines) || {}, excl = ctx.excluded || {};
+  var caseLb = (typeof productCaseLb === 'function') ? (productCaseLb(p) || 30) : 30;
   var sold = {}, marked = {};
   (ctx.sales || []).forEach(function(r){ if(r && r.lot && invmIsWLot(r.lot)) (sold[r.lot] = sold[r.lot] || []).push(r); });
   (ctx.committed || []).forEach(function(c){ if(c && c.lot && c.shipped) marked[c.lot] = 1; });
-  var RANK = { bad:0, late:1, ship:2, wait:3, ok:4, free:5 };
+  var RANK = { bad: 0, late: 1, ship: 2, wait: 3, ok: 4, free: 5 };
   var out = [];
   (snap.lots || []).forEach(function(l){
     if(!l || l.product !== p) return;
     var org = ooOriginFromSku(l.sku, p);
     if(origin && origin !== 'all' && org !== origin) return;
-    var row = { lot: l.lot, sku: l.sku, item: l.item || '', cases: +l.cases || 0, days: +l.days || 0, received: l.received || '',
-                origin: org, customer: '', orderNo: '', due: '', tone: 'free', label: '', action: '', steps: [] };
+    var pk = wlotPackOf(l.sku), cs = +l.cases || 0;
+    // Suma en el stock solo la caja de COMPRA (30 lb, saco de 50) y si no está marcada "excluded".
+    var buy = (typeof invmCanonSku === 'function') && !!invmCanonSku(l.sku) && !excl[l.lot];
+    var row = { lot: l.lot, sku: l.sku, item: l.item || '', cases: cs, days: +l.days || 0, received: l.received || '',
+                origin: org, pack: pk.label, packLb: pk.lb, caseLb: caseLb, inStock: buy,
+                bulkCases: (pk.lb ? Math.round(cs * pk.lb / caseLb * 10) / 10 : null),
+                customer: '', orderNo: '', due: '', tone: 'free', label: '', action: '', steps: [] };
     var rep = { label: 'Repacked', state: 'done', when: day(l.received) || 'no date in report' };
     var s = sold[l.lot] || [];
     var sale = s.filter(function(r){ return r.type === 'Sale'; }).sort(function(a, b){ return a.d < b.d ? -1 : 1; })[0];
@@ -15714,49 +15744,49 @@ function wlotStatusRows(p, origin, ctx){
     if(sale){ row.customer = sale.c || ''; row.orderNo = sale.ord || ''; row.due = sale.d || ''; }
     if(ln){ row.customer = ln.customer || row.customer; row.orderNo = ln.orderNo || row.orderNo; row.due = ln.due || row.due; }
     if(sale && back){
-      // Se facturó, se devolvió, y el lote sigue en el conteo: esas cajas casi seguro ya no existen.
-      row.tone = 'bad'; row.label = 'Returned · still counted'; row.action = 'Clear it in WholesaleWare';
+      // Se facturó, se devolvió, y el lote sigue con cajas: esas cajas casi seguro ya no existen.
+      row.tone = 'bad'; row.label = 'Returned · still in inventory'; row.action = 'Zero the lot in WholesaleWare';
       row.steps = [rep, { label: 'Invoiced', state: 'done', when: day(sale.d) },
                    { label: 'Returned', state: 'bad', when: day(back.d) },
-                   { label: 'Still counted', state: 'bad', when: row.days + ' days on the floor' }];
+                   { label: 'Still in inventory', state: 'bad', when: row.days + ' days on the floor' }];
     } else if(sale){
-      // Facturada. Si el conteo es de ANTES de facturar, se va sola en el próximo import; si pasó más de
-      // una semana y sigue, el almacén no la dio de baja.
+      // Facturada. Si el conteo es de ANTES de facturar se va sola en el próximo import; si pasó más de una
+      // semana y sigue, el almacén no la dio de baja.
       var since = gap(sale.d, snap.savedAt), viejo = since != null && since > 7;
       row.tone = viejo ? 'bad' : 'ok';
-      row.label = viejo ? 'Invoiced · still counted' : 'Invoiced';
-      row.action = viejo ? 'Clear it in WholesaleWare' : 'Leaves the count on the next import';
-      row.steps = [rep, { label: 'Due', state: 'done', when: day(sale.d) },
+      row.label = viejo ? 'Invoiced · still in inventory' : 'Invoiced';
+      row.action = viejo ? 'Zero the lot in WholesaleWare' : 'Leaves inventory on the next import';
+      row.steps = [rep, { label: 'Fulfillment', state: 'done', when: day(sale.d) },
                    { label: 'Shipped', state: 'done', when: 'date not in reports' },
-                   { label: 'Invoiced', state: viejo ? 'bad' : 'done', when: day(sale.d) + (viejo ? (' · counted ' + since + ' d later') : '') }];
+                   { label: 'Invoiced', state: viejo ? 'bad' : 'done', when: day(sale.d) + (viejo ? (' · still in inventory ' + since + ' d later') : '') }];
     } else if(ln){
       var late = gap(ln.due, today), shipped = (ln.status === 'SHIPPED') || !!marked[l.lot];
-      var due = { label: 'Due', state: 'todo', when: ln.due ? day(ln.due) : 'no date' };
+      var ful = { label: 'Fulfillment', state: 'todo', when: ln.due ? day(ln.due) : 'no date' };
       if(shipped){
-        row.tone = 'ship'; row.label = 'Shipped · not invoiced'; row.action = 'Invoice it in WholesaleWare';
-        due.state = 'done';
-        row.steps = [rep, due, { label: 'Shipped', state: 'done', when: (ln.status === 'SHIPPED')
+        row.tone = 'ship'; row.label = 'Shipped · not invoiced'; row.action = 'Invoice the order in WholesaleWare';
+        ful.state = 'done';
+        row.steps = [rep, ful, { label: 'Shipped', state: 'done', when: (ln.status === 'SHIPPED')
                                    ? ('per WholesaleWare, ' + day((ctx.orders || {}).importedAt)) : 'marked by hand' },
                      { label: 'Invoiced', state: 'late', when: 'pending' }];
       } else if(late != null && late > 0){
         var grave = late > WLOT_REVIEW_DAYS;
         row.tone = grave ? 'bad' : 'late';
-        row.label = 'Not invoiced · ' + late + ' d late';
-        row.action = grave ? 'Check it in WholesaleWare' : 'Ask the warehouse if it left';
-        due.state = grave ? 'bad' : 'late'; due.when = day(ln.due) + ' · ' + late + ' d late';
-        row.steps = [rep, due, { label: 'Shipped', state: 'todo', when: 'still ' + (ln.status ? ln.status.toLowerCase() : 'open') },
+        row.label = grave ? ('Open ' + late + ' d past fulfillment') : (late + ' d past fulfillment · not invoiced');
+        row.action = grave ? 'Close or invoice the order in WholesaleWare' : 'Ask the warehouse if it left';
+        ful.state = grave ? 'bad' : 'late'; ful.when = day(ln.due) + ' · ' + late + ' d ago';
+        row.steps = [rep, ful, { label: 'Shipped', state: 'todo', when: 'still ' + (ln.status ? ln.status.toLowerCase() : 'open') },
                      { label: 'Invoiced', state: 'todo', when: 'pending' }];
       } else {
         row.tone = 'wait'; row.action = 'On track';
-        row.label = (late === 0) ? 'Ships today' : ('Ships ' + day(ln.due));
-        if(late === 0) due.when = 'today';
-        row.steps = [rep, due, { label: 'Shipped', state: 'todo', when: 'pending' }, { label: 'Invoiced', state: 'todo', when: 'pending' }];
+        row.label = (late === 0) ? 'Fulfillment today' : ('Fulfillment ' + day(ln.due));
+        if(late === 0) ful.when = 'today';
+        row.steps = [rep, ful, { label: 'Shipped', state: 'todo', when: 'pending' }, { label: 'Invoiced', state: 'todo', when: 'pending' }];
       }
     } else {
       var aging = row.days > WLOT_REVIEW_DAYS;
       row.tone = aging ? 'bad' : 'free';
-      row.label = aging ? ('No order · ' + row.days + ' days') : 'No order yet';
-      row.action = aging ? 'Check it in WholesaleWare' : 'Repacked stock, free to sell';
+      row.label = aging ? ('No order in ' + row.days + ' days') : 'No order yet';
+      row.action = aging ? 'Zero the lot in WholesaleWare if it is gone' : 'Repacked, free to sell';
       row.steps = [rep, { label: 'Order', state: aging ? 'bad' : 'todo', when: 'none open' },
                    { label: 'Shipped', state: 'todo', when: '—' }, { label: 'Invoiced', state: 'todo', when: '—' }];
     }
@@ -15766,8 +15796,6 @@ function wlotStatusRows(p, origin, ctx){
   return out;
 }
 // Los orígenes que tienen reempaques de un producto, sacados de la foto (el origen sale del SKU).
-// Hace falta porque Inventory solo muestra los orígenes con lotes de COMPRA: turmeric-Hawaii no tiene
-// ninguno, así que sus reempaques —entre ellos 72 cs devueltas hace 9 meses— no aparecían en ninguna vista.
 function wlotOriginsFor(p, snap){
   var seen = {}, out = [];
   ((snap || wlotLoadStore(WLOT_SNAP_LS) || {}).lots || []).forEach(function(l){
@@ -15777,70 +15805,155 @@ function wlotOriginsFor(p, snap){
   });
   return out;
 }
+// Totales por estado. `cs` son cajas tal cual (mezcla presentaciones); `eq` es el equivalente en la caja de
+// compra, convertido por peso — es el que se muestra, para no sumar cajas de 5 lb con cajas de 30.
 function wlotStatusSummary(rows){
-  var s = { bad: { n: 0, cs: 0 }, late: { n: 0, cs: 0 }, ship: { n: 0, cs: 0 }, wait: { n: 0, cs: 0 }, ok: { n: 0, cs: 0 }, free: { n: 0, cs: 0 } };
-  (rows || []).forEach(function(r){ var g = s[r.tone]; if(g){ g.n++; g.cs += (+r.cases || 0); } });
+  var s = { bad: { n: 0, cs: 0, eq: 0 }, late: { n: 0, cs: 0, eq: 0 }, ship: { n: 0, cs: 0, eq: 0 },
+            wait: { n: 0, cs: 0, eq: 0 }, ok: { n: 0, cs: 0, eq: 0 }, free: { n: 0, cs: 0, eq: 0 } };
+  (rows || []).forEach(function(r){ var g = s[r.tone]; if(g){ g.n++; g.cs += (+r.cases || 0); g.eq += (+r.bulkCases || 0); } });
   return s;
 }
-// La sección de Inventory: arriba lo que pide acción, abajo lo que va bien. Cada paso hecho lleva su fecha.
-function wlotStatusHTML(p, origin){
-  var esc = (typeof libEsc === 'function') ? libEsc : function(x){ return String(x == null ? '' : x).replace(/[<>"&]/g, ''); };
+var WLOT_TONE = { bad: ['#991B1B', '#FEF2F2', '#FECACA'], late: ['#92400E', '#FFFBEB', '#FDE68A'], ship: ['#5B21B6', '#F5F3FF', '#DDD6FE'], wait: ['#374151', '#F9FAFB', '#E5E7EB'], ok: ['#166534', '#F0FDF4', '#BBF7D0'], free: ['#374151', '#F9FAFB', '#E5E7EB'] };
+var WLOT_TONE_TITLE = { bad: 'Fix in WholesaleWare', late: 'Past fulfillment, not invoiced', ship: 'Shipped, not invoiced', wait: 'Fulfillment coming up', free: 'No order yet', ok: 'Invoiced' };
+var WLOT_FILTER = {};
+// Lee los stores. Es vista (no alimenta el plan), y necesita la marca shipped que cmPlanEntries filtra.
+function wlotCtx(){
+  var ex = {};
+  try{
+    var ps = prodInvState();
+    Object.keys(ps || {}).forEach(function(k){ ((ps[k] || {}).lots || []).forEach(function(l){ if(l && l.excluded && l.lot) ex[String(l.lot)] = 1; }); });
+  }catch(e){}
+  return { snap: wlotLoadStore(WLOT_SNAP_LS), orders: wlotLoadStore(WLOT_ORDERS_LS),
+           sales: (typeof _dmRawAll !== 'undefined' && Array.isArray(_dmRawAll)) ? _dmRawAll : [],
+           committed: (typeof getCommitted === 'function') ? getCommitted() : [], excluded: ex,
+           today: (typeof dmISOLocal === 'function') ? dmISOLocal(new Date()) : new Date().toISOString().slice(0, 10) };
+}
+function wlotIndex(p, ctx){
+  var idx = {};
+  try{ wlotStatusRows(p, 'all', ctx || wlotCtx()).forEach(function(r){ idx[r.lot] = r; }); }catch(e){}
+  return idx;
+}
+// Solo letras, dígitos y guiones pasan a un onclick: un lote o producto con comillas rompería el atributo.
+function _wlotJs(v){ return String(v == null ? '' : v).replace(/[^A-Za-z0-9|_-]/g, ''); }
+// Clic en un recuadro: filtra la tabla de reempaques de esa vista. Otro clic en el mismo, lo saca.
+function wlotSetFilter(scope, tone){
+  WLOT_FILTER[scope] = (tone && WLOT_FILTER[scope] !== tone) ? tone : null;
+  if(typeof invmReRender === 'function') invmReRender();
+}
+function wlotFilterOf(scope){ return WLOT_FILTER[scope] || null; }
+// El estado debajo del número de lote, en la tabla de stock. Clic → la ventana con la línea de tiempo.
+function wlotBadgeHTML(p, r){
+  if(!r) return '';
+  var c = WLOT_TONE[r.tone] || WLOT_TONE.free;
+  return '<div class="wlot-cell" data-lot="' + libEsc(r.lot) + '" onclick="wlotOpenDetail(\'' + _wlotJs(p) + '\',\'' + _wlotJs(r.lot) + '\')"'
+    + ' title="See what happened with this lot and when" style="cursor:pointer;margin-top:3px;line-height:1.35">'
+    + (r.customer ? '<div style="font-size:10px;color:var(--gray-500);font-family:var(--fb);white-space:nowrap">' + libEsc(r.customer) + '</div>' : '')
+    + '<span class="wlot-tone" style="display:inline-block;font-size:10px;font-weight:700;padding:1px 7px;border-radius:999px;white-space:nowrap;font-family:var(--fb);'
+    + 'background:' + c[1] + ';color:' + c[0] + ';border:1px solid ' + c[2] + '">' + libEsc(r.label) + '</span></div>';
+}
+// Arriba de la tabla de reempaques: de qué día son los datos, los avisos, y un recuadro por estado que filtra.
+function wlotTilesHTML(p, rows, scope, ctx){
+  if(!rows || !rows.length) return '';
+  ctx = ctx || wlotCtx();
   var f = function(n){ return Math.round(n || 0).toLocaleString('en-US'); };
-  var ctx = { snap: wlotLoadStore(WLOT_SNAP_LS), orders: wlotLoadStore(WLOT_ORDERS_LS),
-              sales: (typeof _dmRawAll !== 'undefined' && Array.isArray(_dmRawAll)) ? _dmRawAll : [],
-              committed: (typeof getCommitted === 'function') ? getCommitted() : [],
-              today: (typeof dmISOLocal === 'function') ? dmISOLocal(new Date()) : new Date().toISOString().slice(0, 10) };
-  // El origen va en el título: un bloque por origen, nunca mezclados en los mismos totales.
-  var head = function(msg){
-    return '<div class="invm-lead" style="margin-top:18px"><b>Repack follow-up' + ((origin && origin !== 'all') ? (' — ' + esc(origin)) : '') + '</b> &middot; <span style="font-weight:400;color:var(--gray-500)">' + msg + '</span></div>';
-  };
-  if(!ctx.snap) return head('import the Inventory Report to see where each repacked lot is');
-  var rows = [];
-  try{ rows = wlotStatusRows(p, origin, ctx); }catch(e){ rows = []; }
-  if(!rows.length) return '';
-  var dm = (typeof dmGlobalDataMax === 'function') ? dmGlobalDataMax() : '';
   var day = function(iso){ return iso ? ((typeof dmcDateLabel === 'function' && dmcDateLabel(iso)) || String(iso).slice(5)) : '—'; };
-  var h = head('where each repacked lot is &middot; inventory ' + esc(day(ctx.snap.savedAt))
-        + ' &middot; orders ' + esc(day(ctx.orders && ctx.orders.importedAt)) + ' &middot; sales to ' + esc(day(dm)));
+  var dm = (typeof dmGlobalDataMax === 'function') ? dmGlobalDataMax() : '';
+  var caseLb = (typeof productCaseLb === 'function') ? (productCaseLb(p) || 30) : 30;
+  var act = wlotFilterOf(scope), sum = wlotStatusSummary(rows);
+  var h = '<div class="invm-lead" style="margin-top:14px"><b>Repack follow-up</b> &middot; <span style="font-weight:400;color:var(--gray-500)">'
+        + 'click a lot to see what happened and when &middot; inventory ' + libEsc(day(ctx.snap && ctx.snap.savedAt))
+        + ' &middot; orders ' + libEsc(day(ctx.orders && ctx.orders.importedAt)) + ' &middot; sales to ' + libEsc(day(dm)) + '</span></div>';
   var avisos = [];
   if(!ctx.orders) avisos.push('Import the Unshipped report to link each lot to its order.');
-  else if(ctx.snap.savedAt && ctx.orders.importedAt && ctx.orders.importedAt < ctx.snap.savedAt)
+  else if(ctx.snap && ctx.snap.savedAt && ctx.orders.importedAt && ctx.orders.importedAt < ctx.snap.savedAt)
     avisos.push('The orders are older than the inventory — import the Unshipped report again.');
-  if(!ctx.sales.some(function(r){ return r && r.lot; })) avisos.push('Upload the Sales By Account again to see which lots were invoiced or returned.');
-  if(avisos.length) h += '<div style="font-size:11px;color:var(--amber-700);font-family:var(--fm);margin:4px 0 8px">&#9888; ' + avisos.map(esc).join(' ') + '</div>';
-  var TONE = { bad: ['#991B1B', '#FEF2F2', '#FECACA'], late: ['#92400E', '#FFFBEB', '#FDE68A'], ship: ['#5B21B6', '#F5F3FF', '#DDD6FE'],
-               wait: ['var(--gray-600)', 'var(--gray-50)', 'var(--gray-200)'], ok: ['#166534', '#F0FDF4', '#BBF7D0'], free: ['var(--gray-600)', 'var(--gray-50)', 'var(--gray-200)'] };
-  var STEP = { done: '#16a34a', late: '#d97706', bad: '#dc2626', todo: 'var(--gray-200)' };
-  var sum = wlotStatusSummary(rows);
-  var tiles = [['bad', 'Needs cleanup'], ['late', 'Not invoiced, late'], ['ship', 'Shipped, not invoiced'], ['wait', 'Ships soon'], ['free', 'No order yet']]
-    .filter(function(t){ return sum[t[0]].n > 0; })
-    .map(function(t){ var c = TONE[t[0]];
-      return '<div style="background:' + c[1] + ';border:1px solid ' + c[2] + ';border-radius:8px;padding:7px 11px;min-width:120px">'
-        + '<div style="font-size:10px;color:' + c[0] + ';font-family:var(--fb);font-weight:600;text-transform:uppercase;letter-spacing:.04em">' + t[1] + '</div>'
-        + '<div style="font-size:15px;font-weight:700;color:' + c[0] + ';font-family:var(--fm)">' + f(sum[t[0]].cs) + ' cs <span style="font-size:11px;font-weight:400">· ' + sum[t[0]].n + ' lot' + (sum[t[0]].n === 1 ? '' : 's') + '</span></div></div>'; });
-  h += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 10px">' + tiles.join('') + '</div>';
-  h += '<div style="background:var(--white);border:1px solid var(--gray-200);border-radius:10px;overflow:hidden;margin-bottom:14px">';
-  rows.forEach(function(r, i){
-    var c = TONE[r.tone] || TONE.free;
-    h += '<div class="wlot-row" data-lot="' + esc(r.lot) + '" style="padding:10px 14px' + (i ? ';border-top:1px solid var(--gray-100)' : '') + '">'
-      + '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline;margin-bottom:7px">'
-      + '<div style="font-size:12.5px;color:var(--gray-800)"><b>' + (r.customer ? esc(r.customer) : '<span style="color:var(--gray-500);font-weight:600">No open order</span>') + '</b>'
-      + ' &middot; ' + f(r.cases) + ' cs <span style="color:var(--gray-500)">' + esc(r.sku) + '</span>'
-      + ' <span style="font-family:var(--fm);font-size:11px;color:var(--gray-400)">' + esc(r.lot) + (r.orderNo ? (' &middot; order ' + esc(r.orderNo)) : '') + '</span></div>'
-      + '<div style="display:flex;gap:8px;align-items:center"><span style="font-size:11px;color:var(--gray-500)">' + esc(r.action) + '</span>'
-      + '<span class="wlot-tone" style="font-size:11px;font-weight:700;padding:2px 9px;border-radius:999px;background:' + c[1] + ';color:' + c[0] + ';border:1px solid ' + c[2] + ';white-space:nowrap">' + esc(r.label) + '</span></div></div>'
-      + '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px">'
-      + r.steps.map(function(st){
-          var col = STEP[st.state] || STEP.todo, on = (st.state !== 'todo');
-          return '<div class="wlot-step" data-state="' + st.state + '" style="border-top:3px solid ' + col + ';padding-top:4px">'
-            + '<div style="font-size:11.5px;font-weight:700;color:' + (on ? col : 'var(--gray-400)') + '">' + esc(st.label) + '</div>'
-            + '<div style="font-size:10.5px;color:var(--gray-500);font-family:var(--fm)">' + esc(st.when) + '</div></div>';
-        }).join('')
-      + '</div></div>';
+  if(!(ctx.sales || []).some(function(r){ return r && r.lot; })) avisos.push('Upload the Sales By Account again to see which lots were invoiced or returned.');
+  if(avisos.length) h += '<div style="font-size:11px;color:var(--amber-700);font-family:var(--fm);margin:4px 0 6px">&#9888; ' + avisos.map(libEsc).join(' ') + '</div>';
+  h += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 10px;align-items:stretch">';
+  ['bad', 'late', 'ship', 'wait', 'free', 'ok'].forEach(function(t){
+    if(!sum[t].n) return;
+    var c = WLOT_TONE[t], on = (act === t);
+    h += '<button type="button" class="wlot-tile" data-tone="' + t + '" onclick="wlotSetFilter(\'' + _wlotJs(scope) + '\',\'' + t + '\')"'
+      + ' title="' + (on ? 'Show all repacks again' : 'Show only these in the table below') + '"'
+      + ' style="text-align:left;cursor:pointer;font-family:var(--fb);border-radius:8px;padding:6px 11px;min-width:128px;background:' + c[1] + ';border:' + (on ? ('2px solid ' + c[0]) : ('1px solid ' + c[2])) + '">'
+      + '<div style="font-size:10px;color:' + c[0] + ';font-weight:600;text-transform:uppercase;letter-spacing:.04em">' + WLOT_TONE_TITLE[t] + '</div>'
+      + '<div style="font-size:14px;font-weight:700;color:' + c[0] + ';font-family:var(--fm)">' + sum[t].n + ' lot' + (sum[t].n === 1 ? '' : 's')
+      + ' <span style="font-size:10.5px;font-weight:400">&middot; &asymp;' + f(sum[t].eq) + ' cs of ' + caseLb + ' lb</span></div></button>';
   });
+  if(act) h += '<button type="button" class="wlot-tile-all" onclick="wlotSetFilter(\'' + _wlotJs(scope) + '\',null)" style="cursor:pointer;font-family:var(--fb);font-size:11px;font-weight:600;border:1px solid var(--gray-200);border-radius:8px;background:var(--white);color:var(--gray-600);padding:6px 11px">Show all</button>';
   h += '</div>';
   return h;
 }
+// Debajo de la tabla: los reempaques que NO están en la tabla de stock (5/10/20 lb, retail, o de un origen
+// sin solapa), plegados en una línea. Mismos estados, mismo clic.
+function wlotSmallPacksHTML(p, rows, scope, tableLots, openWhenNoTable){
+  var inTable = {}; (tableLots || []).forEach(function(k){ inTable[String(k)] = 1; });
+  var act = wlotFilterOf(scope);
+  var todas = (rows || []).filter(function(r){ return !inTable[r.lot]; });
+  var list = todas.filter(function(r){ return !act || r.tone === act; });
+  if(!list.length) return '';
+  var packs = []; list.forEach(function(r){ var k = r.pack || 'retail'; if(packs.indexOf(k) < 0) packs.push(k); });
+  var need = list.filter(function(r){ return r.tone === 'bad' || r.tone === 'late' || r.tone === 'ship'; }).length;
+  var h = '<details class="wlot-small"' + ((act || openWhenNoTable) ? ' open' : '') + ' style="background:var(--white);border:1px solid var(--gray-200);border-radius:10px;margin:-6px 0 14px">'
+    + '<summary style="cursor:pointer;padding:9px 14px;font-size:12px;color:var(--gray-600);font-family:var(--fb)"><b style="color:var(--gray-800)">'
+    + list.length + ' repack' + (list.length === 1 ? '' : 's') + ' not counted in stock</b> &middot; ' + libEsc(packs.join(', '))
+    + (need ? (' &middot; <span style="color:#92400E;font-weight:600">' + need + ' need attention</span>') : '') + '</summary>';
+  list.forEach(function(r){
+    h += '<div class="wlot-srow" style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;padding:7px 14px;border-top:1px solid var(--gray-100)">'
+      + '<div style="font-size:12px;color:var(--gray-800)"><span style="font-family:var(--fm);font-size:11px;color:var(--gray-500)">' + libEsc(r.lot) + '</span> &middot; '
+      + f0(r.cases) + ' boxes of ' + libEsc(r.pack || r.sku) + (r.origin ? (' <span style="color:var(--gray-400)">(' + libEsc(r.origin) + ')</span>') : '') + '</div>'
+      + wlotBadgeHTML(p, r) + '</div>';
+  });
+  h += '</details>';
+  return h;
+  function f0(n){ return Math.round(n || 0).toLocaleString('en-US'); }
+}
+// La ventana aparte con todo lo que se sabe del lote: qué pasó, cuándo, en qué presentación, cuánto granel.
+function wlotOpenDetail(p, lot){
+  var ctx = wlotCtx(), r = wlotIndex(p, ctx)[lot];
+  if(!r || typeof document === 'undefined') return;
+  var c = WLOT_TONE[r.tone] || WLOT_TONE.free;
+  var f = function(n){ return Math.round(n || 0).toLocaleString('en-US'); };
+  var day = function(iso){ return iso ? ((typeof dmcDateLabel === 'function' && dmcDateLabel(iso)) || String(iso).slice(5)) : '—'; };
+  var STEP = { done: '#16a34a', late: '#d97706', bad: '#dc2626', todo: 'var(--gray-200)' };
+  var dm = (typeof dmGlobalDataMax === 'function') ? dmGlobalDataMax() : '';
+  var bulk = (r.packLb == null) ? 'not in the reports — the SKU does not say what a box weighs'
+           : (r.packLb === r.caseLb) ? (f(r.cases) + ' boxes of ' + r.caseLb + ' lb')
+           : ('&asymp; ' + r.bulkCases + ' boxes of ' + r.caseLb + ' lb (' + f(r.cases * r.packLb) + ' lb, calculated by weight)');
+  var fila = function(k, v){ return '<tr><td style="padding:6px 0;color:var(--gray-500);width:150px;vertical-align:top">' + k + '</td><td style="padding:6px 0;color:var(--gray-800)">' + v + '</td></tr>'; };
+  var html = '<div style="background:var(--white);border-radius:8px;box-shadow:0 12px 32px rgba(0,0,0,.18);width:100%;max-width:660px;font-family:var(--fb)">'
+    + '<div style="padding:16px 22px;border-bottom:1px solid var(--gray-200);display:flex;justify-content:space-between;gap:12px;align-items:flex-start">'
+    + '<div><div style="font-size:16px;font-weight:700;color:var(--gray-800)">' + (r.customer ? libEsc(r.customer) : 'No open order') + ' &middot; ' + f(r.cases) + ' boxes of ' + libEsc(r.pack || r.sku) + '</div>'
+    + '<div style="font-size:11px;color:var(--gray-500);margin-top:3px;font-family:var(--fm)">' + libEsc(r.lot) + (r.orderNo ? (' &middot; order ' + libEsc(r.orderNo)) : '') + ' &middot; ' + libEsc(r.sku) + '</div></div>'
+    + '<div style="display:flex;gap:8px;align-items:center"><span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;white-space:nowrap;background:' + c[1] + ';color:' + c[0] + ';border:1px solid ' + c[2] + '">' + libEsc(r.label) + '</span>'
+    + '<button onclick="wlotCloseDetail()" aria-label="Close" style="border:none;background:none;cursor:pointer;color:var(--gray-400);font-size:20px;padding:2px 8px;line-height:1">&#10005;</button></div></div>'
+    + '<div style="padding:16px 22px"><div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px">'
+    + r.steps.map(function(st){ var col = STEP[st.state] || STEP.todo, on = (st.state !== 'todo');
+        return '<div class="wlot-step" data-state="' + st.state + '" style="border-top:4px solid ' + col + ';padding-top:6px">'
+          + '<div style="font-size:13px;font-weight:700;color:' + (on ? col : 'var(--gray-400)') + '">' + libEsc(st.label) + '</div>'
+          + '<div style="font-size:11.5px;color:var(--gray-500);font-family:var(--fm)">' + libEsc(st.when) + '</div></div>'; }).join('')
+    + '</div><table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:16px">'
+    + fila('Repacked into', f(r.cases) + ' boxes of ' + libEsc(r.pack || r.sku) + (r.received ? (' &middot; ' + libEsc(day(r.received))) : ''))
+    + fila('Bulk used', bulk)
+    + fila('Counted in stock', r.inStock ? 'Yes — part of the cases on hand' : 'No — only buy-size boxes count in stock')
+    + fila('Next step', '<b>' + libEsc(r.action) + '</b>')
+    + '</table></div>'
+    + '<div style="padding:11px 22px;border-top:1px solid var(--gray-200);background:var(--gray-50);font-size:10.5px;color:var(--gray-500);display:flex;justify-content:space-between;gap:10px;align-items:center">'
+    + '<span>Inventory ' + libEsc(day(ctx.snap && ctx.snap.savedAt)) + ' &middot; orders ' + libEsc(day(ctx.orders && ctx.orders.importedAt)) + ' &middot; sales to ' + libEsc(day(dm))
+    + ' &middot; WholesaleWare does not export ship dates or which bulk lot a repack used</span>'
+    + '<button onclick="wlotCloseDetail()" style="height:30px;padding:0 14px;border:1px solid var(--gray-200);border-radius:6px;font-size:12px;font-weight:600;color:var(--gray-700);background:var(--white);cursor:pointer">Close</button></div></div>';
+  var m = document.getElementById('wlot-modal');
+  if(!m){
+    m = document.createElement('div'); m.id = 'wlot-modal';
+    m.setAttribute('style', 'display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.3);z-index:400;align-items:flex-start;justify-content:center;padding:60px 20px;overflow-y:auto');
+    m.addEventListener('click', function(e){ if(e.target === m) wlotCloseDetail(); });
+    document.addEventListener('keydown', function(e){ if(e.key === 'Escape') wlotCloseDetail(); });
+    document.body.appendChild(m);
+  }
+  m.innerHTML = html;
+  m.style.display = 'flex';
+}
+function wlotCloseDetail(){ var m = (typeof document !== 'undefined') ? document.getElementById('wlot-modal') : null; if(m) m.style.display = 'none'; }
 
 // ============ IMPORT INVENTORY REPORT — UI ============
 // Reemplaza los cinco snippets de consola de la rutina de los lunes. El preview muestra el plan
@@ -17839,6 +17952,17 @@ function invmRenderProduct(p){
 
   var esRepack=function(l){ return (typeof invmIsRepackLot==='function') ? invmIsRepackLot(l) : false; };
   var repacks=s.lots.filter(esRepack), prov=s.lots.filter(function(l){ return !esRepack(l); });
+  // ── Seguimiento de reempaques, dentro de la tabla (Juan, 2026-09-15) ────────────────────────────
+  // Mismo diseño que ginger-Perú (invmLots): estado debajo del lote, clic → ventana, recuadros que filtran.
+  // Un origen sin solapa propia en esta vista igual muestra sus reempaques, en la línea plegada.
+  var _wScope=p+'|'+(s.origin||'all'), _wCtx=(typeof wlotCtx==='function')?wlotCtx():null;
+  var _wRows=(_wCtx && typeof wlotStatusRows==='function')?wlotStatusRows(p,s.origin||'all',_wCtx):[];
+  if(_wCtx && p!=='ginger' && s.origin && s.origin!=='all' && typeof wlotStatusRows==='function'){
+    wlotStatusRows(p,'all',_wCtx).forEach(function(r){ if(r.origin!==s.origin && (s.origins||[]).indexOf(r.origin)<0) _wRows.push(r); });
+  }
+  var _wIdx={}; _wRows.forEach(function(r){ _wIdx[r.lot]=r; });
+  var _wAct=(typeof wlotFilterOf==='function')?wlotFilterOf(_wScope):null;
+  var _repVis=_wAct?repacks.filter(function(l){ return (_wIdx[l.lot]||{}).tone===_wAct; }):repacks;
   var minAge=(typeof invmLotFilter==='function')?invmLotFilter(p):0;
   html += (typeof invmLotControlsHTML==='function') ? invmLotControlsHTML(p,{value:true}) : '';
 
@@ -17882,7 +18006,8 @@ function invmRenderProduct(p){
         ? '<button onclick="invmProdToggleLotExcl(\''+p+'\','+idx+')" title="Count this lot in the plan again" style="border:1px solid var(--amber-200);background:var(--amber-50);color:var(--amber-700);border-radius:5px;font-family:var(--fm);font-size:9px;font-weight:700;padding:2px 6px;cursor:pointer;white-space:nowrap">excluded ✕</button>'
         : '<button onclick="invmProdToggleLotExcl(\''+p+'\','+idx+')" title="Exclude from Buy Planner / Simulator (keeps the record, subtracts from planned on-hand)" style="border:1px solid var(--gray-200);background:var(--white);color:var(--gray-400);border-radius:5px;font-family:var(--fm);font-size:9px;font-weight:600;padding:2px 6px;cursor:pointer;white-space:nowrap">exclude</button>';
       cuerpo += '<tr style="'+rowStyle+'">'
-        + '<td style="'+td+';color:var(--gray-800);'+strike+'">'+esc(l.lot)+'</td>'
+        + '<td style="'+td+';color:var(--gray-800);'+strike+'">'+esc(l.lot)
+          + ((esRepack(l) && _wIdx[l.lot] && typeof wlotBadgeHTML==='function') ? wlotBadgeHTML(p, _wIdx[l.lot]) : '')+'</td>'
         + '<td style="'+td+';color:var(--gray-700)">'+esc(l.origin)+'</td>'
         + '<td style="'+td+';color:var(--gray-700)">'+esc(l.supplier)+'</td>'
         + '<td style="padding:6px 14px;border-bottom:1px solid var(--gray-100)"><input type="date" lang="en-US" value="'+esc(l.received||'')+'" title="'+(invmFmtDate(l.received)||'no received date')+'" onchange="invmProdSetLotReceived(\''+p+'\','+idx+',this.value)" style="'+dinp+'">'
@@ -17905,8 +18030,11 @@ function invmRenderProduct(p){
 
   html += tabla(prov, 'Supplier lots — '+esc(s.label)+oScope, 'what the grower shipped you'
       + (s.excludedCases>0?(' · '+f(s.excludedCases)+' cs excluded from plan'):''), true);
+  html += (typeof wlotTilesHTML==='function') ? wlotTilesHTML(p,_wRows,_wScope,_wCtx) : '';
   if(repacks.length)
-    html += tabla(repacks, 'Repacked — River Road', 'already repacked by JLZ Produce Manufacturing · same cases, new presentation', false);
+    html += tabla(_repVis, 'Repacked — River Road', 'already repacked by JLZ Produce Manufacturing · same cases, new presentation'
+      + (_wAct?(' · '+(repacks.length-_repVis.length)+' lot(s) hidden by the status filter'):''), false);
+  html += (typeof wlotSmallPacksHTML==='function') ? wlotSmallPacksHTML(p,_wRows,_wScope,repacks.map(function(l){ return l.lot; }),!repacks.length) : '';
   // Los dos totales tienen que reconstruir el on-hand del panel, o la tabla dice una cosa y el plan otra.
   // Con el filtro de antigüedad prendido, los totales de arriba suman solo los lotes visibles. Si el pie
   // no dice cuántas cajas quedaron afuera, promete un on-hand que las dos tablas no reconstruyen.
@@ -17920,12 +18048,7 @@ function invmRenderProduct(p){
     + 'Both tables are physically in the cooler and both count toward the <b>'+f(s.onHandCases)+' cs</b> on hand. '
     + (_escCs>0?('<span style="color:var(--amber-700)">The '+minAge+'+ days filter is hiding <b>'+f(_escCs)+' cs</b> in newer lots, so the totals above add up to '+f(_visCs)+' cs, not '+f(s.onHandCases)+'.</span> '):'')
     + 'The repacked ones are the cases that already changed presentation.</div>';
-  html += (typeof wlotStatusHTML==='function') ? wlotStatusHTML(p, s.origin) : '';   // dónde está cada reempaque
-  // Un origen sin lotes de compra no tiene solapa acá (turmeric-Hawaii), pero sus reempaques igual hay que
-  // seguirlos: van en su propio bloque. Ginger no: Perú y Hawaii ya tienen cada uno su vista.
-  if(p!=='ginger' && typeof wlotOriginsFor==='function'){
-    wlotOriginsFor(p).forEach(function(o){ if(o!==s.origin && (s.origins||[]).indexOf(o)<0) html += wlotStatusHTML(p, o); });
-  }
+  if(_wAct) html += '<div style="margin:-6px 0 14px;font-size:11px;font-family:var(--fm);color:var(--amber-700)">The status filter is hiding repacked lots, so the tables above add up to less than the on hand.</div>';
   html += '<div style="font-size:11.5px;color:var(--gray-600);background:var(--sky-50,#eff6ff);border:1px solid var(--sky-200,#bfdbfe);border-radius:8px;padding:11px 13px">'
     + '<b style="color:var(--sky-700,#1d4ed8)">Update on-hand:</b> tell me "update the '+esc(s.label)+' inventory" and I\'ll generate a <b>Sales Desk</b> snippet (Floor Count, excl. W/vLot lots) to paste in the console — same as the Monday ginger routine. <b>Received date</b> = the PO\'s scheduled delivery date (WholesaleWare → Purchase Orders); it drives storage days + FEFO. Set it per lot above or I\'ll pull it with the update.</div>';
   return html;

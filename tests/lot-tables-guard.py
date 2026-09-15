@@ -112,13 +112,20 @@ else:
 # ── Seguimiento de reempaques (2026-09-14) ──────────────────────────────────────────────────────
 # Cada W-lot muestra en qué paso está y cuándo pasó cada cosa. Sale de tres imports: si uno deja de
 # guardar su parte, la sección se queda sin datos sin que nada falle.
+# Juan, 2026-09-15: el estado va DENTRO de la tabla de stock (debajo del lote, clic -> ventana), los
+# recuadros de arriba filtran, y lo que no es caja de compra va plegado debajo. Nada de lista larga aparte.
 for fn, b in [('invmRenderProduct', m.group(1) if m else ''), ('invmLots', m2.group(1) if m2 else '')]:
-    if 'wlotStatusHTML(' in b: ok('%s muestra el seguimiento de reempaques' % fn)
-    else: bad('%s dejo de mostrar el seguimiento de reempaques' % fn)
-if m and 'wlotOriginsFor(' in m.group(1):
-    ok('los reempaques de un origen sin solapa propia (turmeric-Hawaii) igual se muestran')
+    for needle, what in [('wlotBadgeHTML(', 'el estado debajo del numero de lote'),
+                         ('wlotTilesHTML(', 'los recuadros que filtran la tabla'),
+                         ('wlotSmallPacksHTML(', 'la linea plegada con lo que no suma en stock'),
+                         ('status filter', 'el aviso de que el filtro esconde lotes')]:
+        if needle in b: ok('%s: %s' % (fn, what))
+        else: bad('%s perdio %s' % (fn, what))
+    if 'wlotStatusHTML(' in b: bad('%s volvio a la lista larga aparte' % fn)
+if m and "(s.origins||[]).indexOf(r.origin)<0" in m.group(1):
+    ok('los reempaques de un origen sin solapa propia igual se muestran (linea plegada)')
 else:
-    bad('invmRenderProduct solo muestra el origen elegido: los reempaques de turmeric-Hawaii quedan invisibles')
+    bad('invmRenderProduct solo muestra el origen elegido: los reempaques de un origen sin solapa quedan invisibles')
 for fn, needle, what in [('invrConfirm', 'WLOT_SNAP_LS', 'el import de inventario guarda la foto de los reempaques'),
                          ('dmcImportFile', 'wlotOrderLines(', 'el import del Unshipped guarda la orden de cada W-lot'),
                          ('dmParseWorkbook', "r['Lot Number']", 'la carga de ventas guarda el lote de cada venta')]:

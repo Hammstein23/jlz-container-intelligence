@@ -30,7 +30,7 @@ ALLOWED = {
     'dmcToggleCooler':          'es el que pone y saca la marca ships from cooler',
     'renderBuildupPanel':       'vista de volumen: esas cajas se movieron y tienen que verse',
     'cmUnbilled':               'retiene lo que el conteo todavía tiene: una despachada sin facturar con su W-lot en el inventario también está ahí',
-    'wlotStatusHTML':           'seguimiento de reempaques: muestra la marca shipped, que cmPlanEntries filtra a propósito',
+    'wlotCtx':                  'seguimiento de reempaques: muestra la marca shipped, que cmPlanEntries filtra a propósito',
 }
 
 src = io.open(SRC, encoding='utf8').read()

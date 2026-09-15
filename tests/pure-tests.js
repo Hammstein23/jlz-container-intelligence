@@ -54,7 +54,7 @@ var _PRISTINO_NOMBRES = [
   // Los grupos de "sin facturar" reemplazan el que decide qué se retiene y su fuente de cross-dock.
   'cmUnbilled','_cmCrossDock','ooOriginFromSku','stockSnapRecord',
   // El seguimiento de reempaques fija el formato de fecha para comparar días, no texto de pantalla.
-  'dmcDateLabel'
+  'dmcDateLabel','_dmRawAll','_invmOrigDemandCache','WLOT_FILTER'
 ];
 var _PRISTINO = {};
 _PRISTINO_NOMBRES.forEach(function(n){ try { _PRISTINO[n] = eval(n); } catch (e) {} });
@@ -5602,20 +5602,20 @@ group('Reempaques · estado y línea de tiempo de cada W-lot');
   var by = {}; rows.forEach(function(r){ by[r.lot] = r; });
   var tl = function(r){ return r.steps.map(function(s){ return s.label + ':' + s.state; }).join(','); };
 
-  check('Sol-ti: 3 días tarde, sin facturar', by['W2939A2674126'].tone + '|' + by['W2939A2674126'].label, 'late|Not invoiced · 3 d late');
-  check('su línea: reempacada, entrega atrasada, lo demás pendiente', tl(by['W2939A2674126']), 'Repacked:done,Due:late,Shipped:todo,Invoiced:todo');
+  check('Sol-ti: 3 días tarde, sin facturar', by['W2939A2674126'].tone + '|' + by['W2939A2674126'].label, 'late|3 d past fulfillment · not invoiced');
+  check('su línea: reempacada, entrega atrasada, lo demás pendiente', tl(by['W2939A2674126']), 'Repacked:done,Fulfillment:late,Shipped:todo,Invoiced:todo');
   check('lo hecho lleva su fecha', by['W2939A2674126'].steps[0].when, '2026-09-05');
-  check('y la entrega dice cuánto se atrasó', by['W2939A2674126'].steps[1].when, '2026-09-11 · 3 d late');
-  check('Earl de hoy: sale hoy', by['W2964A2692119'].label, 'Ships today');
-  check('Whole Foods de mañana: en camino', by['W2968A2693379'].tone + '|' + by['W2968A2693379'].label, 'wait|Ships 2026-09-15');
-  check('la de junio: más de 14 días tarde pide revisión', by['W2572A2430969'].tone + '|' + by['W2572A2430969'].action, 'bad|Check it in WholesaleWare');
+  check('y la entrega dice cuánto se atrasó', by['W2939A2674126'].steps[1].when, '2026-09-11 · 3 d ago');
+  check('Earl de hoy: fulfillment hoy', by['W2964A2692119'].label, 'Fulfillment today');
+  check('Whole Foods de mañana: en camino', by['W2968A2693379'].tone + '|' + by['W2968A2693379'].label, 'wait|Fulfillment 2026-09-15');
+  check('la de junio: más de 14 días pide cerrarla o facturarla', by['W2572A2430969'].tone + '|' + by['W2572A2430969'].label + '|' + by['W2572A2430969'].action, 'bad|Open 90 d past fulfillment|Close or invoice the order in WholesaleWare');
   check('WholesaleWare dice SHIPPED: despachada sin facturar', by['W2945A2679079'].tone + '|' + by['W2945A2679079'].label, 'ship|Shipped · not invoiced');
-  check('y la factura queda como lo que falta', tl(by['W2945A2679079']), 'Repacked:done,Due:done,Shipped:done,Invoiced:late');
-  check('facturada, devuelta y todavía contada: limpiar', by['W1832B1917641'].tone + '|' + by['W1832B1917641'].label, 'bad|Returned · still counted');
+  check('y la factura queda como lo que falta', tl(by['W2945A2679079']), 'Repacked:done,Fulfillment:done,Shipped:done,Invoiced:late');
+  check('facturada, devuelta y todavía contada: limpiar', by['W1832B1917641'].tone + '|' + by['W1832B1917641'].label, 'bad|Returned · still in inventory');
   check('con la fecha de la devolución', by['W1832B1917641'].steps[2].when, '2025-12-17');
   check('sin orden y reciente: stock reempacado libre', by['W2957A2686667'].tone + '|' + by['W2957A2686667'].label, 'free|No order yet');
-  check('facturada después del conteo: se va sola', by['W2800A0000001'].tone + '|' + by['W2800A0000001'].action, 'ok|Leaves the count on the next import');
-  check('facturada hace semanas y sigue contada: limpiar', by['W2801A0000002'].tone + '|' + by['W2801A0000002'].label, 'bad|Invoiced · still counted');
+  check('facturada después del conteo: se va sola', by['W2800A0000001'].tone + '|' + by['W2800A0000001'].action, 'ok|Leaves inventory on the next import');
+  check('facturada hace semanas y sigue contada: limpiar', by['W2801A0000002'].tone + '|' + by['W2801A0000002'].label, 'bad|Invoiced · still in inventory');
   ok('la fecha de despacho nunca se inventa', by['W2800A0000001'].steps[2].when === 'date not in reports');
   ok('Hawaii no se mezcla con Perú', !by['W2289A2223435']);
   ok('turmeric tampoco', !by['W2942A2678668']);
@@ -5625,11 +5625,43 @@ group('Reempaques · estado y línea de tiempo de cada W-lot');
   check('marcada a mano como despachada, aunque WholesaleWare diga PICKING', marcada.filter(function(r){ return r.lot === 'W2939A2674126'; })[0].label, 'Shipped · not invoiced');
 
   var hi = wlotStatusRows('ginger', 'Hawaii', { snap:snap, orders:orders, sales:sales, committed:[], today:T });
-  check('Hawaii: el de 137 días sin orden pide revisión', hi.length + '|' + hi[0].tone + '|' + hi[0].label, '1|bad|No order · 137 days');
+  check('Hawaii: el de 137 días sin orden pide revisión', hi.length + '|' + hi[0].tone + '|' + hi[0].label, '1|bad|No order in 137 days');
 
   var S = wlotStatusSummary(rows);
   check('el resumen suma cajas por estado', [S.bad.cs, S.late.cs, S.ship.cs, S.wait.cs, S.ok.cs, S.free.cs].join(','), '148,700,20,95,45,5');
   check('sin foto de inventario no hay filas', wlotStatusRows('ginger', 'Peru', { today:T }).length, 0);
+
+  // ── Presentación, granel usado y si suma en el stock (Juan, 2026-09-15) ─────────────────────────
+  check('una caja de 5 lb: su presentación', by['W2945A2679079'].pack, '5 lb');
+  check('y el granel que usó, convertido por peso', by['W2945A2679079'].bulkCases, 3.3);
+  ok('una caja de 5 lb no suma en el stock', by['W2945A2679079'].inStock === false);
+  check('una caja de 30 lb: granel = sus mismas cajas', by['W2939A2674126'].bulkCases, 700);
+  ok('y suma en el stock', by['W2939A2674126'].inStock === true);
+  var exc = wlotStatusRows('ginger', 'Peru', { snap:snap, orders:orders, sales:sales, committed:[], excluded:{ 'W2957A2686667':1 }, today:T });
+  ok('un lote marcado excluded no suma en el stock aunque sea de 30 lb', exc.filter(function(r){ return r.lot === 'W2957A2686667'; })[0].inStock === false);
+  var oz = wlotPackOf('OG-TUR-9oz-RT');
+  check('el retail de 9 oz no inventa el peso de la caja', oz.label + '|' + oz.lb, '9 oz|null');
+  check('el resumen muestra el equivalente en caja de compra', Math.round(S.late.eq), 700);
+
+  // ── Lo que se ve: badge en la tabla, recuadros que filtran, línea plegada ────────────────────────
+  var b = wlotBadgeHTML('ginger', by['W2939A2674126']);
+  ok('el badge dice el estado', b.indexOf('3 d past fulfillment · not invoiced') > -1);
+  ok('y el clic abre la ventana de ESE lote', b.indexOf("wlotOpenDetail('ginger','W2939A2674126')") > -1);
+  check('un lote o producto con comillas no rompe el onclick', _wlotJs("W29'39\"A<b>"), 'W2939Ab');
+  WLOT_FILTER = {};
+  var tiles = wlotTilesHTML('ginger', rows, 'ginger|Peru', { snap:snap, orders:orders, sales:sales, today:T });
+  ok('los recuadros dicen qué hacer, no "cleanup"', tiles.indexOf('Fix in WholesaleWare') > -1 && tiles.indexOf('cleanup') < 0);
+  ok('y cada uno filtra su estado', tiles.indexOf("wlotSetFilter('ginger|Peru','late')") > -1);
+  ok('sin filtro no hay botón "Show all"', tiles.indexOf('Show all') < 0);
+  WLOT_FILTER['ginger|Peru'] = 'late';
+  ok('con filtro aparece "Show all"', wlotTilesHTML('ginger', rows, 'ginger|Peru', { snap:snap, orders:orders, sales:sales, today:T }).indexOf('Show all') > -1);
+  WLOT_FILTER = {};
+  var enTabla = rows.filter(function(r){ return r.inStock; }).map(function(r){ return r.lot; });
+  var plegada = wlotSmallPacksHTML('ginger', rows, 'ginger|Peru', enTabla, false);
+  ok('la línea plegada tiene lo que no está en la tabla de stock', plegada.indexOf('W2945A2679079') > -1 && plegada.indexOf('W1832B1917641') > -1);
+  ok('y no repite lo que ya está en la tabla', plegada.indexOf('W2939A2674126') < 0);
+  ok('dice que no suma en el stock', plegada.indexOf('not counted in stock') > -1);
+  ok('si todo está en la tabla, no hay línea', wlotSmallPacksHTML('ginger', rows, 'ginger|Peru', rows.map(function(r){ return r.lot; }), false) === '');
 
   // Inventory solo tiene solapa para los orígenes con lotes de COMPRA. turmeric-Hawaii no tiene ninguno, y sus
   // reempaques (72 cs devueltas hace 9 meses) no aparecían en ninguna vista.
