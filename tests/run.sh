@@ -72,6 +72,10 @@ echo "══ Un solo vocabulario para las tres formas ════════�
 python3 "$DIR/vocabulario-guard.py" "$HTML" || FAILED=1
 echo
 
+echo "══ Sin producto en el mercado: ni promedia ni se compra ═══════"
+python3 "$DIR/market-pause-guard.py" "$HTML" || FAILED=1
+echo
+
 echo "══ Ningún stub tapa producción ════════════════════════════════"
 python3 "$DIR/stub-shadow-guard.py" || FAILED=1
 echo
@@ -83,10 +87,11 @@ python3 "$DIR/extract.py" "$HTML" "$TMP/app.js" \
   invmProductStats invmCommittedByWeek invmProductArrivals bpProtectPlan bpContainerPlan bpOrderSchedule bpRowAtDate invmOrderCases bpGingerSuggestionHTML invmRunRateLbs _invmKnownOrigin invmOriginsFor invmOriginMatch dsWindow invmStdev invmZFromService productCaseLb mtoNetRows mtoByCustomer mtoCasesPerWeek dmcArrivingOrders ordBoughtForCustomers addDirectShip removeDirectShip directShipTotal mtoEarmarkedTotal getDirectShip _mutateOrderDirectShip bpInvState bpInvMigrateV1 invmProjectionHTML invmDirectShipOrdersHTML invmMtoCandidatesHTML _dsDesde invmOverview _sheetSafe _sheetSafeRows _ordSanitize dmcNormalizeUnshipped dmcExcelDate cmCasesInBuyPack cmPlanEntries dmWeekPace bpSnapWeekDemand renderWeekPanel hybridSalesForWeek dsNamesFor dsLabelFor jlzSyncScope getActiveOrigin \
   dmLineOrigins dmLineStats dmProductSeries dmProductMeta dmSeriesCompare dmBuildModel dmFocusRows dmComboSVG dmFmt0 dmMoney2 dmRenderTrendPrice dmWireChartTip cxSpark cxRenderList cxWireSparkTip renderCustomers cxOverrideCard \
   invmIsWLot dmWeekStatus dmWeekPace invmFmtDate invmIsRepackLot invmSortLots invmFilterLots invmLotAgeDays invmFefoSort invmInvReportPhysical invmParseInventoryReport invmInvReportIsBpLot invmInvReportPlan bpCcId ooDateToISO \
-  bpInvLot bpOrderById bpOrderCifLb bpOrderPerCaseLb bpInvRate bpDaysSince bpEtaOf invmCanonSku bpArrivalNetCases bpGetPipelineByWeek bpRenderFifo dmcAdd ordAfterBoughtForChange ordMergeLocalOnly _mtoMarkList _mtoMarksMap getOrders saveOrders renderCommittedPanel simGingerPeruOrders simRenderProduct bpShowAvailableFree dmForwardWeeks dmMondayISO invmAnalysisHTML invmRenderProduct prodCommittedTotal renderBuyPlanner renderDemandAccuracy renderDmRunRate simRenderProjection isoWeek normalizeDate _cmCrossDock renderHome invmProductModel _cmIsCrossDock cmCrossDockGap importCommittedOpenOrders bpSeaAnchor bpDeadlineFromAnchor codyDraftData codyEmailText _cmKey invmProductModel cmUnbilled parseOpenOrders ooOriginFromSku wlotLoadStore wlotSaveStore wlotOrderLines wlotStatusRows wlotStatusSummary wlotOriginsFor wlotPackOf wlotCtx wlotIndex _wlotJs wlotSetFilter wlotFilterOf wlotBadgeHTML wlotTilesHTML wlotSmallPacksHTML wlotOpenDetail wlotCloseDetail invmOriginsWithDemand libEsc
+  bpInvLot bpOrderById bpOrderCifLb bpOrderPerCaseLb bpInvRate bpDaysSince bpEtaOf invmCanonSku bpArrivalNetCases bpGetPipelineByWeek bpRenderFifo dmcAdd ordAfterBoughtForChange ordMergeLocalOnly _mtoMarkList _mtoMarksMap getOrders saveOrders renderCommittedPanel simGingerPeruOrders simRenderProduct bpShowAvailableFree dmForwardWeeks dmMondayISO invmAnalysisHTML invmRenderProduct prodCommittedTotal renderBuyPlanner renderDemandAccuracy renderDmRunRate simRenderProjection isoWeek normalizeDate _cmCrossDock renderHome invmProductModel _cmIsCrossDock cmCrossDockGap importCommittedOpenOrders bpSeaAnchor bpDeadlineFromAnchor codyDraftData codyEmailText _cmKey invmProductModel cmUnbilled parseOpenOrders ooOriginFromSku wlotLoadStore wlotSaveStore wlotOrderLines wlotStatusRows wlotStatusSummary wlotOriginsFor wlotPackOf wlotCtx wlotIndex _wlotJs wlotSetFilter wlotFilterOf wlotBadgeHTML wlotTilesHTML wlotSmallPacksHTML wlotOpenDetail wlotCloseDetail invmOriginsWithDemand libEsc \
+  invmBuySuggestionHTML mktLineKey mktPausesMap mktSavePauses mktPeriods _mktDays _mktISO _mktToday mktPauseActive mktWeekFilter mktStartEstimate mktRefRate _mktLabel _mktDay mktControlHTML mktPausedCardHTML mktOpen mktClose _mktCommit mktSave mktRemove mktApply mktRerender
 # Constantes top-level que las funciones extraídas necesitan. extract.py solo saca funciones,
 # así que sin esto el test las leería de un stub y estaría probando el stub, no producción.
-for _c in DM_SELL_DAYS BP_INV_LS BP_INV_LS_V1 BP_PE_CALENDAR CODY_PRODUCTS WLOT_SNAP_LS WLOT_TONE WLOT_TONE_TITLE WLOT_FILTER _invmOrigDemandCache; do
+for _c in DM_SELL_DAYS BP_INV_LS BP_INV_LS_V1 BP_PE_CALENDAR CODY_PRODUCTS WLOT_SNAP_LS WLOT_TONE WLOT_TONE_TITLE WLOT_FILTER _invmOrigDemandCache MKT_LS MKT_RULE_NOTE _mktCtx; do
   grep -E "^var $_c *=" "$HTML" >> "$TMP/app.js" \
     || { echo "  FAIL no se encontró $_c en el HTML"; FAILED=1; }
 done

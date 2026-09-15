@@ -4505,6 +4505,7 @@ function authInjectLogo() {
   <div id="bp-product-view" style="display:none"></div>
   <div id="bp-ginger-body">
 
+  <div id="bp-ginger-market"></div>
   <div id="bp-ginger-suggestion"></div>
 
   <div class="bp-zone"><span class="bp-zone-tag">Now</span><span class="bp-zone-desc">your position at a glance</span><span class="bp-zone-line"></span></div>
@@ -4877,6 +4878,7 @@ function authInjectLogo() {
   <div class="invm-prodbar" id="sim-ginger-origin" style="display:none;gap:6px;align-items:center;margin:2px 0 12px"></div>
   <div id="sim-product-view" style="display:none"></div>
   <div id="sim-ginger-body">
+  <div id="sim-ginger-market"></div>
   <div id="sim-ginger-suggestion"></div>
 
   <!-- ── 1. ASSUMPTIONS BANNER (read-only from Buy Planner) ── -->
@@ -15443,6 +15445,266 @@ function invmOriginsWithDemand(p){
   _invmOrigDemandCache={ key: key, val: val };
   return val.slice();
 }
+// ============ LINE NOT AVAILABLE IN THE MARKET ============
+// Juan, 2026-09-15: "quiero poder desactivar un producto si actualmente no hay producto disponible en el
+// mercado". Se marca por LÍNEA (producto + origen): puede haber turmeric de Fiji y no de Hawaii.
+// Mientras una línea está sin producto en el mercado:
+//   · Buy Planner, Simulator, Inventory, Home y el precorreo de Cody NO sugieren compra: dicen que no hay;
+//   · inventario, committed y reempaques siguen igual — lo que está en cámara existe;
+//   · esas semanas se muestran pero NO promedian en el run-rate: cero ventas porque no había qué vender no
+//     es cero demanda, y promediarlas haría comprar de menos justo cuando el producto vuelve.
+// ── REGLA ACORDADA CON JUAN (2026-09-15) · no cambiarla sin hablarlo con él ─────────────────────────────
+// Cuando la línea vuelve al mercado:
+//   · si estuvo fuera HASTA 6 semanas → sigue el ritmo de antes; solo se saltean las semanas sin producto;
+//   · si estuvo fuera MÁS de 6 semanas → el run-rate ARRANCA DE CERO: cuenta solo la campaña nueva y nunca
+//     la mezcla con el final de la anterior. Juan: el final de campaña vende poco y no dice nada del arranque,
+//     "vas a promediar lo último de la campaña con el inicio". Las primeras 4 semanas el plan usa el estimado
+//     de arranque que se carga al reactivar; con 4 semanas de ventas nuevas manda el run-rate real.
+// Viaja por la hoja como el setting 'marketPauses' (igual que las marcas made to order): Michael ve lo mismo.
+// Formato: { 'turmeric|Hawaii': [ { from, to, back, est } ] } — `to` vacío = sigue sin producto.
+var MKT_LS = 'jlz_market_pauses_v1', MKT_LONG_DAYS = 42, MKT_EST_WEEKS = 4;
+// La nota que pidió Juan "para acordarnos que es así": va en la barra de la línea apagada y en la ventana.
+var MKT_RULE_NOTE = 'Weeks without product in the market do not count in the run-rate: zero sales because there was nothing to sell is not zero demand. When it comes back after up to 6 weeks out, the plan keeps the rhythm from before. After more than 6 weeks out, the run-rate starts over with the new campaign only, never mixed with the end of the last one, and the plan uses your starting estimate for the first 4 weeks.';
+// Ginger-Perú y ginger-Hawaii son líneas distintas, y el plan de ginger sin origen es el de Perú.
+function mktLineKey(p, origin){
+  if(p === 'ginger') return 'ginger|' + (origin === 'Hawaii' ? 'Hawaii' : 'Peru');
+  return p + '|' + ((origin && origin !== 'all') ? origin : 'all');
+}
+// El mapa tal como lo ve este equipo: lo que trajo la hoja (o lo último que se escribió) y, si la hoja
+// todavía no contestó, la copia local. try/catch: `_lastPushedSettings` se declara con `let` más abajo.
+function mktPausesMap(){
+  var raw = null;
+  try{ raw = _lastPushedSettings['marketPauses']; }catch(e){ raw = null; }
+  if(raw == null){ try{ raw = localStorage.getItem(MKT_LS); }catch(e){ raw = null; } }
+  try{ var m = JSON.parse(raw || '{}'); return (m && typeof m === 'object' && !Array.isArray(m)) ? m : {}; }
+  catch(e){ return {}; }
+}
+function mktSavePauses(map){
+  var s = JSON.stringify(map || {});
+  try{ localStorage.setItem(MKT_LS, s); }catch(e){}
+  try{ if(typeof pushSettingToSheet === 'function') pushSettingToSheet('marketPauses', s); }catch(e){}
+}
+// Los períodos de una línea: los suyos y, fuera de ginger, los del producto entero ('turmeric|all').
+function mktPeriods(p, origin, map){
+  map = map || mktPausesMap();
+  var own = map[mktLineKey(p, origin)];
+  var prod = (p !== 'ginger' && origin && origin !== 'all') ? map[p + '|all'] : null;
+  return [].concat(Array.isArray(own) ? own : [], Array.isArray(prod) ? prod : [])
+           .filter(function(z){ return z && /^\d{4}-\d{2}-\d{2}$/.test(String(z.from || '')); });
+}
+function _mktDays(a, b){ return Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 86400000); }
+function _mktISO(d){ return (typeof dmISOLocal === 'function') ? dmISOLocal(d) : d.toISOString().slice(0, 10); }
+function _mktToday(){ return _mktISO(new Date()); }
+// El período abierto (sin fecha de vuelta) que ya empezó, o null.
+function mktPauseActive(p, origin, today, map){
+  today = today || _mktToday();
+  var act = null;
+  mktPeriods(p, origin, map).forEach(function(z){ if(!z.to && z.from <= today && (!act || z.from > act.from)) act = z; });
+  return act;
+}
+// Qué semanas NO promedian para la línea, o null si nunca se marcó. La usan los lugares donde se promedian
+// semanas (dmBuildModel, nowcastProductModel, invmStockableWeekly): así el total, las filas por cliente, las
+// cuatro ventanas y la variabilidad quedan sobre las mismas semanas.
+function mktWeekFilter(p, origin, map){
+  var periods = mktPeriods(p, origin, map);
+  if(!periods.length || typeof dmWeekKey !== 'function') return null;
+  var wk = function(iso){ return dmWeekKey(new Date(iso + 'T12:00:00')); };
+  var spans = [], restart = '';
+  periods.forEach(function(z){
+    var a = wk(z.from), b = z.to ? wk(z.to) : null;
+    spans.push([a, b]);
+    // Corte largo: la campaña anterior entera queda fuera; se arranca de cero la semana en que volvió.
+    if(z.to && _mktDays(z.from, z.to) > MKT_LONG_DAYS && b > restart) restart = b;
+  });
+  return function(w){
+    if(restart && w < restart) return true;
+    for(var i = 0; i < spans.length; i++){ if(w >= spans[i][0] && (spans[i][1] == null || w < spans[i][1])) return true; }
+    return false;
+  };
+}
+// El estimado de arranque, solo después de un corte LARGO y mientras la campaña nueva tenga menos de 4 semanas
+// completas. Tras un corte corto el ritmo de antes sigue valiendo y no hace falta.
+function mktStartEstimate(p, origin, today, map){
+  today = today || _mktToday();
+  var z = null;
+  mktPeriods(p, origin, map).forEach(function(x){
+    if(x.to && x.to <= today && _mktDays(x.from, x.to) > MKT_LONG_DAYS && (!z || x.to > z.to)) z = x;
+  });
+  if(!z || !(+z.est > 0) || typeof dmWeekKey !== 'function') return null;
+  var back = dmWeekKey(new Date(z.to + 'T12:00:00')), cur = dmWeekKey(new Date(today + 'T12:00:00'));
+  var done = Math.max(0, Math.round((new Date(cur + 'T12:00:00') - new Date(back + 'T12:00:00')) / (7 * 86400000)));
+  if(done >= MKT_EST_WEEKS) return null;
+  return { cases: +z.est, since: z.to, weeksLeft: MKT_EST_WEEKS - done, outDays: _mktDays(z.from, z.to) };
+}
+// Referencia para cargar el estimado: lo que vendía la línea en las 6 semanas antes de quedarse sin producto.
+function mktRefRate(p, origin, fromISO){
+  try{
+    var rows = (typeof _dmRawAll !== 'undefined' && Array.isArray(_dmRawAll)) ? _dmRawAll : [];
+    var desde = _mktISO(new Date(new Date(fromISO + 'T12:00:00').getTime() - 42 * 86400000));
+    var o = (p === 'ginger') ? (origin === 'Hawaii' ? 'Hawaii' : 'Peru') : ((origin && origin !== 'all') ? origin : 'all');
+    var lbs = 0;
+    rows.forEach(function(r){
+      if(!r || (r.prod || 'ginger') !== p || r.type !== 'Sale' || !(r.d >= desde && r.d < fromISO)) return;
+      if(typeof dmIsInternalAccount === 'function' && dmIsInternalAccount(r.c)) return;
+      if(o !== 'all' && !invmOriginMatch(r, o)) return;
+      lbs += (+r.lbs || 0);
+    });
+    var cl = (typeof productCaseLb === 'function') ? (productCaseLb(p) || 30) : 30;
+    return Math.round(lbs / cl / 6);
+  }catch(e){ return null; }
+}
+function _mktLabel(p, origin){
+  var n = String(((typeof productLabel === 'function') && productLabel(p)) || p);
+  var o = (p === 'ginger') ? (origin === 'Hawaii' ? 'Hawaii' : 'Peru') : ((origin && origin !== 'all') ? origin : '');
+  return n.charAt(0).toUpperCase() + n.slice(1) + (o ? ' · ' + o : '');
+}
+function _mktDay(iso){ return iso ? ((typeof invmFmtDate === 'function' && invmFmtDate(iso)) || iso) : ''; }
+// La barra de la línea en Buy Planner / Simulator: apagada, recién vuelta con estimado, o el botón para apagarla.
+function mktControlHTML(p, origin){
+  var js = function(v){ return String(v == null ? '' : v).replace(/[^A-Za-z0-9 |_-]/g, ''); };
+  var args = '\'' + js(p) + '\',\'' + js(origin || '') + '\'';
+  var lbl = _mktLabel(p, origin), today = _mktToday();
+  var act = mktPauseActive(p, origin), est = act ? null : mktStartEstimate(p, origin);
+  var btn = function(label, mode){
+    return '<button type="button" class="mkt-btn" onclick="mktOpen(' + args + ',\'' + mode + '\')" style="font-family:var(--fb);font-size:11px;font-weight:600;padding:5px 11px;border:1px solid var(--gray-200);border-radius:6px;background:var(--white);color:var(--gray-700);cursor:pointer;white-space:nowrap">' + label + '</button>';
+  };
+  if(act){
+    return '<div class="mkt-bar" data-state="paused" style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:9px 12px;margin:0 0 12px;color:#92400E">'
+      + '<div style="flex:1;min-width:220px;font-size:12px"><b>&#9208; ' + libEsc(lbl) + ' is not available in the market</b> since ' + libEsc(_mktDay(act.from))
+      + (act.back ? (' &middot; expected back ' + libEsc(_mktDay(act.back)) + (act.back < today ? ' (that date passed)' : '')) : '')
+      + ' &middot; no buy suggestion while it is off'
+      + '<div style="font-size:11px;margin-top:3px;line-height:1.45">' + MKT_RULE_NOTE + '</div></div>'
+      + btn('It is back in the market', 'resume') + '</div>';
+  }
+  if(est){
+    return '<div class="mkt-bar" data-state="restart" style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:9px 12px;margin:0 0 12px;color:#1E40AF">'
+      + '<div style="flex:1;min-width:220px;font-size:12px"><b>&#8634; ' + libEsc(lbl) + ' is back in the market</b> since ' + libEsc(_mktDay(est.since)) + ', after ' + Math.round(est.outDays / 7) + ' weeks out'
+      + '<div style="font-size:11px;margin-top:3px;line-height:1.45">The run-rate started over with the new campaign. For ' + est.weeksLeft + ' more week' + (est.weeksLeft === 1 ? '' : 's')
+      + ' the plan uses your starting estimate of <b>' + Math.round(est.cases) + ' cases a week</b>; after that, the real run-rate.</div></div>'
+      + btn('Change estimate', 'estimate') + '</div>';
+  }
+  return '<div class="mkt-bar" data-state="on" style="display:flex;justify-content:flex-end;margin:-4px 0 8px">' + btn('Mark as not available in the market', 'pause') + '</div>';
+}
+// La tarjeta de compra de una línea apagada: no sugiere nada; dice desde cuándo y cuánto dura lo que hay.
+function mktPausedCardHTML(pz, coverWks, availCases, incomingCases){
+  var f = function(n){ return Math.round(n || 0).toLocaleString('en-US'); };
+  var cov = (coverWks == null) ? '' : (!isFinite(coverWks) ? 'no sales to cover' : ((Math.round(coverWks * 10) / 10).toFixed(1) + ' weeks of cover'));
+  return '<div class="mkt-paused-card" style="margin:0 0 12px;padding:10px 12px;border-radius:8px;background:var(--gray-50);border:1px solid var(--gray-200);color:var(--gray-700);font-size:12px;font-family:var(--fb);line-height:1.5">'
+    + '<b>No buy suggestion</b> &mdash; not available in the market since ' + libEsc(_mktDay(pz && pz.from))
+    + (cov ? (' &middot; ' + cov + ' from ' + f(availCases) + ' cases' + (incomingCases > 0 ? (' + ' + f(incomingCases) + ' on the way') : '')) : '')
+    + '</div>';
+}
+var _mktCtx = null;
+function mktOpen(p, origin, mode){
+  if(typeof document === 'undefined') return;
+  _mktCtx = { p: p, origin: origin, mode: mode };
+  var lbl = _mktLabel(p, origin), today = _mktToday(), act = mktPauseActive(p, origin);
+  var inp = function(id, type, val, extra){ return '<input id="' + id + '" type="' + type + '" value="' + libEsc(val || '') + '" ' + (extra || '') + ' style="height:32px;padding:0 8px;border:1px solid var(--gray-200);border-radius:6px;font-family:var(--fm);font-size:12px">'; };
+  var fila = function(label, control, hint){ return '<label style="display:block;margin:0 0 12px"><div style="font-size:11px;font-weight:600;color:var(--gray-600);margin-bottom:4px">' + label + '</div>' + control + (hint ? '<div style="font-size:11px;color:var(--gray-500);margin-top:3px">' + hint + '</div>' : '') + '</label>'; };
+  var nota = '<div style="font-size:11.5px;color:var(--gray-600);background:var(--gray-50);border:1px solid var(--gray-200);border-radius:6px;padding:9px 11px;line-height:1.5"><b>How this affects the run-rate.</b> ' + MKT_RULE_NOTE + '</div>';
+  var title, body, cta, extraBtn = '';
+  if(mode === 'pause'){
+    title = 'Mark ' + lbl + ' as not available in the market';
+    cta = 'Mark as not available';
+    body = fila('Not available since', inp('mkt-from', 'date', today, 'max="' + today + '"'))
+         + fila('Expected back (optional)', inp('mkt-back', 'date', ''), 'Only a reminder. Nothing turns back on by itself.');
+  } else {
+    var estNow = mktStartEstimate(p, origin), ref = act ? mktRefRate(p, origin, act.from) : null;
+    title = (mode === 'estimate') ? ('Starting estimate for ' + lbl) : (lbl + ' is back in the market');
+    cta = (mode === 'estimate') ? 'Save estimate' : 'Mark as back';
+    body = ((mode === 'resume') ? fila('Back since', inp('mkt-to', 'date', today, 'max="' + today + '"'), act ? ('Not available since ' + libEsc(_mktDay(act.from)) + '.') : '') : '')
+         + fila('Starting estimate for the first 4 weeks (cases a week)', inp('mkt-est', 'number', estNow ? String(Math.round(estNow.cases)) : '', 'min="0" step="1"'),
+                ((mode === 'resume') ? 'Needed only if it was out more than 6 weeks.' : 'Used until the new campaign has 4 weeks of its own sales.')
+                + ((ref != null && ref > 0) ? (' Before it ran out it sold about <b>' + ref + ' cases a week</b> (the 6 weeks before).') : ''));
+    if(mode === 'resume') extraBtn = '<button onclick="mktRemove()" style="margin-right:auto;height:32px;padding:0 4px;border:none;background:none;font-size:12px;color:var(--gray-500);text-decoration:underline;cursor:pointer">Marked by mistake? Remove the mark</button>';
+  }
+  body += '<div id="mkt-err" style="display:none;font-size:13px;color:var(--red-600,#dc2626);margin:-4px 0 10px"></div>' + nota;
+  var html = '<div style="background:var(--white);border-radius:8px;box-shadow:0 12px 32px rgba(0,0,0,.18);width:100%;max-width:520px;font-family:var(--fb)">'
+    + '<div style="padding:14px 20px;border-bottom:1px solid var(--gray-200);display:flex;justify-content:space-between;align-items:center;gap:10px">'
+    + '<div style="font-size:15px;font-weight:700;color:var(--gray-800)">' + libEsc(title) + '</div>'
+    + '<button onclick="mktClose()" aria-label="Close" style="border:none;background:none;cursor:pointer;color:var(--gray-400);font-size:20px;padding:2px 8px;line-height:1">&#10005;</button></div>'
+    + '<div style="padding:16px 20px">' + body + '</div>'
+    + '<div style="padding:12px 20px;border-top:1px solid var(--gray-200);background:var(--gray-50);display:flex;justify-content:flex-end;align-items:center;gap:8px;flex-wrap:wrap">' + extraBtn
+    + '<button onclick="mktClose()" style="height:32px;padding:0 14px;border:1px solid var(--gray-200);border-radius:6px;font-size:12px;font-weight:600;color:var(--gray-700);background:var(--white);cursor:pointer">Cancel</button>'
+    + '<button onclick="mktSave()" style="height:32px;padding:0 14px;border:1px solid var(--jlz);border-radius:6px;font-size:12px;font-weight:600;color:#fff;background:var(--jlz);cursor:pointer">' + cta + '</button></div></div>';
+  var m = document.getElementById('mkt-modal');
+  if(!m){
+    m = document.createElement('div'); m.id = 'mkt-modal';
+    m.setAttribute('role', 'dialog'); m.setAttribute('aria-label', 'Market availability');
+    m.setAttribute('style', 'display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.3);z-index:410;align-items:flex-start;justify-content:center;padding:70px 20px;overflow-y:auto');
+    m.addEventListener('click', function(e){ if(e.target === m) mktClose(); });
+    document.addEventListener('keydown', function(e){ if(e.key === 'Escape' && m.style.display !== 'none') mktClose(); });
+    document.body.appendChild(m);
+  }
+  m.innerHTML = html;
+  m.style.display = 'flex';
+}
+function mktClose(){ var m = (typeof document !== 'undefined') ? document.getElementById('mkt-modal') : null; if(m) m.style.display = 'none'; _mktCtx = null; }
+function _mktCommit(r){
+  if(r.error){ var e = document.getElementById('mkt-err'); if(e){ e.textContent = r.error; e.style.display = 'block'; } return; }
+  mktSavePauses(r.map);
+  mktClose();
+  mktRerender();
+}
+function mktSave(){
+  var c = _mktCtx; if(!c || typeof document === 'undefined') return;
+  var val = function(id){ var e = document.getElementById(id); return e ? String(e.value || '').trim() : ''; };
+  _mktCommit(mktApply(mktPausesMap(), c.p, c.origin, c.mode, { from: val('mkt-from'), back: val('mkt-back'), to: val('mkt-to'), est: val('mkt-est') }, _mktToday()));
+}
+function mktRemove(){
+  var c = _mktCtx; if(!c || typeof document === 'undefined') return;
+  _mktCommit(mktApply(mktPausesMap(), c.p, c.origin, 'remove', {}, _mktToday()));
+}
+// Lo que hace cada botón sobre el mapa, sin DOM (así se prueba). Devuelve { map } o { error }.
+function mktApply(map, p, origin, mode, v, today){
+  map = JSON.parse(JSON.stringify(map || {}));
+  v = v || {};
+  var ok = /^\d{4}-\d{2}-\d{2}$/, key = mktLineKey(p, origin);
+  var list = Array.isArray(map[key]) ? map[key] : (map[key] = []);
+  var open = null; list.forEach(function(z){ if(z && !z.to && (!open || z.from > open.from)) open = z; });
+  if(mode === 'pause'){
+    if(open) return { error: 'It is already marked as not available.' };
+    var from = ok.test(v.from || '') ? v.from : today;
+    if(from > today) return { error: 'The date cannot be in the future.' };
+    list.push({ from: from, to: '', back: ok.test(v.back || '') ? v.back : '', est: null });
+    return { map: map };
+  }
+  if(mode === 'remove'){
+    if(!open) return { error: 'It is not marked as not available.' };
+    map[key] = list.filter(function(z){ return z !== open; });
+    if(!map[key].length) delete map[key];
+    return { map: map };
+  }
+  var est = parseFloat(v.est);
+  if(mode === 'resume'){
+    if(!open) return { error: 'It is not marked as not available.' };
+    var to = ok.test(v.to || '') ? v.to : today;
+    if(to > today) return { error: 'The date cannot be in the future.' };
+    if(to < open.from) return { error: 'It cannot be back before ' + _mktDay(open.from) + '.' };
+    if(_mktDays(open.from, to) > MKT_LONG_DAYS && !(est > 0)) return { error: 'It was out more than 6 weeks: enter a starting estimate.' };
+    open.to = to;
+    open.est = (est > 0) ? Math.round(est) : null;
+    return { map: map };
+  }
+  if(mode === 'estimate'){
+    var last = null; list.forEach(function(z){ if(z && z.to && (!last || z.to > last.to)) last = z; });
+    if(!last) return { error: 'There is no comeback to set an estimate for.' };
+    if(!(est > 0)) return { error: 'Enter a starting estimate in cases a week.' };
+    last.est = Math.round(est);
+    return { map: map };
+  }
+  return { error: 'Unknown action.' };
+}
+// Una marca cambia qué semanas promedian: se rearma el modelo de ginger (se arma al cargar ventas) y se repinta.
+function mktRerender(){
+  try{ if(typeof _dmRawAll !== 'undefined' && Array.isArray(_dmRawAll) && _dmRawAll.length && typeof dmBuild === 'function')
+         _dmModelG = dmBuild(_dmRawAll.filter(function(r){ return (r.prod || 'ginger') === 'ginger'; }), false, 'ginger'); }catch(e){}
+  try{ if(typeof dmRebuildView === 'function') dmRebuildView(); }catch(e){}
+  try{ if(typeof renderBuyPlanner === 'function') renderBuyPlanner(); }catch(e){}
+  try{ if(typeof invmReRender === 'function') invmReRender(); }catch(e){}
+  try{ var sim = (typeof document !== 'undefined') ? document.getElementById('tab-simulator') : null;
+       if(sim && sim.offsetParent && typeof renderSimulator === 'function') renderSimulator(); }catch(e){}
+}
 function invmOriginMatch(r,origin){
   if(!origin||origin==='all') return true;
   var prod=r&&r.prod, ro;
@@ -16532,6 +16794,10 @@ function nowcastProductModel(m, p, origin){
   // ni W37 en el build-up porque su unico committed es de cuentas order-driven, que se descartan
   // abajo — el `return` se comia tambien la rama `prelim`, que existe justo para recuperarlas.
   var cbw=(typeof invmCommittedByWeek==='function')?(invmCommittedByWeek(p, origin, nextAfterReliable)||{}):{};
+  // Las semanas en que la línea no tenía producto en el mercado no se completan con órdenes ni promedian
+  // (el relleno de ceros de abajo puede agregarlas; `avgSeries` las vuelve a sacar): la misma regla que
+  // dmBuildModel (mktWeekFilter), o el completado devolvería al promedio justo los ceros que ya se sacaron.
+  var _mktPf=(typeof mktWeekFilter==='function')?mktWeekFilter(p, origin):null;
   var caseLb=(typeof productCaseLb==='function')?productCaseLb(p):30;
   // ORDER-DRIVEN accounts are excluded from the completion. Their orders are lumpy one-offs (e.g. Sol-ti's
   // 1,000-case ginger container): folding one into a week would smear it across every future week of the
@@ -16574,7 +16840,7 @@ function nowcastProductModel(m, p, origin){
   var _curWkKey=(typeof dmWeekKey==='function')?dmWeekKey(new Date()):'';
   var wkset={}; Object.keys(partial).forEach(function(k){ wkset[k]=1; });
   Object.keys(cbw).forEach(function(k){ if(k>lastReliable && cbw[k]>0 && (!_curWkKey || k<=_curWkKey)) wkset[k]=1; });
-  var incWeeks=Object.keys(wkset).sort();
+  var incWeeks=Object.keys(wkset).sort().filter(function(k){ return !_mktPf || !_mktPf(k); });
   if(!incWeeks.length) return m;
   var series=m.weeklyReliable.map(function(w){ return {week:w.week, lbs:w.lbs}; }), added=false;
   incWeeks.forEach(function(k){
@@ -16611,6 +16877,7 @@ function nowcastProductModel(m, p, origin){
   // facturaba 73 unidades en W36 contra ~190 de una semana normal: promediarla bajaba el
   // run-rate ~10% y empujaba a comprar de menos, que es el error caro de los dos.
   avgSeries=series.filter(function(w){
+    if(_mktPf && _mktPf(w.week)) return false;
     if(curWk && w.week===curWk){ curEntry=w; return false; }
     if(w.prelim){ prelimOut.push({week:w.week, lbs:w.lbs, prelim:true}); return false; }
     return true;
@@ -16822,6 +17089,11 @@ function invmProductStats(p,origin){
   // pre-computes 3/6/13, so compute from the series — also picks up the nowcasted weeks).
   var rrWin=invmRunRateLbs(m, win);
   var ovr=(store.demandOverride!=null&&store.demandOverride!=='')?parseFloat(store.demandOverride):null;
+  // Recién vuelta al mercado tras un corte de más de 6 semanas: el run-rate arrancó de cero y todavía no
+  // tiene 4 semanas propias, así que la demanda es el estimado de arranque (mktStartEstimate). Pesa igual
+  // que un número escrito a mano, y uno escrito a mano le gana.
+  var _mktEst=(ovr==null && typeof mktStartEstimate==='function')?mktStartEstimate(p,origin):null;
+  if(_mktEst) ovr=_mktEst.cases;
   // ── Lo comprado CONTRA ORDEN sale del run-rate ────────────────────────────────────────────────
   // El run-rate existe para una sola cosa: saber cuánto comprar para el inventario. Lo que se compra
   // cuando el cliente lo pide nunca necesita stock esperándolo, así que no va en ese número. Sale de
@@ -16914,7 +17186,7 @@ function invmProductStats(p,origin){
     origin:origin,origins:origins,supList:supList,
     shrinkPct:shrinkPct,effOnHandCases:effOnHandCases,effOnHandLbs:effOnHandLbs,committedCases:committedCases,unbilledCases:unbilledCases,unbilledLines:_unb.lines,availCases:availCases,availLbs:availLbs,directShipCases:directShipCases,
     hasModel:!!m,rr13:rr13,win:win,presMix:(m&&m.presMix)||[],weeklyLbs:weeklyLbs,weeklyCases:weeklyCases,
-    weeklyLbsBuy:weeklyLbsBuy,weeklyCasesBuy:weeklyCasesBuy,mtoCases:_mto,demandOverride:ovr,cv:cv,nWeeks:vals.length,
+    weeklyLbsBuy:weeklyLbsBuy,weeklyCasesBuy:weeklyCasesBuy,mtoCases:_mto,demandOverride:ovr,startEstimate:_mktEst,cv:cv,nWeeks:vals.length,
     lead:lead,leadWks:leadWks,z:z,serviceLevel:svc,safetyWks:safetyWks,targetWks:targetWks,coverWks:coverWks,
     incomingCases:incomingCases,posCases:posCases,coverPosWks:coverPosWks,orderCases:orderCases,status:status};
 }
@@ -17287,8 +17559,9 @@ function codyDraftData(src){
   try{
     var d = (out.src === 'sim') ? (window._simDigest || {}) : (window._bpDigest || {});
     var a = (typeof bpSeaAnchor === 'function') ? bpSeaAnchor(d.protect) : null, R = d.rec || {};
-    var cont = Math.max(0, Math.round(+R.containers || 0)), per = +R.perContainer || 1320;
-    out.ginger = { containers: cont, cases: cont * per, orderBy: (a && a.orderBy) || '', arrive: (a && (a.deliveryDate || a.landsWk)) || '' };
+    var cont = d.paused ? 0 : Math.max(0, Math.round(+R.containers || 0)), per = +R.perContainer || 1320;
+    out.ginger = { containers: cont, cases: cont * per, orderBy: (a && a.orderBy) || '', arrive: (a && (a.deliveryDate || a.landsWk)) || '',
+                   paused: !!d.paused };
   }catch(e){}
   CODY_PRODUCTS.forEach(function(p){
     var origins = []; try{ origins = (typeof invmOriginsFor === 'function') ? (invmOriginsFor(p) || []) : []; }catch(e){}
@@ -17306,7 +17579,7 @@ function codyDraftData(src){
       var nombre = String((g && g.label) || p); nombre = nombre.charAt(0).toUpperCase() + nombre.slice(1);
       out.lines.push({ id: p + '|' + o, p: p, name: nombre, origin: (o === 'all') ? '' : o,
         unit: (lb >= 50) ? 'sacks' : 'cases', lb: lb, sug: g ? Math.max(0, Math.round(+g.buy || 0)) : 0,
-        orderBy: (g && g.orderBy) || '', arrive: llega, supIdx: idx,
+        orderBy: (g && g.orderBy) || '', arrive: llega, supIdx: idx, paused: !!(g && g.paused),
         suppliers: sups.map(function(s){ return { name: s.name, origin: s.origin || '', mode: s.mode || '', leadDays: s.leadDays || null }; }) });
     });
   });
@@ -17317,11 +17590,11 @@ function codyEmailText(lines, state, sender, today){
   var lunes = new Date(t.getFullYear(), t.getMonth(), t.getDate() - ((t.getDay() + 6) % 7), 12);
   var dia = function(iso){ return new Date(String(iso).slice(0, 10) + 'T12:00:00').toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' }); };
   var n = function(v){ return Number(v).toLocaleString('en-US'); };
-  var items = [], nada = [];
+  var items = [], nada = [], fuera = [];
   (lines || []).forEach(function(l){
     var s = (state && state[l.id]) || {}, q = Math.max(0, Math.round(+s.qty || 0));
     var cual = l.name + (l.origin ? ' (' + l.origin + ')' : '');
-    if(!(q > 0)){ nada.push(cual.charAt(0).toLowerCase() + cual.slice(1)); return; }
+    if(!(q > 0)){ (l.paused ? fuera : nada).push(cual.charAt(0).toLowerCase() + cual.slice(1)); return; }
     var sup = ((l.suppliers || [])[(s.supIdx != null) ? s.supIdx : l.supIdx] || {}).name || 'the usual supplier';
     var fecha = (s.arrive != null) ? s.arrive : l.arrive;
     items.push('• ' + cual + ' — ' + n(q) + ' ' + ((q === 1) ? l.unit.replace(/s$/, '') : l.unit) + ' (' + n(q * l.lb) + ' lb) from ' + sup + '. '
@@ -17332,9 +17605,11 @@ function codyEmailText(lines, state, sender, today){
   if(items.length){
     body += 'Please place these orders:\n\n' + items.join('\n') + '\n\n';
     if(nada.length) body += 'Nothing needed on ' + nada.join(' or ') + ' this week.\n\n';
+    if(fuera.length) body += 'Not available in the market right now: ' + fuera.join(', ') + '.\n\n';
     body += 'Let me know once they are confirmed, or if a supplier can’t make the date.\n\n';
   } else {
     body += 'Nothing to order this week for turmeric, garlic or shallots.\n\n';
+    if(fuera.length) body += 'Not available in the market right now: ' + fuera.join(', ') + '.\n\n';
   }
   return { subject: 'Orders to place — week of ' + lunes.toLocaleDateString('en-US', { month:'short', day:'numeric' }),
            body: body + 'Thanks,\n' + (sender || 'Juan') };
@@ -17377,7 +17652,7 @@ function codyRenderDraft(){
   var pill = function(txt, bg, fg){ return '<span class="cd-pill" style="background:' + bg + ';color:' + fg + '">' + txt + '</span>'; };
   var g = D.ginger || {};
   var rows = '<tr><td><b>Ginger</b><div style="color:var(--gray-500);font-size:12px">Peru · sea container</div></td>'
-    + '<td class="cd-num">' + (g.containers > 0 ? g.containers + ' container' + (g.containers > 1 ? 's' : '') + ' · ' + n(g.cases) + ' cs' : 'No order') + '</td>'
+    + '<td class="cd-num">' + (g.paused ? 'Not in the market' : g.containers > 0 ? g.containers + ' container' + (g.containers > 1 ? 's' : '') + ' · ' + n(g.cases) + ' cs' : 'No order') + '</td>'
     + '<td class="cd-num">' + fd(g.orderBy) + '</td><td class="cd-num">' + fd(g.arrive) + '</td>'
     + '<td>' + pill('Juan · not in email', 'var(--gray-100)', 'var(--gray-600)') + '</td></tr>';
   D.lines.forEach(function(l){
@@ -17385,14 +17660,14 @@ function codyRenderDraft(){
     rows += '<tr><td><b>' + E(l.name) + '</b><div style="color:var(--gray-500);font-size:12px">' + E(l.origin || '—') + '</div></td>'
       + '<td class="cd-num">' + (has ? n(l.sug) + ' ' + l.unit : 'No order') + '</td>'
       + '<td class="cd-num">' + (has ? fd(l.orderBy) : '—') + '</td><td class="cd-num">' + (has ? fd(l.arrive) : '—') + '</td>'
-      + '<td>' + (has ? pill('Cody', 'var(--green-50)', 'var(--green-700)') : pill('Nothing to place', 'var(--gray-100)', 'var(--gray-500)')) + '</td></tr>';
+      + '<td>' + (has ? pill('Cody', 'var(--green-50)', 'var(--green-700)') : l.paused ? pill('Not in the market', 'var(--amber-50)', 'var(--amber-700)') : pill('Nothing to place', 'var(--gray-100)', 'var(--gray-500)')) + '</td></tr>';
   });
   var editor = D.lines.map(function(l){
     var s = _cody.st[l.id];
     var opts = l.suppliers.map(function(sp, i){ return '<option value="' + i + '"' + (i === s.supIdx ? ' selected' : '') + '>' + E(sp.name + (sp.origin ? ' · ' + sp.origin : '') + (sp.mode ? ' · ' + sp.mode : '') + (sp.leadDays ? ' ' + sp.leadDays + ' d' : '')) + '</option>'; }).join('');
     var k = E(l.id);
     return '<div class="cd-line" style="' + (s.qty > 0 ? '' : 'opacity:.55') + '">'
-      + '<div><b>' + E(l.name) + (l.origin ? ' · ' + E(l.origin) : '') + '</b><div class="cd-num" style="font-size:11px;color:var(--green-700)">Plan: ' + (l.sug > 0 ? n(l.sug) + ' ' + l.unit : 'no order') + '</div></div>'
+      + '<div><b>' + E(l.name) + (l.origin ? ' · ' + E(l.origin) : '') + '</b><div class="cd-num" style="font-size:11px;color:var(--green-700)">Plan: ' + (l.sug > 0 ? n(l.sug) + ' ' + l.unit : l.paused ? 'not in the market' : 'no order') + '</div></div>'
       + '<label><span class="cd-lbl">Quantity (' + l.unit + ')</span><input type="number" min="0" step="1" data-k="' + k + '" data-f="qty" value="' + s.qty + '"></label>'
       + '<label><span class="cd-lbl">Supplier</span><select data-k="' + k + '" data-f="supIdx">' + opts + '</select></label>'
       + '<label><span class="cd-lbl">Must arrive by</span><input type="date" data-k="' + k + '" data-f="arrive" value="' + E(s.arrive || '') + '"></label>'
@@ -17771,7 +18046,12 @@ function invmProjectionHTML(s){
   // Tercera pantalla que dice "cuánto comprar": va por el mismo productor que las otras dos.
   var _vOrd = (typeof invmOrderCases==='function') ? invmOrderCases(s.p, s.origin) : (s.orderCases||0);
   var verdict, vcls;
-  if(firstShort===null){
+  var _mktPz=(typeof mktPauseActive==='function')?mktPauseActive(s.p, s.origin):null;
+  if(_mktPz && firstShort!==null){
+    // Sin producto en el mercado no hay orden que colocar: se dice cuándo baja del mínimo y por qué no se pide.
+    vcls='re';
+    verdict='<b>Not available in the market.</b> Drops below safety ('+f(safetyCases)+' cs) on <b>'+lbl(weeks[firstShort].wkISO)+'</b> (week +'+firstShort+'). No order to place while it is not available.';
+  } else if(firstShort===null){
     vcls='ok'; verdict='<b>Covered for '+N+' weeks.</b> On-hand'+(hasArr?' + incoming':'')+' never drops below safety ('+f(safetyCases)+' cs). No action.';
   } else if(!(_vOrd>0)){
     // on-hand is above target now, but the drawdown will reach the reorder point later
@@ -18091,10 +18371,13 @@ function invmAnalysisHTML(s){
   var stCls=s.status, stTxt=(s.status==='ur')?'● Urgent':(s.status==='re')?'● Reorder':'● OK';
   var demandVal = s.weeklyLbs>0 ? f(s.weeklyCases) : '';
   var demandSrc = s.weeklyLbs<=0 ? '<span style="color:var(--amber-700)">load sales or set manually</span>'
+                : s.startEstimate ? ('starting estimate · '+s.startEstimate.weeksLeft+' more wk, then run-rate')
                 : (s.demandOverride!=null ? 'manual · <a href="javascript:invmProdClearDemand(\''+s.p+'\')" style="color:var(--jlz)">use run-rate</a>' : (s.directShipCases>0 ? ('◆ stock-buy run-rate · '+(s.win||13)+' wk') : ('◆ live run-rate · '+(s.win||13)+' wk')));
   var covTxt = s.weeklyLbs>0 ? f1(s.coverWks)+' <small>wk</small>' : '—';
   var tgtTxt = (s.weeklyLbs>0 && s.leadWks>0) ? f1(s.targetWks)+' <small>wk</small>' : '—';
-  var ordTxt = s.weeklyLbs>0 ? f(_ord)+' <small>cs</small>' : '—';
+  var _mktPzA=(typeof mktPauseActive==='function')?mktPauseActive(s.p, s.origin):null;
+  if(_mktPzA){ stCls='re'; stTxt='● Not in the market'; }
+  var ordTxt = _mktPzA ? '0 <small>cs · not in the market</small>' : (s.weeklyLbs>0 ? f(_ord)+' <small>cs</small>' : '—');
   var cvTxt = (s.nWeeks>1) ? (Math.round(s.cv*100)+'% ('+s.nWeeks+' wk)') : 'insufficient history';
   var supNames = esc((s.supList&&s.supList.map(function(x){return x.name;}).join(', '))||'—');
   var supOrigins = esc((s.supList&&s.supList.map(function(x){return x.origin;}).filter(function(v,i,a){return a.indexOf(v)===i;}).join(' / '))||'');
@@ -18128,7 +18411,8 @@ function invmAnalysisHTML(s){
       + (s.incomingCases>0
           ? ('<b>position</b> = '+f(s.availCases)+' free + '+f(s.incomingCases)+' already on the way = <b>'+f(s.posCases)+' cs</b> &middot; <b>'+f1(s.coverPosWks)+' wk</b> of cover<br>')
           : '')
-      + '<b>order</b> = max(0, target×demand &minus; position) &divide; '+f(s.caseLb)+' lb = <b>'+f(_ord)+' cs</b>'
+      + (_mktPzA ? '<b>order</b> = none while it is not available in the market'
+                 : ('<b>order</b> = max(0, target×demand &minus; position) &divide; '+f(s.caseLb)+' lb = <b>'+f(_ord)+' cs</b>'))
       + '</div>';
   } else if(!s.hasModel){
     html += '<div class="ipv-formula" style="color:var(--amber-700);border-color:var(--amber-200);background:var(--amber-50)">No sales loaded to compute demand / target. Load the sales report (Demand tab) or set weekly demand manually above.</div>';
@@ -18163,7 +18447,7 @@ function bpRenderProduct(p){
     bar='<div style="display:flex;gap:6px;align-items:center;margin-bottom:12px;flex-wrap:wrap"><span style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-right:4px">Origin</span>'+origins.map(function(o){ return pill(o); }).join('')+'</div>';
   }
   return '<div style="margin-bottom:8px;font-size:11px;color:var(--gray-400);font-family:var(--fm)">Buy Planner · '+esc(s.label)+(BP_ORIGIN?(' · '+esc(BP_ORIGIN)):'')+' — when &amp; how much to order</div>'
-    + bar + (s.hasModel?invmWindowToggle(p,s.origin):'')
+    + bar + ((typeof mktControlHTML==='function')?mktControlHTML(s.p, s.origin):'') + (s.hasModel?invmWindowToggle(p,s.origin):'')
     + invmBuySuggestionHTML(s.p, s.origin, {whatif:false})
     + invmAnalysisHTML(s) + invmProjectionHTML(s)
     + invmMtoCandidatesHTML(s.p, s.origin) + invmDirectShipOrdersHTML(s.p, s.origin)
@@ -18212,6 +18496,8 @@ function invmStockableWeekly(p, origin){
     // variabilidad real, que es justo lo que dimensiona el safety. Se rellena desde la primera
     // semana con ventas hasta la última cerrada.
     var nowWk=dmWeekKey(new Date());
+    // Una semana sin producto en el mercado no es variabilidad de la demanda: inflaría el colchón al volver.
+    var _mktPf=(typeof mktWeekFilter==='function')?mktWeekFilter(p, origin):null;
     var conVenta=Object.keys(byw).sort().filter(function(w){ return w<nowWk; });
     if(!conVenta.length) return [];
     var out=[], cur=new Date(conVenta[0]+'T12:00:00'), fin=new Date(conVenta[conVenta.length-1]+'T12:00:00');
@@ -18235,7 +18521,7 @@ function invmStockableWeekly(p, origin){
         if(sobra>0) sigue[c]=sobra;
       });
       arrastre=sigue;
-      out.push({ wk:w, lbs:t });
+      if(!_mktPf || !_mktPf(w)) out.push({ wk:w, lbs:t });
       cur=new Date(cur.getTime()+7*86400000);
     }
     return out;
@@ -18471,7 +18757,10 @@ function invmWindowFit(p, origin, testWeeks){
 // distintas, que es el defecto que esta auditoría existe para cerrar.
 function invmOrderCases(p, origin){
   try{ var g=invmBuySuggestion(p, origin); if(g && g.buy!=null) return g.buy; }catch(e){}
-  try{ var st=invmProductStats(p, origin); return (st && st.orderCases)||0; }catch(e){}
+  try{ var st=invmProductStats(p, origin);
+       // Sin producto en el mercado no hay nada que pedir, tampoco por el camino de respaldo.
+       if(st && typeof mktPauseActive==='function' && mktPauseActive(p, st.origin)) return 0;
+       return (st && st.orderCases)||0; }catch(e){}
   return 0;
 }
 function invmBuySuggestion(p, origin, opts){
@@ -18580,7 +18869,11 @@ function invmBuySuggestion(p, origin, opts){
     if(now.landsWk){ steps.landsWk=now.landsWk; steps.stockAtLanding=now.stockAtLanding;
                      steps.orderUpTo=now.orderUpTo; }
     var fit=null; try{ fit=invmWindowFit(p, origin); }catch(e){}
-    return { fit:fit, steps:steps, protect:prot, whatif:_wi, hypoIn:hypoIn, hypoOut:hypoOut,
+    // ── Sin producto en el mercado no se sugiere compra ───────────────────────────────────────────
+    // La cuenta se hace igual (cobertura, fechas) y la cantidad queda en `buyIfAvailable` para quien quiera
+    // mirarla; `buy` es 0, que es lo que leen el KPI, la tarjeta y el precorreo de Cody.
+    var _pz=(typeof mktPauseActive==='function')?mktPauseActive(p, s.origin||origin):null;
+    var _res={ fit:fit, steps:steps, protect:prot, whatif:_wi, hypoIn:hypoIn, hypoOut:hypoOut,
              p:p, label:s.label||p, origin:origin, caseLb:cl, supplier:best.name||'', mode:best.mode||'',
              leadDays:lead, avail:s.availCases||0, incoming:incoming, excluded:s.excludedCases||0,
              demand:now.demand, cover:now.cover, buy:now.buy, orderBy:now.orderBy, offset:now.offset,
@@ -18589,11 +18882,14 @@ function invmBuySuggestion(p, origin, opts){
              // dice "order now", y ahí sí se cuenta desde hoy. Turmeric mostraba "ordenar 19-sep,
              // llega 20-sep" con 10 días de lead: era hoy+10, no la consecuencia de esperar al plazo.
              arrives:addD(Math.max(0,now.offset)+lead), win:win, others:others, targetWks:s.targetWks||0 };
+    if(_pz){ _res.paused=_pz; _res.buyIfAvailable=_res.buy; _res.buy=0; }
+    return _res;
   }catch(e){ return null; }
 }
 function invmBuySuggestionHTML(p, origin, opts){
   var g=invmBuySuggestion(p, origin, opts);
   if(!g) return '';
+  if(g.paused && typeof mktPausedCardHTML==='function') return mktPausedCardHTML(g.paused, g.cover, g.avail, g.incoming);
   var esc=(typeof libEsc==='function')?libEsc:function(x){ return String(x==null?'':x); };
   var f=function(n){ return Math.round(n||0).toLocaleString('en-US'); };
   var f1=function(n){ return (!isFinite(n))?'∞':(Math.round((n||0)*10)/10).toFixed(1); };
@@ -18827,6 +19123,8 @@ function invmBuySuggestionHTML(p, origin, opts){
 function bpGingerSuggestionHTML(src){
   var d=(src!=null)?src:((typeof window!=='undefined')?window._bpDigest:null);
   if(!d || !d.rec) return '';
+  if(d.paused && typeof mktPausedCardHTML==='function')
+    return mktPausedCardHTML(d.paused, d.coverage, (d.weeklyDemand>0 ? d.coverage*d.weeklyDemand : d.stockCases), 0);
   var _conEsc=!!d.scenario;
   var esc=(typeof libEsc==='function')?libEsc:function(x){ return String(x==null?'':x); };
   var f=function(x){ return Math.round(x||0).toLocaleString('en-US'); };
@@ -18980,7 +19278,7 @@ function simRenderProduct(p){
     bar='<div style="display:flex;gap:6px;align-items:center;margin-bottom:12px;flex-wrap:wrap"><span style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-right:4px">Origin</span>'+origins.map(function(o){ return pill(o); }).join('')+'</div>';
   }
   return '<div style="margin-bottom:8px;font-size:11px;color:var(--gray-400);font-family:var(--fm)">Simulator · '+esc(s.label)+(SIM_ORIGIN?(' · '+esc(SIM_ORIGIN)):'')+' — test hypothetical buys against the projection</div>'
-    + bar + (s.hasModel?invmWindowToggle(p,s.origin):'') + invmBuySuggestionHTML(s.p, s.origin, {whatif:true}) + invmProjectionHTML(s) + whatifCardHTML(s.p, s.origin, 'simwi');
+    + bar + ((typeof mktControlHTML==='function')?mktControlHTML(s.p, s.origin):'') + (s.hasModel?invmWindowToggle(p,s.origin):'') + invmBuySuggestionHTML(s.p, s.origin, {whatif:true}) + invmProjectionHTML(s) + whatifCardHTML(s.p, s.origin, 'simwi');
 }
 function invmSetDays(x){ INVM_DAYSMODE=x; renderInventory(); }
 function invmSetRate(x){ INVM_RATEKEY=x; renderInventory(); }
@@ -20265,7 +20563,12 @@ function renderBuyPlanner() {
     shortfall: deadlineTarget ? { weekNum: deadlineTarget.weekNum, date: deadlineTarget.weekStartDate } : null,
     safetyDip: safetyDipTarget ? { weekNum: safetyDipTarget.weekNum, date: safetyDipTarget.weekStartDate } : null,
     seaDeadline, airDeadline,
+    // Ginger de Perú marcado "not available in the market": Home, la tarjeta y Cody no sugieren compra.
+    paused: (typeof mktPauseActive === 'function') ? mktPauseActive('ginger', 'Peru') : null,
   };
+  // La barra para marcarlo va siempre, haya faltante o no: la tarjeta de compra solo se repinta con faltante.
+  try{ const _bm = document.getElementById('bp-ginger-market');
+       if (_bm) _bm.innerHTML = (typeof mktControlHTML === 'function') ? mktControlHTML('ginger', 'Peru') : ''; }catch(e){}
 
   // ── Quiet-account panel: who is held out of the plan + Out/Half/Full toggle ──
   (function(){
@@ -20550,6 +20853,7 @@ function renderBuyPlanner() {
     // Recommendation summary
     const seaHelps = seaEtaWk != null && seaEtaWk <= targetWk;
     const airHelps = airEtaWk != null && airEtaWk <= targetWk;
+    const _mktPzG = (typeof mktPauseActive === 'function') ? mktPauseActive('ginger', 'Peru') : null;
     let recText, recBg, recColor;
     if (seaHelps) {
       recText  = '✓ Sea ordered today arrives ' + fmtWkDate(seaEtaWk, seaEtaDate) + ' — before stockout';
@@ -20560,6 +20864,10 @@ function renderBuyPlanner() {
     } else {
       recText  = '🛑 Both sea and air arrive after projected stockout — order immediately';
       recBg    = '#FEF2F2'; recColor = 'var(--red-800)';
+    }
+    if (_mktPzG) {
+      recText  = '⏸ Not available in the market — no order suggestion while it is off';
+      recBg    = '#FFFBEB'; recColor = 'var(--amber-800)';
     }
     // ── RECOMMENDED ORDER QUANTITY (E3 step 2) ──────────────────────────────
     // Order-up-to level = demand over (lead time + one cadence cycle) + safety
@@ -20651,7 +20959,7 @@ function renderBuyPlanner() {
       raw:_recRaw, wanted:_recWant, cap:_capCont, cappedBy:_cappedBy, shelfWks:_shelfW,
       ssDegraded:_ssDegradado, ssMismatch:_ssMismatch, ssWeeks:_weeklyLbsSeries.length,
       ssSeriesMeanLbs:Math.round(_ssMean) }; }catch(e){}
-    const recQtyStr = recContainers + ' container' + (recContainers>1?'s':'') + ' · ~' + recNetCases.toLocaleString() + ' cs \u2192 ~' + recCoverWks + ' wks @ ' + serviceLevel + '% · ~' + Math.round(effShrinkOrder*100) + '% shrink';
+    const recQtyStr = _mktPzG ? '' : recContainers + ' container' + (recContainers>1?'s':'') + ' · ~' + recNetCases.toLocaleString() + ' cs \u2192 ~' + recCoverWks + ' wks @ ' + serviceLevel + '% · ~' + Math.round(effShrinkOrder*100) + '% shrink';
     const coverWks = weeklyDemand > 0 ? (1320 / weeklyDemand).toFixed(1) : '—';
     const recHtml = '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;background:' + recBg + ';border-radius:6px;margin-bottom:8px;flex-wrap:wrap">'
       + '<span style="font-size:11px;font-weight:600;color:' + recColor + ';font-family:var(--fb)">' + recText + '</span>'
@@ -22982,6 +23290,17 @@ async function pullSettingsFromSheet() {
       // Seed the dirty-gate cache with the server's values so the render below
       // (and any later identical renders) are no-ops and can't re-push/clobber.
       Object.keys(data.settings).forEach(k => { _lastPushedSettings[k] = String(data.settings[k]); });
+      // Las marcas "not available in the market" deciden qué semanas promedia el modelo, que ya se armó con
+      // la copia local. Si la hoja trae otras (las puso Michael), se guardan y se rearma; si son las mismas, nada.
+      try {
+        if (data.settings.marketPauses != null && typeof mktRerender === 'function') {
+          let _mkLocal = null; try { _mkLocal = localStorage.getItem(MKT_LS); } catch (e) {}
+          if (String(data.settings.marketPauses) !== String(_mkLocal || '{}')) {
+            try { localStorage.setItem(MKT_LS, String(data.settings.marketPauses)); } catch (e) {}
+            mktRerender();
+          }
+        }
+      } catch (e) { console.warn('marketPauses sync:', e); }
       // Re-render with the new settings
       if (typeof renderBuyPlanner === 'function') renderBuyPlanner();
     }
@@ -24754,7 +25073,8 @@ function simRenderProjection(realOrders, hypoOrders) {
               orderUpTo:_cpS.orderUpTo, projAtArrival:_cpS.projAtArrival, coverWks:_cpS.coverWks,
               leadWks:_cpS.leadWks, cadence:_cpS.cadence, ssCases:_cpS.ssCases,
               perContainer:_cpS.perContainer, raw:_cpS.raw, wanted:_cpS.wanted, cap:_cpS.cap,
-              cappedBy:_cpS.cappedBy, shelfWks:_cpS.shelfWks } };
+              cappedBy:_cpS.cappedBy, shelfWks:_cpS.shelfWks },
+        paused:(typeof mktPauseActive==='function')?mktPauseActive('ginger','Peru'):null };
       // Los plazos de mar y aire, con la MISMA regla que el Buy Planner (`computeDeadline`): la semana
       // del quiebre (o, si no hay quiebre, la primera bajo el colchón) menos el lead. La tarjeta los lee:
       // sin ellos el Simulator nunca se ponía rojo, perdía el plazo por aire y contaba "lands" desde hoy.
@@ -24774,6 +25094,8 @@ function simRenderProjection(realOrders, hypoOrders) {
   // Las filas quedan a la vista, igual que `_bpDigest`: sin esto la proyección del Simulator es la
   // única de las dos que no se puede auditar desde la consola.
   try{ window._simProjRows = _simProjRows; }catch(e){}
+  try{ var _smk=document.getElementById('sim-ginger-market');
+       if(_smk) _smk.innerHTML=(typeof mktControlHTML==='function')?mktControlHTML('ginger','Peru'):''; }catch(e){}
   try{ var _sgs=document.getElementById('sim-ginger-suggestion');
        if(_sgs) _sgs.innerHTML=bpGingerSuggestionHTML(window._simDigest||window._bpDigest); }catch(e){}
 }
@@ -26178,7 +26500,12 @@ function renderHome() {
       const sea = _prot ? { date: _prot.orderBy + 'T12:00:00', daysLeft: _prot.daysLeft } : dg.seaDeadline, air = dg.airDeadline;
 
       let chip, chipBg, chipBorder, advice;
-      if (!dg.shortfall) {
+      if (dg.paused) {
+        // Sin ginger de Perú en el mercado no hay orden que sugerir: se dice eso, sin fechas de compra.
+        chip = 'NOT AVAILABLE'; chipBg = 'var(--amber-50)'; chipBorder = 'var(--amber-600)';
+        advice = 'Ginger from Peru is marked as not available in the market since <strong>' + fmtD(dg.paused.from + 'T12:00:00')
+          + '</strong>. No order suggestion until it is back — mark it in the Buy Planner when it returns.';
+      } else if (!dg.shortfall) {
         chip = 'COVERED'; chipBg = 'var(--green-50)'; chipBorder = 'var(--green-600)';
         advice = 'No shortfall inside the 12-week projection at current demand. Keep the snapshot fresh in the Buy Planner.';
       } else if (sea && dg.protect && dg.protect.floorUnavoidable && sea.fromPlan !== false && _prot) {
@@ -26988,7 +27315,7 @@ function productFocus(){ const p = getActiveProduct(); return (p === 'all') ? 'g
 // invoiced sales and turned turmeric Fiji's W35 into 129 cs when the real figure was 88.
 function dmBuild(rows, weeklyOnly, k, origin){
   const cl = productCaseLb(k);
-  let m = dmBuildModel(rows, weeklyOnly, cl, k);
+  let m = dmBuildModel(rows, weeklyOnly, cl, k, origin || 'all');
   if (m) m.caseLb = cl;
   // Complete the trailing incomplete weeks with their booked orders (all products, ginger included): the raw
   // model drops any week that isn't fully invoiced, so the latest weeks disappear even when their orders are
@@ -27058,7 +27385,7 @@ function dmRebuildView(){
   const cl = dmFocusCaseLb();
   if (typeof dmBuildModel === 'function'){
     if (_dmRawAll){
-      _dmModel = dmBuildModel(dmFilteredRows(), false, cl, (typeof productFocus==='function')?productFocus():null);
+      _dmModel = dmBuildModel(dmFilteredRows(), false, cl, (typeof productFocus==='function')?productFocus():null, (_dmOrigin && _dmOrigin !== 'All') ? _dmOrigin : 'all');
     } else if (getActiveProduct() !== 'ginger' && getActiveProduct() !== 'all'){
       _dmModel = dmBuildModel([], false, cl);   // no raw rows + a specific non-ginger product => empty
     }
@@ -27288,7 +27615,7 @@ function dmParseWorkbook(buf){
 
 // Build the demand model. weeklyOnly=true (cross-device, from the sheet) means
 // we only have weekly buckets, so cadence/exact last-order are suppressed.
-function dmBuildModel(raw, weeklyOnly, caseLb, prodKey){
+function dmBuildModel(raw, weeklyOnly, caseLb, prodKey, origin){
   caseLb = caseLb || DM_CASE_LB;   // lbs->cases conversion for the focused product
   const anchor = new Date();
   const curWeekKey = dmWeekKey(anchor);
@@ -27371,11 +27698,21 @@ function dmBuildModel(raw, weeklyOnly, caseLb, prodKey){
   const _curWk = dmWeekKey(anchor);
   const reliableWeeks = (_dmaxWk ? allWeeks.filter(w => _dmaxWk > w) : allWeeks).filter(w => w < _curWk);
   const partialWeek = (allWeeks.indexOf(_curWk) >= 0) ? { week:_curWk, lbs:Math.round(weekTotal[_curWk]||0), partial:true } : null;
-  const rateWeeks = (reliableWeeks.length ? reliableWeeks : allWeeks).slice(-13);
+  // ── Semanas sin producto en el mercado: se muestran, no promedian ───────────────────────────────
+  // Una línea marcada "not available in the market" (mktWeekFilter) saca esas semanas de TODOS los
+  // promedios de abajo —total, ventanas, filas por cliente, tendencia—, y tras un corte de más de 6
+  // semanas también la campaña anterior entera. Sin marca, `_rateBasis` es exactamente la base de siempre.
+  // Con marca no hay vuelta a `allWeeks`: si no queda ninguna semana la tasa es 0 y manda el estimado
+  // de arranque (mktStartEstimate), nunca un promedio con los ceros de cuando no había qué vender.
+  const _mktPf = (typeof mktWeekFilter === 'function')
+    ? mktWeekFilter(prodKey || ((typeof productFocus === 'function') ? productFocus() : 'ginger'), origin) : null;
+  const _rateBasis = _mktPf ? reliableWeeks.filter(w => !_mktPf(w)) : (reliableWeeks.length ? reliableWeeks : allWeeks);
+  const _relBasis = _mktPf ? _rateBasis : reliableWeeks;
+  const rateWeeks = _rateBasis.slice(-13);
   const runRate13 = rateWeeks.length ? sumWeeks(rateWeeks)/rateWeeks.length : 0;
   // Reaction-window scenarios: same reliable-week series, shorter lookbacks. 13w = structural
   // base (a quarter); 6w = momentum; 3w = spot/early-warning. Detector compares them.
-  const _rrWin = (n) => { const w = (reliableWeeks.length ? reliableWeeks : allWeeks).slice(-n); return w.length ? sumWeeks(w)/w.length : 0; };
+  const _rrWin = (n) => { const w = _rateBasis.slice(-n); return w.length ? sumWeeks(w)/w.length : 0; };
   const runRate6 = _rrWin(6), runRate3 = _rrWin(3), runRate26 = _rrWin(26);   // la UI ofrece 26w
 
   const md = 86400000;
@@ -27478,7 +27815,7 @@ function dmBuildModel(raw, weeklyOnly, caseLb, prodKey){
   // the headline rate, so there is one definition everywhere (no 393-vs-426).
   const _r10 = lastN(10);
   const _avgW = (c, weeks) => weeks.length ? custSumWeeks(c, weeks) / weeks.length : 0;
-  const _rel4 = reliableWeeks.slice(-4), _relP4 = reliableWeeks.slice(-8, -4);
+  const _rel4 = _relBasis.slice(-4), _relP4 = _relBasis.slice(-8, -4);
   const totalLifeAll = Object.values(custLifetime).reduce((s,v)=>s+v, 0) || 1;
   const GP_WIN = 13;
   const _winR = reliableWeeks.slice(-GP_WIN), _winP = reliableWeeks.slice(-2*GP_WIN, -GP_WIN);
@@ -27500,10 +27837,10 @@ function dmBuildModel(raw, weeklyOnly, caseLb, prodKey){
     // Medido el 2026-09-03 en ginger: filas 1.110 vs TOTAL 780, con Christopher Ranch en 229 cs/sem
     // (42.097 cajas ÷ 184 semanas) cuando en las últimas 13 semanas vendió 9, y cinco cuentas que no
     // compraron NADA en 13 semanas cargando tasa igual. Con la ventana, la suma da 779 ≈ 780.
-    const rrLbs = _avgW(c, (reliableWeeks.length ? reliableWeeks : allWeeks).slice(-13));
-    const rr26Lbs = _avgW(c, (reliableWeeks.length ? reliableWeeks : allWeeks).slice(-26));
-    const rr6Lbs = _avgW(c, (reliableWeeks.length ? reliableWeeks : allWeeks).slice(-6));   // per-customer reaction windows
-    const rr3Lbs = _avgW(c, (reliableWeeks.length ? reliableWeeks : allWeeks).slice(-3));
+    const rrLbs = _avgW(c, _rateBasis.slice(-13));
+    const rr26Lbs = _avgW(c, _rateBasis.slice(-26));
+    const rr6Lbs = _avgW(c, _rateBasis.slice(-6));   // per-customer reaction windows
+    const rr3Lbs = _avgW(c, _rateBasis.slice(-3));
     // Order-driven (sporadic) classification: ordered in only a small fraction of the reliable weeks →
     // buys lumpily, so its average must NOT be smeared across every week (would over-project the weeks
     // it doesn't order). Drive it by committed instead. Conservative threshold so steady buyers are
@@ -27565,7 +27902,8 @@ function dmBuildModel(raw, weeklyOnly, caseLb, prodKey){
   return { runRate13:Math.round(runRate13 + _rrOvrDeltaLbs), runRate13Model:Math.round(runRate13), runRate6:Math.round(runRate6 + _rrOvrDelta6Lbs), runRate3:Math.round(runRate3 + _rrOvrDelta3Lbs), runRate26:Math.round(runRate26), sparkWeeks:_r10, activeCount:active.length, dormantCount:dormant.length,
            active, dormant, demandRows, custDetail, customers, concTop2, blendMg,
            weekly: allWeeks.map(w => ({ week:w, lbs:Math.round(weekTotal[w]||0) })),
-           weeklyReliable: (reliableWeeks.length ? reliableWeeks : allWeeks).map(w => ({ week:w, lbs:Math.round(weekTotal[w]||0) })),
+           weeklyReliable: _rateBasis.map(w => ({ week:w, lbs:Math.round(weekTotal[w]||0) })),
+           marketOffWeeks: _mktPf ? allWeeks.filter(w => _mktPf(w)) : [],   // semanas sin producto: se ven en `weekly`, no promedian
            presMix,
            // Actual weekly sales per customer, keyed by week — lets the build-up table show the REAL
            // weeks behind each run-rate next to the projected ones. rateWeeks = the weeks the run-rate averages.
@@ -27639,6 +27977,10 @@ window.dmSetWindow = function(v, pOverride){
   try{ if(typeof renderBuildupPanel === 'function') renderBuildupPanel(); }catch(e){}
 };
 function dmEffectiveRunRateLbs(){
+  // Ginger de Perú recién vuelto al mercado tras un corte de más de 6 semanas: el run-rate arrancó de
+  // cero y todavía no tiene 4 semanas propias, así que el plan usa el estimado que se cargó al reactivar.
+  try{ const _est = (typeof mktStartEstimate === 'function') ? mktStartEstimate('ginger', 'Peru') : null;
+       if (_est) return _est.cases * productCaseLb('ginger'); }catch(e){}
   const m = qaModelG();
   if (!m || !(m.runRate13 > 0)) return null;
   const win = (typeof dmWindow === 'function') ? dmWindow('ginger') : 13;   // ginger plan uses ginger's own reaction window
@@ -27661,7 +28003,9 @@ function dmEffectiveRunRateLbs(){
       // adentro, esa orden se descuenta dos veces y Perú compra de menos. Misma receta que invmProductModel.
       let _hwRows = rows;
       try{ if(typeof mtoNetRows === 'function') _hwRows = mtoNetRows(rows, 'ginger', win); }catch(e){}
-      const hm = dmBuildModel(_hwRows, false, m.caseLb || DM_CASE_LB, 'ginger');
+      // Las MISMAS semanas que el total de arriba, que es ginger sin origen = la línea de Perú: si Perú
+      // estuvo sin producto, esas semanas salen de los dos lados de la resta o la resta no cuadra.
+      const hm = dmBuildModel(_hwRows, false, m.caseLb || DM_CASE_LB, 'ginger', 'Peru');
       if(!hm) return 0;
       return (win === 3 ? (hm.runRate3 || hm.runRate13) : win === 6 ? (hm.runRate6 || hm.runRate13)
             : win === 26 ? (hm.runRate26 || hm.runRate13) : hm.runRate13) || 0;
@@ -27718,7 +28062,7 @@ function renderDmRunRate(){
         // órdenes marcadas, que es más fino: descuenta las cajas de Sol-ti, no a Sol-ti entero.
         var _base = _rows;
         try{ if(typeof mtoNetRows === 'function') _base = mtoNetRows(_base, _hpProd, _hpWin); }catch(e){}
-        var _ms = dmBuildModel(_base, false, cl, (typeof productFocus==='function')?productFocus():null);
+        var _ms = dmBuildModel(_base, false, cl, (typeof productFocus==='function')?productFocus():null, (typeof _dmOrigin!=='undefined' && _dmOrigin && _dmOrigin!=='All')?_dmOrigin:'all');
         if(_ms && _ms.runRate13>0 && Array.isArray(_ms.weeklyReliable)) m = _ms;
         var _p=(typeof getActiveProduct==='function')?getActiveProduct():null;
         var _o=(typeof _dmOrigin!=='undefined' && _dmOrigin && _dmOrigin!=='All')?_dmOrigin:'all';
@@ -27817,7 +28161,7 @@ function renderDmRunRate(){
              + '<span style="color:var(--gray-400)"> &mdash; not in the number above; you buy it when they order</span></div>';
       })()
     + '<div class="dmrr-rib '+rc+'">'+rt+'</div>'
-    + '<div class="dmrr-step"><div class="dmrr-h">Average of the '+win+' weeks it uses</div><div class="dmrr-wks">'+wksHtml+'</div><div class="dmrr-math">'+mathHtml+'</div>'+(m.nowcast?('<div style="font-size:10px;margin-top:5px;line-height:1.5">'+(_hasPrelim?'<span style="color:#b45309">⏳ preliminary (invoicing still catching up)</span>':'')+(_hasPrelim&&_hasNow?' &nbsp;·&nbsp; ':'')+(_hasNow?'<span style="color:#7c3aed">📋 booked orders (not yet invoiced)</span>':'')+' — most current read</div>'):'')+'</div>'
+    + '<div class="dmrr-step"><div class="dmrr-h">Average of the '+win+' weeks it uses</div><div class="dmrr-wks">'+wksHtml+'</div><div class="dmrr-math">'+mathHtml+'</div>'+(m.nowcast?('<div style="font-size:10px;margin-top:5px;line-height:1.5">'+(_hasPrelim?'<span style="color:#b45309">⏳ preliminary (invoicing still catching up)</span>':'')+(_hasPrelim&&_hasNow?' &nbsp;·&nbsp; ':'')+(_hasNow?'<span style="color:#7c3aed">📋 booked orders (not yet invoiced)</span>':'')+' — most current read</div>'):'')+((m.marketOffWeeks&&m.marketOffWeeks.length)?'<div style="font-size:10px;margin-top:5px;line-height:1.5;color:#92400E">⏸ Weeks without product in the market are skipped: they do not count in the run-rate (marked in the Buy Planner)</div>':'')+'</div>'
     + '<div class="dmrr-step"><div class="dmrr-h">Built from these customers <span class="dmrr-hs">— each account’s run-rate in the window</span></div><table class="dmrr-tbl"><tbody>'+rows+'</tbody></table>'
     + '<div class="dmrr-link" onclick="if(typeof switchTab===\'function\')switchTab(\'customers\')">See customer detail → <span class="dmrr-hs">margin, cadence, chart, overrides</span></div></div>'
     + '</div>';
@@ -28501,7 +28845,7 @@ function dmLineStats(p, o){
   try{ if(typeof mtoNetRows === 'function') stockRows = mtoNetRows(stockRows, p, win); }catch(e){}
   var m = null;
   try{
-    m = dmBuildModel(stockRows, false, cl, p);
+    m = dmBuildModel(stockRows, false, cl, p, o || 'all');
     if(m && typeof nowcastProductModel === 'function') m = nowcastProductModel(m, p, o || 'all');
   }catch(e){}
   var agg = m ? ((win===3 ? (m.runRate3||m.runRate13)

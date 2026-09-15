@@ -54,7 +54,10 @@ var _PRISTINO_NOMBRES = [
   // Los grupos de "sin facturar" reemplazan el que decide qué se retiene y su fuente de cross-dock.
   'cmUnbilled','_cmCrossDock','ooOriginFromSku','stockSnapRecord',
   // El seguimiento de reempaques fija el formato de fecha para comparar días, no texto de pantalla.
-  'dmcDateLabel','_dmRawAll','_invmOrigDemandCache','WLOT_FILTER'
+  'dmcDateLabel','_dmRawAll','_invmOrigDemandCache','WLOT_FILTER',
+  // Dos grupos de Cody y del Buy Planner reemplazan la sugerencia de compra y no la devolvían: el grupo de
+  // "sin producto en el mercado" necesita la real para ver que la compra queda en 0.
+  'invmBuySuggestion'
 ];
 var _PRISTINO = {};
 _PRISTINO_NOMBRES.forEach(function(n){ try { _PRISTINO[n] = eval(n); } catch (e) {} });
@@ -5697,6 +5700,199 @@ group('Un origen que se queda en cero no desaparece de las pantallas');
   check('una nota de crédito no cuenta como venta', invmOriginsFor('turmeric').join(','), 'Fiji');
 })();
 } catch (_e) { ok('orígenes en cero no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
+// ═══ Una línea sin producto en el mercado ═══════════════════════════════════
+// Juan, 2026-09-15: "imagínate que no hubo jengibre de Perú por tres meses… vas a promediar lo último de la
+// parte final de la campaña con el inicio". La regla acordada: las semanas sin producto no promedian; hasta
+// 6 semanas fuera se sigue el ritmo de antes; más de 6, el run-rate arranca de cero con la campaña nueva y
+// las primeras 4 semanas usa el estimado de arranque. Y mientras no hay producto, nadie sugiere comprar.
+try {
+group('Sin producto en el mercado · las marcas y la regla de 6 semanas');
+(function(){
+  var T = '2026-09-15';
+  check('ginger sin origen es la línea de Perú', mktLineKey('ginger'), 'ginger|Peru');
+  check('ginger-Hawaii es su propia línea', mktLineKey('ginger', 'Hawaii'), 'ginger|Hawaii');
+  check('turmeric se marca por origen', mktLineKey('turmeric', 'Hawaii'), 'turmeric|Hawaii');
+
+  var r = mktApply({}, 'turmeric', 'Hawaii', 'pause', { from:'2026-08-03', back:'2026-10-01' }, T);
+  ok('apagar guarda un período abierto', !r.error && r.map['turmeric|Hawaii'].length === 1 && r.map['turmeric|Hawaii'][0].to === '');
+  check('la vuelta esperada es solo un recordatorio', r.map['turmeric|Hawaii'][0].back, '2026-10-01');
+  ok('no se apaga dos veces', !!mktApply(r.map, 'turmeric', 'Hawaii', 'pause', {}, T).error);
+  ok('no se apaga con fecha futura', !!mktApply({}, 'turmeric', 'Hawaii', 'pause', { from:'2026-09-20' }, T).error);
+  ok('la línea marcada queda apagada', !!mktPauseActive('turmeric', 'Hawaii', T, r.map));
+  check('la otra línea del mismo producto no se entera', mktPauseActive('turmeric', 'Fiji', T, r.map), null);
+  check('antes de la fecha de inicio no está apagada', mktPauseActive('turmeric', 'Hawaii', '2026-08-01', r.map), null);
+
+  var corto = mktApply(r.map, 'turmeric', 'Hawaii', 'resume', { to:'2026-09-14' }, T);           // 42 días = 6 semanas justas
+  ok('hasta 6 semanas fuera no pide estimado', !corto.error);
+  var sinEst = mktApply(r.map, 'turmeric', 'Hawaii', 'resume', { to:T }, T);                     // 43 días
+  ok('más de 6 semanas fuera sin estimado no se acepta', !!sinEst.error && /6 weeks/.test(sinEst.error));
+  var largo = mktApply(r.map, 'turmeric', 'Hawaii', 'resume', { to:T, est:'13' }, T);
+  ok('con estimado sí', !largo.error && largo.map['turmeric|Hawaii'][0].est === 13);
+  ok('no puede volver antes de haberse ido', !!mktApply(r.map, 'turmeric', 'Hawaii', 'resume', { to:'2026-08-01' }, T).error);
+  var sacada = mktApply(r.map, 'turmeric', 'Hawaii', 'remove', {}, T);
+  ok('"marcado por error" borra la marca sin dejar restos', !sacada.error && !('turmeric|Hawaii' in sacada.map));
+  check('el estimado se puede corregir después', mktApply(largo.map, 'turmeric', 'Hawaii', 'estimate', { est:'20' }, T).map['turmeric|Hawaii'][0].est, 20);
+
+  var fA = mktWeekFilter('turmeric', 'Hawaii', r.map);
+  ok('apagada: desde que se fue, ninguna semana promedia', fA('2026-08-03') && fA('2026-09-14'));
+  ok('apagada: lo de antes sigue siendo su ritmo', !fA('2026-07-27'));
+  var fC = mktWeekFilter('turmeric', 'Hawaii', corto.map);
+  ok('corte corto: las semanas sin producto no promedian', fC('2026-08-03') && fC('2026-09-07'));
+  ok('corte corto: la semana anterior y la de la vuelta sí', !fC('2026-07-27') && !fC('2026-09-14'));
+  var fL = mktWeekFilter('turmeric', 'Hawaii', largo.map);
+  ok('corte largo: la campaña anterior entera queda fuera', fL('2026-07-27') && fL('2025-11-03'));
+  ok('corte largo: arranca de cero la semana en que volvió', !fL('2026-09-14') && !fL('2026-09-21'));
+  check('sin marcas no hay filtro: el modelo queda exactamente igual', mktWeekFilter('turmeric', 'Fiji', r.map), null);
+
+  check('recién vuelta de un corte largo manda el estimado', (mktStartEstimate('turmeric', 'Hawaii', '2026-09-16', largo.map) || {}).cases, 13);
+  check('las primeras 4 semanas', (mktStartEstimate('turmeric', 'Hawaii', '2026-09-16', largo.map) || {}).weeksLeft, 4);
+  check('a las dos semanas le quedan 2', (mktStartEstimate('turmeric', 'Hawaii', '2026-09-28', largo.map) || {}).weeksLeft, 2);
+  check('con 4 semanas propias manda el run-rate real', mktStartEstimate('turmeric', 'Hawaii', '2026-10-12', largo.map), null);
+  check('tras un corte corto no hay estimado: sigue el ritmo de antes', mktStartEstimate('turmeric', 'Hawaii', '2026-09-16', corto.map), null);
+})();
+} catch (_e) { ok('las marcas de mercado no tiran excepción: ' + ((_e && _e.message) || _e), false); }
+
+try {
+group('Sin producto en el mercado · el run-rate no promedia los ceros de cuando no había');
+(function(){
+  var DIA = 86400000;
+  var lunes = function(n){ return dmWeekKey(new Date(Date.now() - n*7*DIA)); };
+  var mas = function(iso, n){ return dmISOLocal(new Date(new Date(iso + 'T12:00:00').getTime() + n*DIA)); };
+  var fila = function(iso, lbs){ return { d:iso, prod:'turmeric', oitem:'Hawaii', c:'WHOLE FOODS', lbs:lbs, units:lbs/30, type:'Sale' }; };
+  // 8 semanas vendiendo 10 cs; después 6 sin producto (con UNA caja suelta); el export llega a la semana pasada.
+  var raw = [];
+  for (var i = 14; i >= 7; i--) raw.push(fila(mas(lunes(i), 1), 300));
+  raw.push(fila(mas(lunes(5), 2), 30));
+  dmGlobalDataMax = function(){ return mas(lunes(1), 5); };
+  COMMITTED = [];
+  var pone = function(map){ _lastPushedSettings['marketPauses'] = map ? JSON.stringify(map) : undefined; };
+
+  pone(null);
+  var sin = dmBuildModel(raw, false, 30, 'turmeric', 'Hawaii');
+  check('sin marca promedia los ceros: (8×10 + 1) ÷ 13', Math.round(sin.runRate13 / 30 * 10) / 10, 6.2);
+
+  pone({ 'turmeric|Hawaii':[{ from:lunes(6), to:'', back:'', est:null }] });
+  var m = dmBuildModel(raw, false, 30, 'turmeric', 'Hawaii');
+  check('apagada: el run-rate es el ritmo de cuando había producto', Math.round(m.runRate13 / 30), 10);
+  check('en todas las ventanas', Math.round(m.runRate3 / 30) + '/' + Math.round(m.runRate6 / 30), '10/10');
+  ok('las semanas sin producto no están entre las que promedian', m.rateWeeks.indexOf(lunes(5)) < 0 && m.weeklyReliable.every(function(w){ return w.week < lunes(6); }));
+  ok('pero se siguen mostrando', m.weekly.some(function(w){ return w.week === lunes(5); }) && m.marketOffWeeks.indexOf(lunes(5)) > -1);
+  var wf = (m.customers || []).filter(function(c){ return c.c === 'WHOLE FOODS'; })[0] || {};
+  check('la fila del cliente promedia las mismas semanas que el total', Math.round((wf.rrLbs || 0) / 30), 10);
+  check('otro origen no se entera de la marca', Math.round(dmBuildModel(raw, false, 30, 'turmeric', 'Fiji').runRate13 / 30 * 10) / 10, 6.2);
+
+  // Corte largo: vuelve la semana pasada con un estimado. Lo de antes no se mezcla con la campaña nueva.
+  pone({ 'turmeric|Hawaii':[{ from:lunes(14), to:mas(lunes(1), 0), back:'', est:12 }] });
+  var nuevo = dmBuildModel(raw.concat([fila(mas(lunes(1), 1), 90)]), false, 30, 'turmeric', 'Hawaii');
+  check('corte largo: sin semanas nuevas cerradas la tasa es 0, no el final de la campaña vieja', nuevo.runRate13, 0);
+  ok('y no vuelve a promediar todo el historial', nuevo.rateWeeks.length === 0);
+
+  // El completado de las últimas semanas no rellena con ceros las semanas sin producto.
+  var raw2 = raw.filter(function(r){ return r.lbs === 300; }).concat([fila(mas(lunes(3), 1), 300), fila(mas(lunes(2), 1), 300)]);
+  pone({ 'turmeric|Hawaii':[{ from:lunes(6), to:lunes(3), back:'', est:null }] });
+  COMMITTED = [{ type:'inv', wk:lunes(1), customer:'WHOLE FOODS', cases:10, prod:'turmeric', origin:'Hawaii' }];
+  var base = dmBuildModel(raw2, false, 30, 'turmeric', 'Hawaii');
+  var nc = nowcastProductModel(base, 'turmeric', 'Hawaii');
+  ok('el completado agregó la semana con órdenes', nc.rateWeeks.indexOf(lunes(1)) > -1);
+  ok('y no rellenó con ceros las semanas sin producto', nc.rateWeeks.indexOf(lunes(5)) < 0 && nc.rateWeeks.indexOf(lunes(4)) < 0);
+  check('corte corto: sigue el ritmo de antes', Math.round(nc.runRate13 / 30), 10);
+  // Apagada todavía, con una orden reservada en una semana sin producto: esa semana no se "completa".
+  pone({ 'turmeric|Hawaii':[{ from:lunes(6), to:'', back:'', est:null }] });
+  var abierta = nowcastProductModel(dmBuildModel(raw, false, 30, 'turmeric', 'Hawaii'), 'turmeric', 'Hawaii');
+  ok('una orden en una semana sin producto no la completa', !(abierta.nowcastWeeks || {})[lunes(1)] && abierta.rateWeeks.indexOf(lunes(1)) < 0);
+  check('y el ritmo sigue siendo el de cuando había', Math.round(abierta.runRate13 / 30), 10);
+  COMMITTED = [];
+
+  // La variabilidad (que dimensiona el colchón) tampoco mira las semanas sin producto: sus ceros lo inflarían al volver.
+  localStorage = { getItem: function(k){ return k === 'jlz_demand_raw' ? JSON.stringify(raw) : null; } };
+  getOrders = function(){ return []; };
+  pone({ 'turmeric|Hawaii':[{ from:lunes(6), to:'', back:'', est:null }] });
+  var sw = invmStockableWeekly('turmeric', 'Hawaii');
+  ok('la serie de la variabilidad no trae las semanas sin producto', sw.length === 8 && sw.every(function(w){ return w.lbs === 300; }));
+  pone(null);
+  check('sin marca las trae, con sus ceros', invmStockableWeekly('turmeric', 'Hawaii').length, 10);
+})();
+} catch (_e) { ok('el run-rate con marcas no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
+try {
+group('Sin producto en el mercado · nadie sugiere comprar');
+(function(){
+  var DIA = 86400000, hoy = dmISOLocal(new Date());
+  var hace = function(n){ return dmISOLocal(new Date(Date.now() - n*DIA)); };
+  PRODUCTS = { turmeric:{ label:'Turmeric', caseLb:30, shrinkPct:0, suppliers:[
+    { name:'Sbimal LLC', origin:'Fiji', mode:'air', leadDays:10 }, { name:'Kailani', origin:'Hawaii', mode:'air', leadDays:14 } ] } };
+  var STATS = { p:'turmeric', label:'Turmeric', caseLb:30, shrinkPct:0, origin:'Hawaii',
+                availCases:20, incomingCases:0, excludedCases:0, leadWks:2, safetyWks:2, targetWks:4, win:3 };
+  invmProductStats    = function(){ return STATS; };
+  invmProductModel    = function(){ return { caseLb:30, runRate3:30*30, runRate6:30*30, runRate13:30*30, runRate26:30*30 }; };
+  invmProductArrivals = function(){ return {}; };
+  _lastPushedSettings['marketPauses'] = undefined;
+  var g0 = invmBuySuggestion('turmeric', 'Hawaii');
+  ok('con producto, la cuenta pide comprar', g0 && g0.buy > 0);
+  _lastPushedSettings['marketPauses'] = JSON.stringify({ 'turmeric|Hawaii':[{ from:hace(20), to:'', back:'', est:null }] });
+  var g = invmBuySuggestion('turmeric', 'Hawaii');
+  check('sin producto en el mercado, la compra sugerida es 0', g.buy, 0);
+  check('la cuenta queda a la vista, sin mandar', g.buyIfAvailable, g0.buy);
+  ok('y dice desde cuándo', g.paused && g.paused.from === hace(20));
+  check('el único número de compra también da 0', invmOrderCases('turmeric', 'Hawaii'), 0);
+  var h = invmBuySuggestionHTML('turmeric', 'Hawaii', {});
+  ok('la tarjeta no manda a comprar', h.indexOf('No buy suggestion') > -1 && h.indexOf('Buy <b>') < 0);
+  var bar = mktControlHTML('turmeric', 'Hawaii');
+  ok('la barra dice que no hay y cómo volver', bar.indexOf('not available in the market') > -1 && bar.indexOf('It is back in the market') > -1);
+  ok('y lleva la nota de la regla, para acordarse', bar.indexOf('6 weeks') > -1 && bar.indexOf('4 weeks') > -1);
+  ok('una línea con producto solo muestra el botón para marcarla', mktControlHTML('turmeric', 'Fiji').indexOf('Mark as not available in the market') > -1);
+
+  _lastPushedSettings['marketPauses'] = JSON.stringify({ 'turmeric|Hawaii':[{ from:hace(100), to:hace(2), back:'', est:15 }] });
+  ok('recién vuelta: la barra dice que usa el estimado', mktControlHTML('turmeric', 'Hawaii').indexOf('starting estimate of <b>15 cases a week</b>') > -1);
+  _lastPushedSettings['marketPauses'] = JSON.stringify({ 'ginger|Peru':[{ from:hace(100), to:hace(2), back:'', est:700 }] });
+  productCaseLb = function(){ return 30; };
+  check('ginger-Perú recién vuelto: el plan usa el estimado', dmEffectiveRunRateLbs(), 700 * 30);
+
+  // Los otros productos: el estimado entra como la demanda de la línea mientras dure, y lo escrito a mano le gana.
+  PRODUCTS.turmeric.suppliers = [{ name:'Kailani', origin:'Hawaii', mode:'air', leadDays:14 }];
+  var ovrMano = null;
+  prodInvFor          = function(){ return { serviceLevel:95, demandOverride:ovrMano, shrinkPct:0, lots:[] }; };
+  invmProductStats    = _PRISTINO['invmProductStats'];
+  invmOriginsFor      = function(){ return ['Hawaii']; };
+  dmWindow            = function(){ return 3; };
+  prodCommittedTotal  = function(){ return 0; };
+  mtoCasesPerWeek     = function(){ return 0; };
+  stockSnapRecord     = function(){};
+  cmUnbilled          = function(){ return { held:0, lines:[] }; };
+  invmStockableWeekly = function(){ return []; };
+  invmProductModel    = function(){ return { caseLb:30, runRate3:0, runRate6:0, runRate13:0, runRate26:0, weeklyReliable:[] }; };
+  _lastPushedSettings['marketPauses'] = JSON.stringify({ 'turmeric|Hawaii':[{ from:hace(100), to:hace(2), back:'', est:15 }] });
+  var se = invmProductStats('turmeric', 'Hawaii');
+  check('recién vuelta: la demanda de la línea es el estimado', Math.round(se.weeklyCases), 15);
+  ok('y lo dice, para que no parezca un número a mano', !!se.startEstimate && se.startEstimate.cases === 15);
+  ovrMano = 9;
+  check('un número escrito a mano le gana al estimado', Math.round(invmProductStats('turmeric', 'Hawaii').weeklyCases), 9);
+
+  // ginger-Perú apagado: la tarjeta del Buy Planner no manda a comprar contenedores.
+  var hg = bpGingerSuggestionHTML({ rec:{ containers:1, perContainer:1320 }, coverage:3, weeklyDemand:800, stockCases:2600,
+                                    paused:{ from:hace(10), to:'' } });
+  ok('la tarjeta de ginger tampoco', hg.indexOf('No buy suggestion') > -1 && hg.indexOf('container') < 0);
+})();
+} catch (_e) { ok('la compra con marcas no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
+try {
+group('Sin producto en el mercado · el precorreo de Cody lo dice');
+(function(){
+  var lines = [
+    { id:'turmeric|Fiji', p:'turmeric', name:'Turmeric', origin:'Fiji', unit:'cases', lb:30, sug:100, orderBy:'2026-09-18', arrive:'2026-09-28', supIdx:0, suppliers:[{ name:'Sbimal LLC' }] },
+    { id:'turmeric|Hawaii', p:'turmeric', name:'Turmeric', origin:'Hawaii', unit:'cases', lb:30, sug:0, paused:true, supIdx:0, suppliers:[{ name:'Kailani' }] },
+    { id:'garlic|California', p:'garlic', name:'Garlic', origin:'California', unit:'cases', lb:30, sug:0, supIdx:0, suppliers:[{ name:'Christopher Ranch' }] }
+  ];
+  var st = {}; lines.forEach(function(l){ st[l.id] = { qty:l.sug, supIdx:0, arrive:l.arrive, note:'' }; });
+  var m = codyEmailText(lines, st, 'Juan', '2026-09-16T12:00:00');
+  ok('lo que no hay en el mercado va aparte', /Not available in the market right now: turmeric \(Hawaii\)\./.test(m.body));
+  ok('y no como "nada que pedir"', /Nothing needed on garlic \(California\) this week/.test(m.body) && !/Nothing needed on turmeric \(Hawaii\)/.test(m.body));
+  st['turmeric|Fiji'].qty = 0;
+  var m0 = codyEmailText(lines, st, 'Juan', '2026-09-16T12:00:00');
+  ok('sin nada que pedir, también lo dice', /Nothing to order this week/.test(m0.body) && /Not available in the market right now: turmeric \(Hawaii\)/.test(m0.body));
+})();
+} catch (_e) { ok('Cody con marcas no tira excepción: ' + ((_e && _e.message) || _e), false); }
 
 // ═══ El entorno se limpia entre grupos ══════════════════════════════════════
 // Guardián del arreglo de arriba. Si alguien saca la restauración de `group()`, esto falla y

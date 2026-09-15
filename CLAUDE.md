@@ -30,6 +30,13 @@ entenderse sin explicación** — es el criterio de diseño #1, siempre.
 - **El inventario de los cinco productos se carga igual: las cajas BRUTAS** (físicas, incluidas
   las reservadas) y la app resta el committed. Hasta 2026-09-03 ginger-Perú era al revés —
   guardaba el libre y la app sumaba— por herencia, no por diseño. No lo vuelvas a separar.
+- **Una línea no disponible en el mercado no tiene demanda cero.** Se marca por producto + origen
+  ("Mark as not available in the market", en Buy Planner y Simulator); mientras dura, nada sugiere
+  comprarla y sus semanas se muestran pero **no promedian**. Al volver: hasta **6 semanas** fuera, el
+  plan sigue el ritmo de antes; **más de 6 semanas**, el run-rate arranca de cero con la campaña
+  nueva —nunca promedia el final de la campaña anterior con el inicio de la nueva— y las primeras
+  **4 semanas** usa el estimado de arranque que se carga al reactivar. Acordado con Juan el
+  2026-09-15: no cambiar esos números sin hablarlo con él. Lo cuida `tests/market-pause-guard.py`.
 - `localStorage` es por dispositivo — History no sincroniza solo por abrir el
   archivo en otra máquina.
 
