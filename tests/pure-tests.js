@@ -5672,6 +5672,32 @@ group('Reempaques · estado y línea de tiempo de cada W-lot');
 })();
 } catch (_e) { ok('estado de reempaques no tira excepción: ' + ((_e && _e.message) || _e), false); }
 
+try {
+group('Un origen que se queda en cero no desaparece de las pantallas');
+// Juan, 2026-09-15: "¿por qué no figura el turmeric de Hawaii incluso si es cero?". La lista de orígenes salía
+// solo de los lotes con cajas: al venderse el último lote, Hawaii se borraba de Inventory, Buy Planner,
+// Simulator y el precorreo de Cody, mientras Whole Foods seguía comprando.
+(function(){
+  var hace = function(d){ return dmISOLocal(new Date(Date.now() - d*86400000)); };
+  PRODUCTS = { turmeric:{ caseLb:30, suppliers:[{ name:'Sbimal LLC', origin:'Fiji' }, { name:'Crown Pacific LLC', origin:'Hawaii' }, { name:'Kailani', origin:'Hawaii' }] },
+               shallots:{ caseLb:50, suppliers:[{ name:'Peri & Sons', origin:'AZ / NV' }] },
+               ginger:  { caseLb:30, suppliers:[{ name:'Anawi', origin:'Peru' }, { name:'Crown Pacific LLC', origin:'Hawaii' }] } };
+  prodInvFor = function(p){ return { lots: p === 'turmeric' ? [{ origin:'Fiji', cases:10 }] : p === 'ginger' ? [{ origin:'Hawaii', cases:2 }] : [{ origin:'California', cases:5 }] }; };
+  _invmOrigDemandCache = { key:'', val:[] };
+  _dmRawAll = [ { prod:'turmeric', type:'Sale', d:hace(20), oitem:'Hawaii' },
+                { prod:'shallots', type:'Sale', d:hace(5),  oitem:'California' },
+                { prod:'ginger',   type:'Sale', d:hace(3),  oitem:'Peru' } ];
+  check('turmeric: Fiji por sus lotes y Hawaii por proveedor + ventas', invmOriginsFor('turmeric').join(','), 'Fiji,Hawaii');
+  check('el origen con lotes sigue primero: la vista por defecto no cambia', invmOriginsFor('turmeric')[0], 'Fiji');
+  check('shallots: un proveedor sin ventas de ese origen no agrega solapa', invmOriginsFor('shallots').join(','), 'California');
+  check('ginger no cambia: su Perú vive en otro store', invmOriginsFor('ginger').join(','), 'Hawaii');
+  _dmRawAll = [ { prod:'turmeric', type:'Sale', d:hace(200), oitem:'Hawaii' } ];
+  check('sin ventas en 6 meses, el origen en cero no vuelve', invmOriginsFor('turmeric').join(','), 'Fiji');
+  _dmRawAll = [ { prod:'turmeric', type:'CREDIT', d:hace(10), oitem:'Hawaii' } ];
+  check('una nota de crédito no cuenta como venta', invmOriginsFor('turmeric').join(','), 'Fiji');
+})();
+} catch (_e) { ok('orígenes en cero no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
 // ═══ El entorno se limpia entre grupos ══════════════════════════════════════
 // Guardián del arreglo de arriba. Si alguien saca la restauración de `group()`, esto falla y
 // dice por qué — en vez de que un test futuro mida un stub ajeno y nadie se entere.

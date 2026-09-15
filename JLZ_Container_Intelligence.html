@@ -15413,7 +15413,36 @@ function invmReRender(){
   if(spv && spv.style.display!=='none' && typeof renderSimulator==='function') renderSimulator();
 }
 // Distinct origins present in a product's on-hand lots (for the origin sub-filter).
-function invmOriginsFor(p){ var seen={}, out=[]; (prodInvFor(p).lots||[]).forEach(function(l){ var o=(l.origin||'').trim(); if(o && !seen[o]){ seen[o]=1; out.push(o); } }); return out; }
+function invmOriginsFor(p){
+  var seen={}, out=[];
+  (prodInvFor(p).lots||[]).forEach(function(l){ var o=(l.origin||'').trim(); if(o && !seen[o]){ seen[o]=1; out.push(o); } });
+  // ── Un origen que se queda en cero NO desaparece (Juan, 2026-09-15) ─────────────────────────────
+  // La lista salía solo de los lotes con cajas: cuando se vendió el último lote de turmeric-Hawaii, el
+  // import lo sacó y Hawaii se borró de Inventory, Buy Planner, Simulator y el precorreo de Cody —
+  // mientras Whole Foods seguía comprando 13-33 cs/sem. Un producto que se agota se escondía solo.
+  // Ahora también entra el origen que tiene proveedor cargado Y ventas en los últimos 6 meses. Van
+  // después de los que tienen lotes, así el origen por defecto de cada vista no cambia. Ginger no: su
+  // Perú vive en otro store y tiene su propia barra de orígenes.
+  if(p!=='ginger') invmOriginsWithDemand(p).forEach(function(o){ if(!seen[o]){ seen[o]=1; out.push(o); } });
+  return out;
+}
+var _invmOrigDemandCache = { key: '', val: [] };
+function invmOriginsWithDemand(p){
+  var sup=(((typeof PRODUCTS==='object'&&PRODUCTS&&PRODUCTS[p])||{}).suppliers)||[], origins=[];
+  sup.forEach(function(s){ var o=String((s&&s.origin)||'').trim(); if(o && origins.indexOf(o)<0) origins.push(o); });
+  var rows=(typeof _dmRawAll!=='undefined' && Array.isArray(_dmRawAll)) ? _dmRawAll : [];
+  if(!origins.length || !rows.length) return [];
+  var desde=(typeof dmISOLocal==='function') ? dmISOLocal(new Date(Date.now()-182*86400000)) : new Date(Date.now()-182*86400000).toISOString().slice(0,10);
+  // Se llama muchas veces por pantalla: se recalcula solo si cambian las ventas, el día o los proveedores.
+  var key=p+'|'+rows.length+'|'+desde+'|'+origins.join(',');
+  if(_invmOrigDemandCache.key===key) return _invmOrigDemandCache.val.slice();
+  var val=origins.filter(function(o){
+    return rows.some(function(r){ return r && (r.prod||'ginger')===p && r.type==='Sale' && r.d>=desde
+                                   && (typeof invmOriginMatch==='function') && invmOriginMatch(r, o); });
+  });
+  _invmOrigDemandCache={ key: key, val: val };
+  return val.slice();
+}
 function invmOriginMatch(r,origin){
   if(!origin||origin==='all') return true;
   var prod=r&&r.prod, ro;

@@ -126,6 +126,11 @@ if m and "(s.origins||[]).indexOf(r.origin)<0" in m.group(1):
     ok('los reempaques de un origen sin solapa propia igual se muestran (linea plegada)')
 else:
     bad('invmRenderProduct solo muestra el origen elegido: los reempaques de un origen sin solapa quedan invisibles')
+_of = re.search(r'function invmOriginsFor\(p\)\{(.*?)\n\}', src, re.S)
+if _of and 'invmOriginsWithDemand(' in _of.group(1):
+    ok('un origen en cero con proveedor y ventas no desaparece de las pantallas (turmeric-Hawaii)')
+else:
+    bad('invmOriginsFor volvio a salir solo de los lotes: un origen agotado se esconde solo')
 for fn, needle, what in [('invrConfirm', 'WLOT_SNAP_LS', 'el import de inventario guarda la foto de los reempaques'),
                          ('dmcImportFile', 'wlotOrderLines(', 'el import del Unshipped guarda la orden de cada W-lot'),
                          ('dmParseWorkbook', "r['Lot Number']", 'la carga de ventas guarda el lote de cada venta')]:
