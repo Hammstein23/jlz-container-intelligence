@@ -15574,7 +15574,7 @@ function mktControlHTML(p, origin){
       + (act.back ? (' &middot; expected back ' + libEsc(_mktDay(act.back)) + (act.back < today ? ' (that date passed)' : '')) : '')
       + ' &middot; no buy suggestion while it is off'
       + '<div style="font-size:11px;margin-top:3px;line-height:1.45">' + MKT_RULE_NOTE + '</div></div>'
-      + btn('It is back in the market', 'resume') + '</div>';
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap">' + btn('Change dates', 'edit') + btn('It is back in the market', 'resume') + '</div></div>';
   }
   if(est){
     return '<div class="mkt-bar" data-state="restart" style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:9px 12px;margin:0 0 12px;color:#1E40AF">'
@@ -15588,13 +15588,19 @@ function mktControlHTML(p, origin){
 // La tarjeta de compra de una línea apagada: no sugiere nada; dice desde cuándo y cuánto dura lo que hay.
 function mktPausedCardHTML(pz, coverWks, availCases, incomingCases){
   var f = function(n){ return Math.round(n || 0).toLocaleString('en-US'); };
-  var cov = (coverWks == null) ? '' : (!isFinite(coverWks) ? 'no sales to cover' : ((Math.round(coverWks * 10) / 10).toFixed(1) + ' weeks of cover'));
+  // Sin nada en cámara ni en camino, "0.0 weeks of cover from 0 cases" dice lo mismo peor: se dice que no hay stock.
+  var stock = (!(availCases > 0) && !(incomingCases > 0)) ? 'no stock on hand'
+    : (coverWks == null) ? ''
+    : ((!isFinite(coverWks) ? 'no sales to cover' : ((Math.round(coverWks * 10) / 10).toFixed(1) + ' weeks of cover'))
+       + ' from ' + f(availCases) + ' cases' + (incomingCases > 0 ? (' + ' + f(incomingCases) + ' on the way') : ''));
   return '<div class="mkt-paused-card" style="margin:0 0 12px;padding:10px 12px;border-radius:8px;background:var(--gray-50);border:1px solid var(--gray-200);color:var(--gray-700);font-size:12px;font-family:var(--fb);line-height:1.5">'
     + '<b>No buy suggestion</b> &mdash; not available in the market since ' + libEsc(_mktDay(pz && pz.from))
-    + (cov ? (' &middot; ' + cov + ' from ' + f(availCases) + ' cases' + (incomingCases > 0 ? (' + ' + f(incomingCases) + ' on the way') : '')) : '')
+    + (stock ? (' &middot; ' + stock) : '')
     + '</div>';
 }
 var _mktCtx = null;
+// Juan marcó turmeric-Hawaii con la fecha que venía puesta (hoy) cuando las ventas ya estaban cortadas desde agosto.
+var MKT_FROM_HINT = 'The day it really ran out, even if that was weeks ago: from that week on, sales do not count in the run-rate.';
 function mktOpen(p, origin, mode){
   if(typeof document === 'undefined') return;
   _mktCtx = { p: p, origin: origin, mode: mode };
@@ -15606,8 +15612,14 @@ function mktOpen(p, origin, mode){
   if(mode === 'pause'){
     title = 'Mark ' + lbl + ' as not available in the market';
     cta = 'Mark as not available';
-    body = fila('Not available since', inp('mkt-from', 'date', today, 'max="' + today + '"'))
+    body = fila('Not available since', inp('mkt-from', 'date', today, 'max="' + today + '"'), MKT_FROM_HINT)
          + fila('Expected back (optional)', inp('mkt-back', 'date', ''), 'Only a reminder. Nothing turns back on by itself.');
+  } else if(mode === 'edit'){
+    // La fecha de inicio decide qué semanas no promedian y cuándo se cumplen las 6 semanas: se tiene que poder corregir.
+    title = 'Change the dates for ' + lbl;
+    cta = 'Save dates';
+    body = fila('Not available since', inp('mkt-from', 'date', act ? act.from : today, 'max="' + today + '"'), MKT_FROM_HINT)
+         + fila('Expected back (optional)', inp('mkt-back', 'date', act ? act.back : ''), 'Only a reminder. Nothing turns back on by itself.');
   } else {
     var estNow = mktStartEstimate(p, origin), ref = act ? mktRefRate(p, origin, act.from) : null;
     title = (mode === 'estimate') ? ('Starting estimate for ' + lbl) : (lbl + ' is back in the market');
@@ -15673,6 +15685,14 @@ function mktApply(map, p, origin, mode, v, today){
     if(!open) return { error: 'It is not marked as not available.' };
     map[key] = list.filter(function(z){ return z !== open; });
     if(!map[key].length) delete map[key];
+    return { map: map };
+  }
+  if(mode === 'edit'){
+    if(!open) return { error: 'It is not marked as not available.' };
+    var nf = ok.test(v.from || '') ? v.from : open.from;
+    if(nf > today) return { error: 'The date cannot be in the future.' };
+    open.from = nf;
+    open.back = ok.test(v.back || '') ? v.back : '';
     return { map: map };
   }
   var est = parseFloat(v.est);
