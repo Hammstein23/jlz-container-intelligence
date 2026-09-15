@@ -15285,6 +15285,12 @@ function invmLots(m,t){
       + '. <b>+Days</b> auto from FEFO depletion at your demand &mdash; switch to Manual to override any lot. <em>Expires</em> = arrival + '+m.shelf+'d shelf life.</div>';
   h+='<div class="invm-bar" style="margin-bottom:12px"><div class="invm-grp"><label>+Days</label><div class="invm-toggle"><button id="invm-d-auto" class="'+(INVM_DAYSMODE==='auto'?'on':'')+'" onclick="invmSetDays(\'auto\')">Auto (FEFO)</button><button id="invm-d-man" class="'+(INVM_DAYSMODE==='manual'?'on':'')+'" onclick="invmSetDays(\'manual\')">Manual</button></div></div><div class="invm-grp" style="margin-left:auto"><select class="invm-add" onchange="invmAddLot(this)">'+invmAddOptions()+'</select></div></div>';
 
+  // Lotes viejos para revisar: proveedor más de 45 días, reempaque más de 20 (invmReviewOld).
+  var _revOld=function(l){ return (+l.cases||0)>0 && typeof invmReviewOld==='function' && invmReviewOld(l.stored, l.repack?'repack':'supplier'); };
+  var _revMark=function(l){
+    if(!_revOld(l)) return '';
+    return '<span style="display:inline-block;width:100%">'+invmReviewPillHTML(l.stored, l.repack?'repack':'supplier')+(l.repack?'':invmReviewHintHTML(false))+'</span>';
+  };
   var _fila=function(l){
     var shC=l.shrink>15?'#ea580c':l.shrink>10?'#d97706':'#16a34a';
     var mgC=l.margin<0?'#dc2626':l.margin<m.tmar*100?'#d97706':'#16a34a';
@@ -15292,11 +15298,11 @@ function invmLots(m,t){
     var zl=l.zone==='under'?'UNDERWATER':l.zone;
     return '<tr>'+
       '<td class="l"><span class="invm-po">'+l.po+'</span>'+(l.directShip>0?'<br><span style="font-size:9px;font-family:var(--fm);color:#6d28d9;background:#ede9fe;padding:1px 5px;border-radius:99px;white-space:nowrap" title="Cross-dock: shipped supplier → customer, never entered the warehouse — not counted as stock or shrink">'+invmF(l.directShip)+' cs cross-docked</span>':'')
-        +((l.repack && _wIdx[l.po] && typeof wlotBadgeHTML==='function') ? wlotBadgeHTML('ginger', _wIdx[l.po]) : '')+'</td>'+
+        +((l.repack && _wIdx[l.po] && typeof wlotBadgeHTML==='function') ? wlotBadgeHTML('ginger', _wIdx[l.po]) : '')+_revMark(l)+'</td>'+
       '<td class="l"><span class="invm-supn">'+l.sup+'</span></td>'+
       '<td class="l"><span class="invm-mc '+l.mode+'">'+(l.mode==='repack'?'REPACK':(l.mode==='air'?'AIR':'SEA'))+'</span></td>'+
       '<td class="invm-muted">'+(invmFmtDate(l.received)||'&mdash;')+'</td>'+
-      '<td>'+l.stored+'d</td><td class="invm-muted">in '+l.expDays+'d</td>'+
+      '<td'+(_revOld(l)?' style="color:#155e75;font-weight:700"':'')+'>'+l.stored+'d</td><td class="invm-muted">in '+l.expDays+'d</td>'+
       '<td><input class="invm-cin" type="number" value="'+l.cases+'" onchange="invmSetCases(\''+l.id+'\',this.value)"></td>'+
       '<td>'+addCell+'</td><td><b>'+Math.round(l.total)+'d</b></td>'+
       '<td class="invm-muted">'+l.coverDays.toFixed(1)+'d</td>'+
@@ -15308,15 +15314,19 @@ function invmLots(m,t){
     '</tr>';
   };
   var _minAge=(typeof invmLotFilter==='function')?invmLotFilter('ginger-peru'):0;
-  var _tabla=function(lots, titulo, nota){
+  var _revScope='ginger|Peru', _revOn=(typeof invmReviewFilterOf==='function')?invmReviewFilterOf(_revScope):{};
+  var _tabla=function(lots, titulo, nota, kind){
     var _vis=(typeof invmFilterLots==='function')?invmFilterLots(lots,_minAge):lots;
     var _esc=lots.length-_vis.length;
+    var _escRev=0;
+    if(kind && _revOn[kind]){ var _n0=_vis.length; _vis=_vis.filter(_revOld); _escRev=_n0-_vis.length; }
     var ord=(typeof invmSortLots==='function')?invmSortLots(_vis,_sg):_vis;
     var cs=ord.reduce(function(t,l){ return t+(+l.cases||0); },0);
     var at=ord.reduce(function(t,l){ return t+(+l.atCs||0); },0);
     var edad=cs>0?Math.round(ord.reduce(function(t,l){ return t+((+l.stored||0)*(+l.cases||0)); },0)/cs):0;
     return '<div class="invm-lead" style="margin-top:14px"><b>'+titulo+'</b> &middot; <span style="font-weight:400;color:var(--gray-500)">'+nota
-      + (_esc?(' &middot; '+_esc+' lot(s) hidden by the '+_minAge+'+ day filter'):'')+'</span></div>'
+      + (_esc?(' &middot; '+_esc+' lot(s) hidden by the '+_minAge+'+ day filter'):'')
+      + (_escRev?(' &middot; <span style="color:#155e75">'+_escRev+' lot(s) hidden by the review filter</span>'):'')+'</span></div>'
       + '<div class="invm-card"><div class="invm-tw"><table class="invm-table"><thead><tr>'
       + '<th class="l">PO</th><th class="l">Supplier</th><th class="l">Mode</th>'
       + _thO('received','Received') + _thO('stored','Stored') + '<th>Expires</th>' + _thO('cases','Cases')
@@ -15338,19 +15348,31 @@ function invmLots(m,t){
   var _wAct=(typeof wlotFilterOf==='function')?wlotFilterOf(_wScope):null;
   var _repVis=_wAct?_rep.filter(function(l){ return (_wIdx[l.po]||{}).tone===_wAct; }):_rep;
   h+=(typeof invmLotControlsHTML==='function') ? invmLotControlsHTML('ginger-peru',{value:true}) : '';
-  h+=_tabla(_prov,'Supplier lots','what the grower shipped you');
+  h+=(typeof invmReviewBoxHTML==='function') ? invmReviewBoxHTML(_revScope, invmReviewTally(invmReviewItems('ginger','Peru')), 'Ginger · Peru', 30) : '';
+  h+=_tabla(_prov,'Supplier lots','what the grower shipped you','supplier');
   h+=(typeof wlotTilesHTML==='function') ? wlotTilesHTML('ginger',_wRows,_wScope,_wCtx) : '';
   if(_rep.length) h+=_tabla(_repVis,'Repacked — River Road','already repacked by JLZ Produce Manufacturing · same cases, new presentation'
-    +(_wAct?(' · '+(_rep.length-_repVis.length)+' lot(s) hidden by the status filter'):''));
-  h+=(typeof wlotSmallPacksHTML==='function') ? wlotSmallPacksHTML('ginger',_wRows,_wScope,_rep.map(function(l){ return l.po; }),!_rep.length) : '';
+    +(_wAct?(' · '+(_rep.length-_repVis.length)+' lot(s) hidden by the status filter'):''),'repack');
+  h+=(typeof wlotSmallPacksHTML==='function')
+    ? wlotSmallPacksHTML('ginger', (_revOn.repack ? _wRows.filter(function(r){ return (+r.cases||0)>0 && invmReviewOld(r.days,'repack'); }) : _wRows),
+                         _wScope, _rep.map(function(l){ return l.po; }), (!_rep.length || !!_revOn.repack)) : '';
   h+='<div class="invm-lead" style="margin-top:10px;color:var(--gray-500);font-weight:400">Both tables are physically in the cooler and both count toward the <b>'+invmF(t.cases)+' cs</b> on hand.'
-    +(_wAct?' <span style="color:var(--amber-700)">The status filter is hiding repacked lots, so the tables above add up to less.</span>':'')+'</div>';
+    +(_wAct?' <span style="color:var(--amber-700)">The status filter is hiding repacked lots, so the tables above add up to less.</span>':'')
+    +((_revOn.supplier||_revOn.repack)?' <span style="color:#155e75">The review filter is hiding lots, so the tables above add up to less.</span>':'')+'</div>';
   return h;
 }
 function renderInventory(){
   var content=invmEl('invm-content'); if(!content) return;
   // Product selector: ginger keeps the rich module below; other products use the reorder view.
   (typeof ORDER_PRODUCTS!=='undefined'?ORDER_PRODUCTS:['ginger']).forEach(function(p){ var b=invmEl('invm-pt-'+p); if(b) b.classList.toggle('on', p===INVM_PRODUCT); });
+  // Cuántos lotes para revisar tiene cada producto, en su pestaña: se ven sin abrirlos uno por uno.
+  var _revC={}; try{ if(typeof invmReviewCounts==='function') _revC=invmReviewCounts(); }catch(e){}
+  (typeof ORDER_PRODUCTS!=='undefined'?ORDER_PRODUCTS:['ginger']).forEach(function(p){
+    var b=invmEl('invm-pt-'+p); if(!b) return;
+    var n=0; Object.keys(_revC).forEach(function(k){ if(k.indexOf(p+'|')===0) n+=(_revC[k]||0); });
+    var prev=b.querySelector('.invm-review-count'); if(prev) prev.parentNode.removeChild(prev);
+    if(n>0 && typeof invmReviewBadgeHTML==='function') b.insertAdjacentHTML('beforeend', invmReviewBadgeHTML(n));
+  });
   var tabsBar=document.querySelector('.invm-tabs'), barEl=document.querySelector('.invm-bar');
   var goBar=invmEl('invm-ginger-origin');
   if(INVM_PRODUCT!=='ginger'){
@@ -15366,7 +15388,7 @@ function renderInventory(){
   if(goBar){
     goBar.style.display='';
     goBar.innerHTML='<span style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-right:4px;font-family:var(--fb)">Origin</span>'
-      + ['Peru','Hawaii'].map(function(o){ return '<button class="invm-ptab'+(gOrig===o?' on':'')+'" onclick="invmSetOrigin(\''+o+'\')">'+o+'</button>'; }).join('');
+      + ['Peru','Hawaii'].map(function(o){ return '<button class="invm-ptab'+(gOrig===o?' on':'')+'" onclick="invmSetOrigin(\''+o+'\')">'+o+((typeof invmReviewBadgeHTML==='function')?invmReviewBadgeHTML(_revC['ginger|'+o]||0):'')+'</button>'; }).join('');
   }
   if(gOrig==='Hawaii'){
     if(tabsBar) tabsBar.style.display='none';
@@ -16043,7 +16065,10 @@ function wlotStatusRows(p, origin, ctx){
     var pk = wlotPackOf(l.sku), cs = +l.cases || 0;
     // Suma en el stock solo la caja de COMPRA (30 lb, saco de 50) y si no está marcada "excluded".
     var buy = (typeof invmCanonSku === 'function') && !!invmCanonSku(l.sku) && !excl[l.lot];
-    var row = { lot: l.lot, sku: l.sku, item: l.item || '', cases: cs, days: +l.days || 0, received: l.received || '',
+    // Los días salen de la FECHA del reempaque, igual que la marca de "old lots to review" (Juan, 2026-09-15):
+    // el "Days on Floor" de WholesaleWare no siempre coincide con ella (W2289A2223435: 137 contra ~160).
+    var _dias = (/^\d{4}-\d{2}-\d{2}$/.test(String(l.received || '')) && today) ? gap(l.received, today) : null;
+    var row = { lot: l.lot, sku: l.sku, item: l.item || '', cases: cs, days: (_dias != null ? Math.max(0, _dias) : (+l.days || 0)), received: l.received || '',
                 origin: org, pack: pk.label, packLb: pk.lb, caseLb: caseLb, inStock: buy,
                 bulkCases: (pk.lb ? Math.round(cs * pk.lb / caseLb * 10) / 10 : null),
                 customer: '', orderNo: '', due: '', tone: 'free', label: '', action: '', steps: [] };
@@ -16059,7 +16084,7 @@ function wlotStatusRows(p, origin, ctx){
       row.tone = 'bad'; row.label = 'Returned · still in inventory'; row.action = 'Zero the lot in WholesaleWare';
       row.steps = [rep, { label: 'Invoiced', state: 'done', when: day(sale.d) },
                    { label: 'Returned', state: 'bad', when: day(back.d) },
-                   { label: 'Still in inventory', state: 'bad', when: row.days + ' days on the floor' }];
+                   { label: 'Still in inventory', state: 'bad', when: row.days + ' days since repacked' }];
     } else if(sale){
       // Facturada. Si el conteo es de ANTES de facturar se va sola en el próximo import; si pasó más de una
       // semana y sigue, el almacén no la dio de baja.
@@ -16205,14 +16230,18 @@ function wlotSmallPacksHTML(p, rows, scope, tableLots, openWhenNoTable){
   if(!list.length) return '';
   var packs = []; list.forEach(function(r){ var k = r.pack || 'retail'; if(packs.indexOf(k) < 0) packs.push(k); });
   var need = list.filter(function(r){ return r.tone === 'bad' || r.tone === 'late' || r.tone === 'ship'; }).length;
+  var viejo = function(r){ return (+r.cases || 0) > 0 && typeof invmReviewOld === 'function' && invmReviewOld(r.days, 'repack'); };
+  var aRevisar = list.filter(viejo).length;
   var h = '<details class="wlot-small"' + ((act || openWhenNoTable) ? ' open' : '') + ' style="background:var(--white);border:1px solid var(--gray-200);border-radius:10px;margin:-6px 0 14px">'
     + '<summary style="cursor:pointer;padding:9px 14px;font-size:12px;color:var(--gray-600);font-family:var(--fb)"><b style="color:var(--gray-800)">'
     + list.length + ' repack' + (list.length === 1 ? '' : 's') + ' not counted in stock</b> &middot; ' + libEsc(packs.join(', '))
-    + (need ? (' &middot; <span style="color:#92400E;font-weight:600">' + need + ' need attention</span>') : '') + '</summary>';
+    + (need ? (' &middot; <span style="color:#92400E;font-weight:600">' + need + ' need attention</span>') : '')
+    + (aRevisar ? (' &middot; <span style="color:#155e75;font-weight:600">' + aRevisar + ' to review (over ' + INVM_REVIEW_DAYS.repack + ' days)</span>') : '') + '</summary>';
   list.forEach(function(r){
     h += '<div class="wlot-srow" style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;padding:7px 14px;border-top:1px solid var(--gray-100)">'
       + '<div style="font-size:12px;color:var(--gray-800)"><span style="font-family:var(--fm);font-size:11px;color:var(--gray-500)">' + libEsc(r.lot) + '</span> &middot; '
-      + f0(r.cases) + ' boxes of ' + libEsc(r.pack || r.sku) + (r.origin ? (' <span style="color:var(--gray-400)">(' + libEsc(r.origin) + ')</span>') : '') + '</div>'
+      + f0(r.cases) + ' boxes of ' + libEsc(r.pack || r.sku) + (r.origin ? (' <span style="color:var(--gray-400)">(' + libEsc(r.origin) + ')</span>') : '')
+      + (viejo(r) ? ('<br>' + invmReviewPillHTML(r.days, 'repack')) : '') + '</div>'
       + wlotBadgeHTML(p, r) + '</div>';
   });
   h += '</details>';
@@ -17288,6 +17317,177 @@ function invmFilterLots(lots, minAge){
   if(!minAge) return (lots||[]).slice();
   return (lots||[]).filter(function(l){ var d=invmLotAgeDays(l); return d==null || d>=minAge; });
 }
+// ── Lotes viejos para revisar (Juan, 2026-09-15) ────────────────────────────────────────────────
+// Juan: "cualquier cosa que tenga más de 45 días tiene que estar marcada para poder revisarlo". Un lote de
+// proveedor con MÁS de 45 días desde que se recibió y un reempaque River Road con MÁS de 20 desde que se
+// reempacó llevan una marca. Lo que decidió al ver el mockup, y no se cambia sin hablarlo con él:
+//   1. los días salen de la FECHA del lote (recepción o reempaque), no del "Days on Floor" de WholesaleWare,
+//      que no siempre coincide: W2289A2223435, reempacado el 08-abr, decía 137 días en vez de ~160;
+//   2. los restos de 1-2 cajas se marcan igual: suelen ser muestras;
+//   3. los mismos límites para los cinco productos (se van evaluando);
+//   4. un lote EXCLUIDO sigue marcado: excluir solo lo saca del disponible, y Juan quiere seguir viendo qué
+//      pasa con él hasta que se dé de baja en WholesaleWare y salga del Inventory Report;
+//   5. un reempaque que espera una orden todavía no despachada se marca igual: sirve para preguntar.
+// Es un recordatorio: no mueve stock ni compra, y no borra nada. El color es propio (cian) porque en el
+// Repack follow-up el ámbar ya dice "fulfillment vencido" y el rojo "corregir en WholesaleWare".
+var INVM_REVIEW_DAYS = { supplier: 45, repack: 20 };
+var INVM_REVIEW_FILTER = {};   // qué recuadro está filtrando en cada línea: { 'turmeric|Fiji': { supplier:true } }, por sesión
+var INVM_REVIEW_CLOCK = '<svg width="10" height="10" viewBox="0 0 16 16" aria-hidden="true" style="flex:none"><circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 4.6V8l2.3 1.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+function invmReviewOld(days, kind){
+  var lim = INVM_REVIEW_DAYS[kind === 'repack' ? 'repack' : 'supplier'];
+  return days != null && days !== '' && isFinite(days) && +days > lim;
+}
+// Los lotes de una línea tal como los muestra Inventory, cada uno con la edad que muestra su fila: los del
+// store con `bpDaysSince` (la columna Stored) y los reempaques que no suman en stock con la fecha de la foto,
+// igual que el Repack follow-up. Así el recuadro, las pestañas y el reporte del lunes cuentan lo que se ve.
+function invmReviewItems(p, origin){
+  var items = [], enTabla = {};
+  var dias = function(iso){ return (/^\d{4}-\d{2}-\d{2}/.test(String(iso || '')) && typeof bpDaysSince === 'function') ? bpDaysSince(iso) : null; };
+  var add = function(kind, lot, cases, days, excluded, eq){
+    var cs = parseFloat(cases) || 0;
+    if(cs > 0) items.push({ kind: kind, lot: String(lot == null ? '' : lot), cases: cs, eq: (eq === undefined ? cs : eq), days: days, excluded: !!excluded });
+  };
+  var line = (p === 'ginger') ? (origin === 'Hawaii' ? 'Hawaii' : 'Peru') : (origin || 'all');
+  if(p === 'ginger' && line === 'Peru'){
+    // ginger-Perú vive en su propio store, con la llave del PO; los reempaques son las filas 'W:'.
+    var rows = (((typeof bpInvState === 'function') ? bpInvState() : null) || {}).rows || {};
+    Object.keys(rows).forEach(function(id){
+      var r = rows[id] || {}, rp = r.repack;
+      if(rp){
+        var wl = String(rp.lot || rp.po || id);
+        if(+r.cases > 0){ enTabla[wl] = 1; add('repack', wl, r.cases, dias(rp.received), false); }
+        return;
+      }
+      var o = (typeof bpOrderById === 'function') ? bpOrderById(id) : null;
+      if(!o || o.downgraded) return;                    // huérfana o degradada: tampoco está en la tabla
+      var cs = (r.cases != null) ? r.cases
+             : Math.max(0, (parseFloat(o.cases) || 0) - ((typeof directShipTotal === 'function') ? (directShipTotal(o.jlzPo) || 0) : 0));
+      add('supplier', o.jlzPo || id, cs, dias((typeof bpEtaOf === 'function') ? bpEtaOf(o) : ''), false);
+    });
+  } else {
+    ((((typeof prodInvFor === 'function') ? prodInvFor(p) : null) || {}).lots || []).forEach(function(l){
+      if(!l || (line !== 'all' && !invmOriginMatch(l, line))) return;
+      var rep = (typeof invmIsRepackLot === 'function') && invmIsRepackLot(l);
+      if(rep) enTabla[String(l.lot)] = 1;
+      add(rep ? 'repack' : 'supplier', l.lot, l.cases, dias(l.received), l.excluded);
+    });
+  }
+  // Los reempaques que no suman en stock (5/10 lb, retail) salen de la foto del Inventory Report.
+  var snap = (typeof wlotLoadStore === 'function') ? wlotLoadStore(WLOT_SNAP_LS) : null;
+  var hoy = (typeof dmISOLocal === 'function') ? dmISOLocal(new Date()) : new Date().toISOString().slice(0, 10);
+  var cl = (typeof productCaseLb === 'function') ? (productCaseLb(p) || 30) : 30;
+  ((snap && snap.lots) || []).forEach(function(l){
+    if(!l || l.product !== p || enTabla[String(l.lot)]) return;
+    if(line !== 'all' && ooOriginFromSku(l.sku, p) !== line) return;
+    var pk = (typeof wlotPackOf === 'function') ? wlotPackOf(l.sku) : { lb: null };
+    var d = /^\d{4}-\d{2}-\d{2}$/.test(String(l.received || ''))
+      ? Math.max(0, Math.round((new Date(hoy + 'T12:00:00') - new Date(l.received + 'T12:00:00')) / 86400000)) : null;
+    add('repack', l.lot, l.cases, d, false, pk.lb ? Math.round((parseFloat(l.cases) || 0) * pk.lb / cl * 10) / 10 : null);
+  });
+  return items;
+}
+// Cuántos lotes para revisar hay por tipo. Los reempaques también en su equivalente de la caja de compra,
+// convertido por peso: sumar cajas de 10 lb con cajas de 30 no dice cuánto producto es.
+function invmReviewTally(items){
+  var t = { supplier: { n: 0, cs: 0, ex: 0 }, repack: { n: 0, cs: 0, eq: 0, ex: 0 } };
+  (items || []).forEach(function(it){
+    if(!it || !(it.cases > 0) || !invmReviewOld(it.days, it.kind)) return;
+    var g = (it.kind === 'repack') ? t.repack : t.supplier;
+    g.n++; g.cs += it.cases; if(it.kind === 'repack') g.eq += (+it.eq || 0); if(it.excluded) g.ex++;
+  });
+  return t;
+}
+function invmReviewCount(p, origin){ var t = invmReviewTally(invmReviewItems(p, origin)); return t.supplier.n + t.repack.n; }
+// Lo que muestran las pestañas de producto y de origen: { 'ginger|Peru': 2, 'turmeric|Fiji': 6, ... }.
+function invmReviewCounts(){
+  var out = {};
+  ['ginger', 'turmeric', 'garlic', 'shallots'].forEach(function(p){
+    var origins = (p === 'ginger') ? ['Peru', 'Hawaii'] : ((((typeof invmOriginsFor === 'function') ? invmOriginsFor(p) : null)) || []);
+    origins.forEach(function(o){ out[p + '|' + o] = invmReviewCount(p, o); });
+  });
+  return out;
+}
+function invmReviewBadgeHTML(n){
+  if(!(n > 0)) return '';
+  return '<span class="invm-review-count" title="' + n + ' old lot' + (n === 1 ? '' : 's') + ' to review" style="display:inline-block;min-width:18px;margin-left:6px;padding:0 5px;border-radius:999px;'
+    + 'font-family:var(--fm);font-size:10px;font-weight:700;line-height:16px;text-align:center;color:#155e75;background:#ecfeff;border:1px solid #a5f3fc">' + n + '</span>';
+}
+function invmReviewPillHTML(days, kind){
+  var rep = (kind === 'repack'), lim = INVM_REVIEW_DAYS[rep ? 'repack' : 'supplier'];
+  return '<span class="invm-review" title="More than ' + lim + ' days since it was ' + (rep ? 'repacked' : 'received') + ': check what is going on with it"'
+    + ' style="display:inline-flex;align-items:center;gap:3px;margin-top:3px;font-family:var(--fb);font-size:10px;font-weight:700;padding:1px 7px;border-radius:999px;'
+    + 'white-space:nowrap;text-decoration:none;color:#155e75;background:#ecfeff;border:1px solid #a5f3fc">' + INVM_REVIEW_CLOCK + Math.round(days) + ' days &middot; review</span>';
+}
+// Qué hacer con un lote de proveedor marcado. Excluido: ya no suma, pero sigue en WholesaleWare (decisión 4).
+function invmReviewHintHTML(excluded){
+  return '<div class="invm-review-hint" style="font-family:var(--fb);font-size:10px;margin-top:2px;white-space:normal;color:' + (excluded ? 'var(--gray-500)' : '#155e75') + '">'
+    + (excluded ? 'Out of your stock &middot; still in WholesaleWare until it is zeroed there' : 'Check with the warehouse that it is still there') + '</div>';
+}
+function _invmRevKey(scope){ return String(scope == null ? '' : scope).replace(/[^A-Za-z0-9|_-]/g, ''); }
+function invmReviewFilterOf(scope){ var a = INVM_REVIEW_FILTER[_invmRevKey(scope)] || {}; return { supplier: !!a.supplier, repack: !!a.repack }; }
+function invmSetReviewFilter(scope, kind){
+  var k = _invmRevKey(scope);
+  if(kind !== 'supplier' && kind !== 'repack') delete INVM_REVIEW_FILTER[k];
+  else { var a = INVM_REVIEW_FILTER[k] || (INVM_REVIEW_FILTER[k] = {}); a[kind] = !a[kind]; }
+  if(typeof invmReRender === 'function') invmReRender(); else if(typeof renderInventory === 'function') renderInventory();
+}
+// El recuadro de arriba de las tablas: cuántos lotes para revisar hay, y un clic deja solo esos en la tabla.
+function invmReviewBoxHTML(scope, t, lineLabel, caseLb){
+  var f = function(n){ return Math.round(n || 0).toLocaleString('en-US'); };
+  var k = _invmRevKey(scope), act = invmReviewFilterOf(scope);
+  t = t || invmReviewTally([]);
+  var reloj = INVM_REVIEW_CLOCK.replace('width="10" height="10"', 'width="13" height="13"');
+  if(!t.supplier.n && !t.repack.n){
+    return '<div class="invm-review-box" data-empty="1" style="display:flex;align-items:center;gap:6px;margin:6px 0 12px;font-family:var(--fb);font-size:11.5px;color:var(--gray-500)">'
+      + reloj + 'No old lots to review in ' + libEsc(lineLabel) + ' &middot; supplier lots are marked after ' + INVM_REVIEW_DAYS.supplier
+      + ' days, River Road repacks after ' + INVM_REVIEW_DAYS.repack + '.</div>';
+  }
+  var tile = function(kind, g, label){
+    var head = label + ' &middot; over ' + INVM_REVIEW_DAYS[kind] + ' days';
+    var base = 'text-align:left;font-family:var(--fb);border-radius:8px;padding:7px 12px;min-width:200px;background:var(--white);';
+    if(!g.n){
+      return '<div class="invm-review-tile" data-kind="' + kind + '" style="' + base + 'border:1px solid var(--gray-200);color:var(--gray-400)">'
+        + '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em">' + head + '</div>'
+        + '<div style="font-size:13px;font-weight:600;font-family:var(--fm)">None</div></div>';
+    }
+    var on = act[kind];
+    var num = g.n + ' lot' + (g.n === 1 ? '' : 's') + ' &middot; '
+      + ((kind === 'repack') ? ('&asymp;' + f(g.eq) + ' cs of ' + (caseLb || 30) + ' lb') : (f(g.cs) + ' cs'));
+    var sub = on ? 'Showing only these &middot; click to show all' : (g.ex ? (g.ex + ' already excluded, still watched') : 'none excluded');
+    return '<button type="button" class="invm-review-tile" data-kind="' + kind + '" aria-pressed="' + (on ? 'true' : 'false') + '"'
+      + ' onclick="invmSetReviewFilter(\'' + k + '\',\'' + kind + '\')" title="' + (on ? 'Show all lots again' : 'Show only these lots in the table below') + '"'
+      + ' style="' + base + 'cursor:pointer;color:#155e75;border:' + (on ? '2px solid #0e7490' : '1px solid #a5f3fc') + '">'
+      + '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em">' + head + '</div>'
+      + '<div style="font-size:14px;font-weight:700;font-family:var(--fm)">' + num + '</div>'
+      + '<div style="font-size:10.5px;color:var(--gray-500)">' + sub + '</div></button>';
+  };
+  return '<div class="invm-review-box" style="background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;padding:10px 14px;margin:6px 0 14px">'
+    + '<div style="display:flex;align-items:center;gap:6px;font-family:var(--fb);font-size:12px;font-weight:700;color:#155e75">' + reloj + 'Old lots to review &middot; ' + libEsc(lineLabel) + '</div>'
+    + '<div style="font-family:var(--fb);font-size:11px;color:#155e75;margin:2px 0 8px">Supplier lots over ' + INVM_REVIEW_DAYS.supplier + ' days since received and River Road repacks over '
+    + INVM_REVIEW_DAYS.repack + ' days since repacked. Click a box to see only those lots. Excluded lots keep their mark until they are zeroed in WholesaleWare.</div>'
+    + '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:stretch">' + tile('supplier', t.supplier, 'Supplier lots') + tile('repack', t.repack, 'River Road repacks')
+    + ((act.supplier || act.repack) ? ('<button type="button" class="invm-review-all" onclick="invmSetReviewFilter(\'' + k + '\',null)" style="align-self:center;cursor:pointer;font-family:var(--fb);'
+        + 'font-size:11px;font-weight:600;border:1px solid var(--gray-200);border-radius:8px;background:var(--white);color:var(--gray-600);padding:6px 11px">Show all lots</button>') : '')
+    + '</div></div>';
+}
+// La línea del reporte del lunes: cuántos lotes para revisar hay y en qué líneas, sin sumar cajas de packs distintos.
+function invmReviewReport(){
+  var ns = 0, nr = 0, sup = [], rep = [], lots = [];
+  ['ginger', 'turmeric', 'garlic', 'shallots'].forEach(function(p){
+    var origins = (p === 'ginger') ? ['Peru', 'Hawaii'] : ((((typeof invmOriginsFor === 'function') ? invmOriginsFor(p) : null)) || []);
+    origins.forEach(function(o){
+      var name = (p === 'garlic' || p === 'shallots') ? p : (p + ' ' + o);
+      var items = invmReviewItems(p, o), t = invmReviewTally(items);
+      if(t.supplier.n){ ns += t.supplier.n; sup.push(name + ' ' + t.supplier.n); }
+      if(t.repack.n){ nr += t.repack.n; rep.push(name + ' ' + t.repack.n); }
+      items.forEach(function(it){ if(invmReviewOld(it.days, it.kind)) lots.push({ line: name, kind: it.kind, lot: it.lot, days: it.days, cases: it.cases, excluded: it.excluded }); });
+    });
+  });
+  var pl = function(n, w){ return n + ' ' + w + (n === 1 ? '' : 's'); };
+  return { text: 'Old lots to review: ' + pl(ns, 'supplier lot') + ' over ' + INVM_REVIEW_DAYS.supplier + ' days' + (sup.length ? (' (' + sup.join(', ') + ')') : '')
+                 + ' · ' + pl(nr, 'River Road repack') + ' over ' + INVM_REVIEW_DAYS.repack + ' days' + (rep.length ? (' (' + rep.join(', ') + ')') : ''),
+           lots: lots };
+}
 // ── La barra de controles ───────────────────────────────────────────────────────────────────────
 // Las columnas ya ordenaban al clickearlas, pero nada en pantalla lo decía — y un control que no se
 // ve no existe. Acá está escrito, con la flecha del sentido activo.
@@ -18247,7 +18447,7 @@ function invmRenderProduct(p){
   if(p!=='ginger' && s.origins && s.origins.length>=1){
     var pill=function(val,lbl){ var on=(s.origin===val); return '<button onclick="invmSetOrigin(\''+val+'\')" style="font-family:var(--fb);font-size:12px;font-weight:600;padding:5px 13px;border-radius:999px;border:1px solid '+(on?'var(--jlz)':'var(--gray-200)')+';background:'+(on?'var(--jlz)':'var(--white)')+';color:'+(on?'#fff':'var(--gray-600)')+';cursor:pointer">'+lbl+'</button>'; };
     html += '<div style="display:flex;gap:6px;align-items:center;margin-bottom:12px;flex-wrap:wrap"><span style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);font-weight:700;margin-right:4px">Origin</span>'
-      + s.origins.map(function(o){ return pill(o, esc(o)); }).join('')
+      + s.origins.map(function(o){ return pill(o, esc(o) + ((typeof invmReviewBadgeHTML==='function') ? invmReviewBadgeHTML(invmReviewCount(p, o)) : '')); }).join('')
       + '</div>';
   }
   // on-hand summary — the buy analysis + forward projection now live in the Buy Planner (per product).
@@ -18270,7 +18470,9 @@ function invmRenderProduct(p){
   var thR=thL.replace('text-align:left','text-align:right');
   var td='padding:9px 14px;border-bottom:1px solid var(--gray-100)';
   var storedOf=function(l){ return (l&&l.received)?((typeof bpDaysSince==='function')?bpDaysSince(l.received):0):null; };
-  var ageBadge=function(d){ if(d==null) return '<span style="color:var(--gray-300)">—</span>'; var c=(d>=45)?'#b91c1c':(d>=30)?'#b45309':'var(--gray-700)'; return '<span style="color:'+c+';font-weight:700">'+d+'d</span>'; };
+  // Los días van en el color de la marca cuando el lote pasa su límite (45 proveedor, 20 reempaque). Antes eran
+  // rojo desde 45 y ámbar desde 30: con el rojo y el ámbar ya ocupados por el Repack follow-up, se confundían.
+  var ageBadge=function(d,kind,cs){ if(d==null) return '<span style="color:var(--gray-300)">—</span>'; var viejo=!!(kind && cs>0 && typeof invmReviewOld==='function' && invmReviewOld(d,kind)); return '<span style="color:'+(viejo?'#155e75':'var(--gray-700)')+';font-weight:700">'+d+'d</span>'; };
   var dinp='font-family:var(--fm);font-size:10.5px;border:1px solid var(--gray-200);border-radius:5px;padding:2px 5px;color:var(--gray-700)';
   var sort=(typeof invmLotSort==='function')?invmLotSort(p):{key:'fefo',dir:1};
   var flecha=function(k){ return (sort.key===k) ? (sort.dir===1?' &#9650;':' &#9660;') : ''; };
@@ -18294,11 +18496,21 @@ function invmRenderProduct(p){
   var _repVis=_wAct?repacks.filter(function(l){ return (_wIdx[l.lot]||{}).tone===_wAct; }):repacks;
   var minAge=(typeof invmLotFilter==='function')?invmLotFilter(p):0;
   html += (typeof invmLotControlsHTML==='function') ? invmLotControlsHTML(p,{value:true}) : '';
+  // Lotes viejos para revisar: el recuadro cuenta y filtra; la marca va en cada fila (invmReviewItems).
+  var _revScope=p+'|'+(s.origin||'all');
+  var _revOn=(typeof invmReviewFilterOf==='function')?invmReviewFilterOf(_revScope):{};
+  if(typeof invmReviewBoxHTML==='function')
+    html += invmReviewBoxHTML(_revScope, invmReviewTally(invmReviewItems(p, s.origin||'all')), s.label+((s.origin&&s.origin!=='all')?(' · '+s.origin):''), s.caseLb);
 
-  var tabla=function(lots, titulo, nota, conAgregar){
+  var tabla=function(lots, titulo, nota, conAgregar, kind){
     var todos=lots;
     var vistos=(typeof invmFilterLots==='function')?invmFilterLots(lots,minAge):lots;
     var escondidos=todos.length-vistos.length;
+    // Con su recuadro prendido quedan los lotes para revisar y los que no tienen fecha (sin fecha no se sabe su
+    // edad, y esconderlos sería decidir por ellos: mismo criterio que el filtro por antigüedad).
+    var _antesRev=vistos.length;
+    if(kind && _revOn[kind]) vistos=vistos.filter(function(l){ var d=storedOf(l); return d==null || ((parseFloat(l.cases)||0)>0 && invmReviewOld(d,kind)); });
+    var escRev=_antesRev-vistos.length;
     var orden=(typeof invmSortLots==='function')?invmSortLots(vistos,sort):vistos;
     var oldest=0,sumAge=0,sumC=0,undated=0,cs=0;
     orden.forEach(function(l){ if(l&&l.excluded) return; var d=storedOf(l), c=parseFloat(l.cases)||0;
@@ -18315,7 +18527,8 @@ function invmRenderProduct(p){
         + (sort.key==='fefo' ? 'Oldest first (soonest to move)' : ('Sorted by '+({received:'received date',stored:'days stored',cases:'cases'}[sort.key]||sort.key)+', '+(sort.dir===1?'oldest / smallest first':'newest / largest first')))
         + ' · <b>'+f(cs)+'</b> cs · avg age <b>'+(avgAge==null?'—':avgAge+'d')+'</b> · oldest <b>'+(oldest?oldest+'d':'—')+'</b>'
         + (undated?(' · <span style="color:var(--amber-700)">'+undated+' lot(s) missing received date</span>'):'')
-        + (escondidos?(' · <span style="color:var(--gray-400)">'+escondidos+' lot(s) hidden by the '+minAge+'+ day filter</span>'):'')+'</div>';
+        + (escondidos?(' · <span style="color:var(--gray-400)">'+escondidos+' lot(s) hidden by the '+minAge+'+ day filter</span>'):'')
+        + (escRev?(' · <span style="color:#155e75">'+escRev+' lot(s) hidden by the review filter</span>'):'')+'</div>';
     // Un solo punto de salida: con dos `return` que cierran la tarjeta, el chequeo estático de divs
     // cuenta dos cierres para una apertura y da falso negativo. Ese chequeo vale, así que se respeta.
     var cuerpo='';
@@ -18329,6 +18542,7 @@ function invmRenderProduct(p){
     orden.forEach(function(l){
       var idx=s.allLots.indexOf(l);
       var exc=!!(l&&l.excluded);
+      var _rd=storedOf(l), _viejo=!!(kind && (parseFloat(l.cases)||0)>0 && typeof invmReviewOld==='function' && invmReviewOld(_rd,kind));
       var rowStyle=exc?'background:repeating-linear-gradient(45deg,var(--gray-50),var(--gray-50) 5px,#fff 5px,#fff 10px)':'';
       var strike=exc?'text-decoration:line-through;color:var(--gray-400) !important;':'';
       var exBtn=exc
@@ -18336,12 +18550,14 @@ function invmRenderProduct(p){
         : '<button onclick="invmProdToggleLotExcl(\''+p+'\','+idx+')" title="Exclude from Buy Planner / Simulator (keeps the record, subtracts from planned on-hand)" style="border:1px solid var(--gray-200);background:var(--white);color:var(--gray-400);border-radius:5px;font-family:var(--fm);font-size:9px;font-weight:600;padding:2px 6px;cursor:pointer;white-space:nowrap">exclude</button>';
       cuerpo += '<tr style="'+rowStyle+'">'
         + '<td style="'+td+';color:var(--gray-800);'+strike+'">'+esc(l.lot)
-          + ((esRepack(l) && _wIdx[l.lot] && typeof wlotBadgeHTML==='function') ? wlotBadgeHTML(p, _wIdx[l.lot]) : '')+'</td>'
+          + ((esRepack(l) && _wIdx[l.lot] && typeof wlotBadgeHTML==='function') ? wlotBadgeHTML(p, _wIdx[l.lot]) : '')
+          // inline-block a todo el ancho: queda en su propia línea, y el tachado de la fila excluida no llega adentro.
+          + (_viejo ? ('<span style="display:inline-block;width:100%">'+invmReviewPillHTML(_rd,kind)+((kind==='supplier'||exc)?invmReviewHintHTML(exc):'')+'</span>') : '')+'</td>'
         + '<td style="'+td+';color:var(--gray-700)">'+esc(l.origin)+'</td>'
         + '<td style="'+td+';color:var(--gray-700)">'+esc(l.supplier)+'</td>'
         + '<td style="padding:6px 14px;border-bottom:1px solid var(--gray-100)"><input type="date" lang="en-US" value="'+esc(l.received||'')+'" title="'+(invmFmtDate(l.received)||'no received date')+'" onchange="invmProdSetLotReceived(\''+p+'\','+idx+',this.value)" style="'+dinp+'">'
           + (l.received?('<div style="margin-top:2px;font-size:10px;color:var(--gray-400);font-family:var(--fm)">'+invmFmtDate(l.received)+'</div>'):'')+'</td>'
-        + '<td style="'+td+';text-align:right">'+ageBadge(storedOf(l))+'</td>'
+        + '<td style="'+td+';text-align:right">'+ageBadge(_rd,kind,parseFloat(l.cases)||0)+'</td>'
         + '<td style="padding:6px 14px;border-bottom:1px solid var(--gray-100);text-align:right"><input type="number" step="1" value="'+(parseFloat(l.cases)||0)+'" onchange="invmProdSetLotCases(\''+p+'\','+idx+',this.value)" style="width:60px;text-align:right;font-family:var(--fm);font-size:11.5px;border:1px solid var(--gray-200);border-radius:5px;padding:2px 6px;color:var(--gray-900);'+strike+'"></td>'
         + '<td style="'+td+';text-align:right;color:var(--gray-700);'+strike+'">'+f((parseFloat(l.cases)||0)*s.caseLb)+'</td>'
         + '<td style="'+td+';text-align:right;color:var(--gray-700)">$'+f(l.avgCost)+'</td>'
@@ -18358,24 +18574,32 @@ function invmRenderProduct(p){
   };
 
   html += tabla(prov, 'Supplier lots — '+esc(s.label)+oScope, 'what the grower shipped you'
-      + (s.excludedCases>0?(' · '+f(s.excludedCases)+' cs excluded from plan'):''), true);
+      + (s.excludedCases>0?(' · '+f(s.excludedCases)+' cs excluded from plan'):''), true, 'supplier');
   html += (typeof wlotTilesHTML==='function') ? wlotTilesHTML(p,_wRows,_wScope,_wCtx) : '';
   if(repacks.length)
     html += tabla(_repVis, 'Repacked — River Road', 'already repacked by JLZ Produce Manufacturing · same cases, new presentation'
-      + (_wAct?(' · '+(repacks.length-_repVis.length)+' lot(s) hidden by the status filter'):''), false);
-  html += (typeof wlotSmallPacksHTML==='function') ? wlotSmallPacksHTML(p,_wRows,_wScope,repacks.map(function(l){ return l.lot; }),!repacks.length) : '';
+      + (_wAct?(' · '+(repacks.length-_repVis.length)+' lot(s) hidden by the status filter'):''), false, 'repack');
+  html += (typeof wlotSmallPacksHTML==='function')
+    ? wlotSmallPacksHTML(p, (_revOn.repack ? _wRows.filter(function(r){ return (+r.cases||0)>0 && invmReviewOld(r.days,'repack'); }) : _wRows),
+                         _wScope, repacks.map(function(l){ return l.lot; }), (!repacks.length || !!_revOn.repack)) : '';
   // Los dos totales tienen que reconstruir el on-hand del panel, o la tabla dice una cosa y el plan otra.
   // Con el filtro de antigüedad prendido, los totales de arriba suman solo los lotes visibles. Si el pie
   // no dice cuántas cajas quedaron afuera, promete un on-hand que las dos tablas no reconstruyen.
-  var _visCs=s.onHandCases;
-  if(minAge && typeof invmFilterLots==='function'){
+  var _visCs=s.onHandCases, _revAny=!!(_revOn.supplier||_revOn.repack);
+  if((minAge && typeof invmFilterLots==='function') || _revAny){
     _visCs=0;
-    invmFilterLots(s.lots,minAge).forEach(function(l){ if(!(l&&l.excluded)) _visCs+=parseFloat(l.cases)||0; });
+    ((minAge && typeof invmFilterLots==='function')?invmFilterLots(s.lots,minAge):s.lots).forEach(function(l){
+      if(l&&l.excluded) return;
+      var k=esRepack(l)?'repack':'supplier', c=parseFloat(l.cases)||0;
+      if(_revOn[k]){ var d=storedOf(l); if(!(d==null || (c>0 && invmReviewOld(d,k)))) return; }
+      _visCs+=c;
+    });
   }
   var _escCs=Math.round(Math.max(0,s.onHandCases-_visCs));
+  var _quien=minAge ? ('The '+minAge+'+ days filter'+(_revAny?' and the review filter are':' is')) : 'The review filter is';
   html += '<div style="margin:-6px 0 14px;font-size:11px;font-family:var(--fm);color:var(--gray-500)">'
     + 'Both tables are physically in the cooler and both count toward the <b>'+f(s.onHandCases)+' cs</b> on hand. '
-    + (_escCs>0?('<span style="color:var(--amber-700)">The '+minAge+'+ days filter is hiding <b>'+f(_escCs)+' cs</b> in newer lots, so the totals above add up to '+f(_visCs)+' cs, not '+f(s.onHandCases)+'.</span> '):'')
+    + (_escCs>0?('<span style="color:var(--amber-700)">'+_quien+' hiding <b>'+f(_escCs)+' cs</b> in '+((minAge&&!_revAny)?'newer':'other')+' lots, so the totals above add up to '+f(_visCs)+' cs, not '+f(s.onHandCases)+'.</span> '):'')
     + 'The repacked ones are the cases that already changed presentation.</div>';
   if(_wAct) html += '<div style="margin:-6px 0 14px;font-size:11px;font-family:var(--fm);color:var(--amber-700)">The status filter is hiding repacked lots, so the tables above add up to less than the on hand.</div>';
   html += '<div style="font-size:11.5px;color:var(--gray-600);background:var(--sky-50,#eff6ff);border:1px solid var(--sky-200,#bfdbfe);border-radius:8px;padding:11px 13px">'

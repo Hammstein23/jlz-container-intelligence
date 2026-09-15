@@ -138,6 +138,44 @@ for fn, needle, what in [('invrConfirm', 'WLOT_SNAP_LS', 'el import de inventari
     if fb and needle in fb.group(1): ok(what)
     else: bad('%s dejo de guardar su parte (%s)' % (fn, what))
 
+# ── Lotes viejos para revisar (Juan, 2026-09-15) ────────────────────────────────────────────────
+# Proveedor con mas de 45 dias desde que se recibio, reempaque River Road con mas de 20 desde que se reempaco;
+# los excluidos siguen marcados. Los tests prueban que se marca; esto cuida que las dos vistas lo muestren.
+print()
+if re.search(r"^var INVM_REVIEW_DAYS = \{ supplier: 45, repack: 20 \};", src, re.M):
+    ok('los limites acordados: 45 dias proveedor, 20 reempaque')
+else:
+    bad('cambiaron los limites de "old lots to review": eso se habla con Juan')
+for fn, b in [('invmRenderProduct', m.group(1) if m else ''), ('invmLots', m2.group(1) if m2 else '')]:
+    for needle, what in [('invmReviewBoxHTML(', 'el recuadro de lotes para revisar'),
+                         ('invmReviewPillHTML(', 'la marca en cada fila'),
+                         ('invmReviewFilterOf(', 'el filtro del recuadro'),
+                         ('hidden by the review filter', 'el aviso de que el recuadro esconde lotes')]:
+        if needle in b: ok('%s: %s' % (fn, what))
+        else: bad('%s perdio %s' % (fn, what))
+# Que la funcion exista no alcanza: tiene que llamarse en la fila, o la marca es codigo muerto que pasa el chequeo.
+if m2 and "+_revMark(l)+" in m2.group(1): ok('ginger-Peru pone la marca en cada fila')
+else: bad('ginger-Peru arma la marca pero no la pone en la fila')
+_sp = re.search(r'function wlotSmallPacksHTML\((.*?)\n\}', src, re.S)
+if _sp and 'invmReviewPillHTML(' in _sp.group(1): ok('los reempaques plegados tambien llevan la marca')
+else: bad('la linea plegada perdio la marca: los de 5/10 lb viejos no se ven')
+_ws = re.search(r'function wlotStatusRows\((.*?)\n\}', src, re.S)
+if _ws and 'gap(l.received, today)' in _ws.group(1): ok('el follow-up cuenta los dias desde la fecha del reempaque')
+else: bad('el follow-up volvio al "Days on Floor": su rotulo y la marca dicen dias distintos')
+_ri = re.search(r'function renderInventory\(\)\{(.*?)\n\}', src, re.S)
+if _ri and 'invmReviewCounts(' in _ri.group(1) and "insertAdjacentHTML('beforeend', invmReviewBadgeHTML(n))" in _ri.group(1):
+    ok('las pestanas de producto dicen cuantos lotes hay para revisar')
+else:
+    bad('las pestanas de producto de Inventory ya no cuentan los lotes para revisar')
+if _ri and "invmReviewBadgeHTML(_revC['ginger|'+o]" in _ri.group(1):
+    ok('y las de origen de ginger (Peru / Hawaii)')
+else:
+    bad('las pestanas de origen de ginger ya no cuentan los lotes para revisar')
+if m and 'invmReviewBadgeHTML(invmReviewCount(p, o))' in m.group(1):
+    ok('y las de origen de los otros productos')
+else:
+    bad('las pestanas de origen de los otros productos ya no cuentan los lotes para revisar')
+
 print()
 if fails:
     print('  %d problema(s) en las tablas de lotes' % len(fails)); sys.exit(1)

@@ -474,6 +474,13 @@ WholesaleWare (órdenes de hace semanas, lotes devueltos o facturados que siguen
 **ámbar** se le pregunta al almacén (entrega vencida, sigue en picking), lo **violeta** hay que
 facturarlo. Nombrá lo que pese en cajas. La fecha de despacho no está en ningún reporte: no la inventes.
 
+Y los **lotes viejos para revisar** (recuadro celeste de Inventory, con la cuenta en cada pestaña): lotes de
+proveedor con **más de 45 días** desde la recepción y reempaques River Road con **más de 20** desde el
+reempaque, contados desde la fecha del lote. Los **excluidos siguen en la lista** hasta que se den de baja en
+WholesaleWare: excluir solo los saca del disponible. La línea para el reporte sale de
+`invmReviewReport().text` en la consola, y cada lote de `invmReviewReport().lots`. Nombrá los que pesen en
+cajas; los de 1–2 cajas suelen ser muestras.
+
 - **Marcá cualquier movimiento grande contra la semana pasada.** Un run-rate que salta de golpe
   casi siempre es un dato raro, no una tendencia.
 - **Ventana de reacción:** ginger 6 semanas, los otros 3. Solo la de ginger alimenta el Buy Planner

@@ -57,7 +57,10 @@ var _PRISTINO_NOMBRES = [
   'dmcDateLabel','_dmRawAll','_invmOrigDemandCache','WLOT_FILTER',
   // Dos grupos de Cody y del Buy Planner reemplazan la sugerencia de compra y no la devolvían: el grupo de
   // "sin producto en el mercado" necesita la real para ver que la compra queda en 0.
-  'invmBuySuggestion'
+  'invmBuySuggestion',
+  // Los grupos de lotes viejos reemplazan la foto de reempaques y el store de ginger; y uno viejo deja
+  // `bpDaysSince` clavado en 40, con lo que todas las edades salían iguales.
+  'wlotLoadStore','bpOrderById','bpDaysSince','INVM_REVIEW_FILTER'
 ];
 var _PRISTINO = {};
 _PRISTINO_NOMBRES.forEach(function(n){ try { _PRISTINO[n] = eval(n); } catch (e) {} });
@@ -5628,7 +5631,10 @@ group('Reempaques · estado y línea de tiempo de cada W-lot');
   check('marcada a mano como despachada, aunque WholesaleWare diga PICKING', marcada.filter(function(r){ return r.lot === 'W2939A2674126'; })[0].label, 'Shipped · not invoiced');
 
   var hi = wlotStatusRows('ginger', 'Hawaii', { snap:snap, orders:orders, sales:sales, committed:[], today:T });
-  check('Hawaii: el de 137 días sin orden pide revisión', hi.length + '|' + hi[0].tone + '|' + hi[0].label, '1|bad|No order in 137 days');
+  // Los días salen de la FECHA del reempaque (08-abr → 14-sep = 159), no del "Days on Floor" de WholesaleWare
+  // (137): Juan decidió contar desde la fecha al ver el mockup de lotes viejos (2026-09-15).
+  check('Hawaii: el de 159 días sin orden pide revisión', hi.length + '|' + hi[0].tone + '|' + hi[0].label, '1|bad|No order in 159 days');
+  check('sin fecha en la foto, se queda con los días del reporte', wlotStatusRows('ginger', 'Hawaii', { snap:{ savedAt:T, lots:[G('W2289A2223435', 'OG-GIN-10Lbs-PR-HI', 4, '', 137)] }, orders:orders, sales:[], committed:[], today:T })[0].days, 137);
 
   var S = wlotStatusSummary(rows);
   check('el resumen suma cajas por estado', [S.bad.cs, S.late.cs, S.ship.cs, S.wait.cs, S.ok.cs, S.free.cs].join(','), '148,700,20,95,45,5');
@@ -5903,6 +5909,134 @@ group('Sin producto en el mercado · el precorreo de Cody lo dice');
   ok('sin nada que pedir, también lo dice', /Nothing to order this week/.test(m0.body) && /Not available in the market right now: turmeric \(Hawaii\)/.test(m0.body));
 })();
 } catch (_e) { ok('Cody con marcas no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
+
+// ═══ Lotes viejos para revisar ══════════════════════════════════════════════
+// Juan, 2026-09-15: "cualquier cosa que tenga más de 45 días tiene que estar marcada para poder revisarlo".
+// Proveedor más de 45 días desde que se recibió, reempaque River Road más de 20 desde que se reempacó. Los
+// excluidos SIGUEN marcados: excluir solo los saca del disponible (Juan, al ver el mockup).
+try {
+group('Lotes viejos para revisar · qué se marca y qué se cuenta');
+(function(){
+  var DIA = 86400000, hace = function(n){ return dmISOLocal(new Date(Date.now() - n * DIA)); };
+  check('45 días justos no se marcan', invmReviewOld(45, 'supplier'), false);
+  check('46 sí', invmReviewOld(46, 'supplier'), true);
+  check('un reempaque se marca desde los 21', invmReviewOld(20, 'repack') + '|' + invmReviewOld(21, 'repack'), 'false|true');
+  check('sin fecha no se marca', invmReviewOld(null, 'supplier') + '|' + invmReviewOld('', 'repack'), 'false|false');
+
+  PRODUCTS = { turmeric:{ label:'Turmeric', caseLb:30, suppliers:[{ name:'SBimal LLC', origin:'Fiji' }] }, ginger:{ label:'Ginger', caseLb:30, suppliers:[] } };
+  productCaseLb = function(){ return 30; };
+  var LOTS = [
+    { lot:'2260876-0001', origin:'Fiji', supplier:'SBimal LLC', received:hace(140), cases:7, excluded:true },
+    { lot:'2439588-0001', origin:'Fiji', supplier:'SBimal LLC', received:hace(83), cases:6 },
+    { lot:'2658915-0001', origin:'Fiji', supplier:'SBimal LLC', received:hace(4), cases:150 },
+    { lot:'2111111-0001', origin:'Fiji', supplier:'SBimal LLC', received:hace(60), cases:0 },
+    { lot:'W2811A2596556', origin:'Fiji', supplier:'JLZ Produce Manufacturing', received:hace(35), cases:5, excluded:true },
+    { lot:'W2957A2686667', origin:'Fiji', supplier:'JLZ Produce Manufacturing', received:hace(5), cases:5 },
+    { lot:'1999999-0001', origin:'Hawaii', supplier:'Kailani', received:hace(200), cases:3 }
+  ];
+  prodInvFor = function(p){ return { lots: (p === 'turmeric') ? LOTS : [] }; };
+  var SNAP = { savedAt: hace(1), lots: [
+    { lot:'W2574A2430984', sku:'OG-TUR-10Lbs-PR-FJ', product:'turmeric', cases:35, received:hace(91), days:87 },
+    { lot:'W2963A2692090', sku:'OG-TUR-5Lbs-PR-FJ', product:'turmeric', cases:120, received:hace(3), days:2 },
+    { lot:'W2811A2596556', sku:'OG-TUR-30Lbs-PR-FJ', product:'turmeric', cases:5, received:hace(35), days:32 },
+    { lot:'W1832B1917641', sku:'OG-TUR-10Lbs-PR-HI', product:'turmeric', cases:72, received:hace(277), days:270 },
+    { lot:'W2289A2223435', sku:'OG-GIN-10Lbs-PR-HI', product:'ginger', cases:4, received:hace(160), days:137 },
+    { lot:'W2945A2679079', sku:'OG-GIN-5LBS-PR', product:'ginger', cases:20, received:hace(40), days:40 }
+  ] };
+  wlotLoadStore = function(key){ return (key === WLOT_SNAP_LS) ? SNAP : null; };
+
+  var items = invmReviewItems('turmeric', 'Fiji'), t = invmReviewTally(items);
+  check('proveedor: los dos viejos, el excluido incluido', t.supplier.n + '|' + t.supplier.cs + '|' + t.supplier.ex, '2|13|1');
+  check('reempaques: el excluido de la tabla y el de 10 lb plegado', t.repack.n + '|' + t.repack.ex, '2|1');
+  check('las cajas de 10 lb se cuentan por peso en la caja de 30', t.repack.eq, 5 + Math.round(35 * 10 / 30 * 10) / 10);
+  ok('un lote vacío no se marca', items.every(function(it){ return it.lot !== '2111111-0001'; }));
+  check('un reempaque que ya está en la tabla no se cuenta dos veces', items.filter(function(it){ return it.lot === 'W2811A2596556'; }).length, 1);
+  ok('otro origen no entra', items.every(function(it){ return it.lot !== '1999999-0001' && it.lot !== 'W1832B1917641'; }));
+  check('la edad del plegado sale de su fecha, no del Days on Floor', items.filter(function(it){ return it.lot === 'W2574A2430984'; })[0].days, 91);
+  check('Hawaii cuenta lo suyo', invmReviewCount('turmeric', 'Hawaii'), 2);
+
+  // ginger-Perú: su propio store, la llave es el PO y los reempaques son las filas 'W:'.
+  bpInvState = function(){ return { rows: {
+    'o-1': { cases: 5 }, 'o-2': { cases: 980 }, 'o-3': { cases: 40 },
+    'W:W2572A2430969': { cases: 36, repack: { lot:'W2572A2430969', received: hace(91) } },
+    'W:W2964A2692119': { cases: 35, repack: { lot:'W2964A2692119', received: hace(3) } } } }; };
+  bpOrderById = function(id){ return ({ 'o-1': { jlzPo:'2496593', arrivalActual: hace(50) },
+                                        'o-2': { jlzPo:'2629655', arrivalActual: hace(12) },
+                                        'o-3': { jlzPo:'2400000', arrivalActual: hace(90), downgraded: true } })[id] || null; };
+  var tg = invmReviewTally(invmReviewItems('ginger', 'Peru'));
+  check('ginger-Perú: el PO de 50 días, y ni el degradado ni el de 12', tg.supplier.n, 1);
+  check('y dos reempaques: el de 91 días en la tabla y el de 5 lb plegado', tg.repack.n, 2);
+  check('ginger-Hawaii: el de 10 lb de 160 días', invmReviewCount('ginger', 'Hawaii'), 1);
+
+  var rep = invmReviewReport();
+  check('la línea del lunes dice cuántos y dónde', rep.text,
+        'Old lots to review: 4 supplier lots over 45 days (ginger Peru 1, turmeric Fiji 2, turmeric Hawaii 1) · 6 River Road repacks over 20 days (ginger Peru 2, ginger Hawaii 1, turmeric Fiji 2, turmeric Hawaii 1)');
+  check('con el detalle de cada lote para nombrarlos', rep.lots.length, 10);
+  ok('y no suma cajas de packs distintos', !/cs/.test(rep.text));
+
+  INVM_REVIEW_FILTER = {};
+  var box = invmReviewBoxHTML('turmeric|Fiji', t, 'Turmeric · Fiji', 30);
+  ok('el recuadro dice cuántos, cuántas cajas y que los excluidos siguen a la vista',
+     box.indexOf('2 lots &middot; 13 cs') > -1 && box.indexOf('1 already excluded, still watched') > -1);
+  ok('los reempaques en cajas de 30 lb (5 de 30 lb + 35 de 10 lb ≈ 17)', box.indexOf('&asymp;17 cs of 30 lb') > -1);
+  invmSetReviewFilter('turmeric|Fiji', 'supplier');
+  check('un clic en el recuadro lo prende', invmReviewFilterOf('turmeric|Fiji').supplier, true);
+  var apretado = invmReviewBoxHTML('turmeric|Fiji', t, 'Turmeric · Fiji', 30);
+  ok('y se ve apretado, con "Show all lots"', apretado.indexOf('aria-pressed="true"') > -1 && apretado.indexOf('Show all lots') > -1);
+  invmSetReviewFilter('turmeric|Fiji', null);
+  check('"Show all lots" lo apaga', invmReviewFilterOf('turmeric|Fiji').supplier, false);
+  ok('sin nada viejo no hay recuadro, solo una línea que lo dice',
+     invmReviewBoxHTML('shallots|California', invmReviewTally([]), 'Shallots', 50).indexOf('No old lots to review') > -1);
+  ok('la marca dice los días', invmReviewPillHTML(91, 'repack').indexOf('91 days &middot; review') > -1);
+  ok('el excluido dice que sigue en WholesaleWare', invmReviewHintHTML(true).indexOf('still in WholesaleWare') > -1);
+  check('la pestaña muestra la cuenta', /">6<\/span>$/.test(invmReviewBadgeHTML(6)), true);
+  check('y sin nada, nada', invmReviewBadgeHTML(0), '');
+})();
+} catch (_e) { ok('lotes viejos no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
+try {
+group('Lotes viejos para revisar · en la tabla de Inventory');
+(function(){
+  if (typeof invmRenderProduct !== 'function') { ok('invmRenderProduct está extraído', false); return; }
+  var DIA = 86400000, hace = function(n){ return dmISOLocal(new Date(Date.now() - n * DIA)); };
+  PRODUCTS = { turmeric:{ label:'Turmeric', caseLb:30, suppliers:[{ name:'SBimal LLC', origin:'Fiji' }] } };
+  productCaseLb = function(){ return 30; };
+  var LOTS = [
+    { lot:'2260876-0001', origin:'Fiji', supplier:'SBimal LLC', received:hace(140), cases:7, excluded:true, avgCost:70 },
+    { lot:'2439588-0001', origin:'Fiji', supplier:'SBimal LLC', received:hace(83), cases:6, avgCost:70 },
+    { lot:'2658915-0001', origin:'Fiji', supplier:'SBimal LLC', received:hace(4), cases:150, avgCost:70 },
+    { lot:'W2957A2686667', origin:'Fiji', supplier:'JLZ Produce Manufacturing', received:hace(5), cases:5, avgCost:70 }
+  ];
+  prodInvFor = function(){ return { lots: LOTS }; };
+  wlotLoadStore = function(key){ return (key === WLOT_SNAP_LS) ? { savedAt: hace(1), lots: [
+    { lot:'W2574A2430984', sku:'OG-TUR-10Lbs-PR-FJ', product:'turmeric', cases:35, received:hace(91), days:87 },
+    { lot:'W2957A2686667', sku:'OG-TUR-30Lbs-PR-FJ', product:'turmeric', cases:5, received:hace(5), days:5 } ] } : null; };
+  var _realLF = (typeof invmLotFilter === 'function') ? invmLotFilter : undefined;
+  invmLotFilter = function(){ return 0; };
+  invmProductStats = function(){ return { p:'turmeric', label:'Turmeric', origin:'Fiji', origins:['Fiji'], caseLb:30,
+    lots:LOTS, allLots:LOTS, onHandCases:161, onHandLbs:4830, excludedCases:7, costVal:0,
+    weeklyLbs:0, weeklyCases:0, status:'ok', supList:[], nWeeks:0, cv:0 }; };
+  try {
+    INVM_REVIEW_FILTER = {};
+    var h = invmRenderProduct('turmeric');
+    ok('el recuadro está arriba de las tablas', h.indexOf('Old lots to review &middot; Turmeric · Fiji') > -1 && h.indexOf('Old lots to review') < h.indexOf('Supplier lots'));
+    ok('el lote de 83 días lleva la marca y qué hacer', /8[34] days &middot; review/.test(h) && h.indexOf('Check with the warehouse that it is still there') > -1);
+    ok('el excluido de 140 días sigue marcado', /14[01] days &middot; review/.test(h) && h.indexOf('still in WholesaleWare until it is zeroed there') > -1);
+    ok('el nuevo no', !/[45] days &middot; review/.test(h));
+    ok('el reempaque de 10 lb plegado también, con su cuenta', /9[012] days &middot; review/.test(h) && h.indexOf('1 to review (over 20 days)') > -1);
+    ok('la pestaña de origen dice cuántos', /Fiji<span class="invm-review-count"[^>]*>3<\/span>/.test(h));
+
+    INVM_REVIEW_FILTER = { 'turmeric|Fiji': { supplier: true } };
+    var f = invmRenderProduct('turmeric');
+    ok('con el recuadro prendido, el lote nuevo sale de la tabla y se dice', f.indexOf('2658915-0001') < 0 && f.indexOf('1 lot(s) hidden by the review filter') > -1);
+    ok('los reempaques no se tocan', f.indexOf('W2957A2686667') > -1);
+    ok('y el pie dice cuántas cajas no suma la tabla', f.indexOf('The review filter is hiding <b>150 cs</b> in other lots, so the totals above add up to 11 cs, not 161.') > -1);
+  } finally {
+    INVM_REVIEW_FILTER = {}; invmLotFilter = _realLF;
+  }
+})();
+} catch (_e) { ok('lotes viejos en la tabla no tira excepción: ' + ((_e && _e.message) || _e), false); }
 
 // ═══ El entorno se limpia entre grupos ══════════════════════════════════════
 // Guardián del arreglo de arriba. Si alguien saca la restauración de `group()`, esto falla y
