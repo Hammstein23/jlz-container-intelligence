@@ -6065,7 +6065,11 @@ group('Lotes viejos para revisar · en la tabla de Inventory');
     ok('el recuadro está arriba de las tablas', h.indexOf('Old lots to review &middot; Turmeric · Fiji') > -1 && h.indexOf('Old lots to review') < h.indexOf('Supplier lots'));
     ok('el lote de 83 días lleva la marca y qué hacer', /8[34] days &middot; review/.test(h) && h.indexOf('Check with the warehouse that it is still there') > -1);
     ok('el excluido de 140 días sigue marcado', /14[01] days &middot; review/.test(h) && h.indexOf('still in WholesaleWare until it is zeroed there') > -1);
-    ok('el nuevo no', !/[45] days &middot; review/.test(h));
+    // Ojo con el regex: /[45] days/ tambien matchea "84 days", y el lote de 83 dias renderiza 83 u 84
+    // segun la hora a la que corras la suite. Asi que se leen las marcas y se mira el numero, no el texto:
+    // ninguna marca puede ser de menos dias que el corte mas bajo (reempaque, 20).
+    var _marcas = (h.match(/(\d+) days &middot; review/g) || []).map(function(x){ return parseInt(x, 10); });
+    ok('el nuevo no', _marcas.length > 0 && _marcas.every(function(d){ return d > 20; }));
     ok('el reempaque de 10 lb plegado también, con su cuenta', /9[012] days &middot; review/.test(h) && h.indexOf('1 to review (over 20 days)') > -1);
     ok('la pestaña de origen dice cuántos', /Fiji<span class="invm-review-count"[^>]*>3<\/span>/.test(h));
 
