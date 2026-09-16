@@ -12247,21 +12247,44 @@ function hybridSalesForWeek(wk, salesDemand, model, product, extraOrders, origin
     comThis[c.customer] = (comThis[c.customer] || 0) + (+c.cases || 0);
     hypThis[c.customer] = 1;                       // y ahí sí reemplaza el run-rate, como un committed
   });
+  // ── Cuenta MODELADA por escenario ───────────────────────────────────────────────────────────────
+  // Lo de arriba arregla la semana del escenario, pero deja las OTRAS semanas contando el promedio de
+  // esa cuenta. Si los embarques de esa cuenta ya están cargados como escenarios, esa demanda está
+  // puesta dos veces: Sol-ti con 185 cs/sem y escenarios en la 39 y la 41 metía 185 cajas de más en la
+  // 38, 40, 42 y 43 — casi medio contenedor de compra que nadie va a pedir.
+  // La regla: si lo cargado para una cuenta llega a UNA semana de su propio promedio, esa cuenta queda
+  // MODELADA y su run-rate se apaga desde su PRIMER escenario EN ADELANTE. Hacia atrás no se toca nada
+  // —ahí sigue valiendo lo de arriba—, porque un escenario en la 39 no dice nada sobre lo que la cuenta
+  // pide de acá a allá.
+  // El corte por volumen es lo que evita que una prueba de 20 cajas apague un promedio de 200: eso no
+  // es un plan, es una prueba. `keepRr` es la salida a mano, desde la lista de escenarios.
+  var hypTot = {}, hypFirst = {}, hypKeep = {};
+  (extraOrders || []).forEach(function(c){
+    if (!c || !c.customer || !c.wk) return;
+    hypTot[c.customer] = (hypTot[c.customer] || 0) + (+c.cases || 0);
+    if (!hypFirst[c.customer] || c.wk < hypFirst[c.customer]) hypFirst[c.customer] = c.wk;
+    if (c.keepRr) hypKeep[c.customer] = 1;
+  });
   var adj = 0, seen = {};
   custs.forEach(function(c){
     if (!c || !c.c) return;
     seen[c.c] = 1;
     if (_hpDS(c.c)) return;                        // compra contra orden: fuera de la demanda de stock
     var rr = _hpRr(c), cm = comThis[c.c] || 0, last = comLast[c.c];
+    // Modelada por escenario: de su primer escenario en adelante, su promedio se apaga y cuenta solo lo
+    // cargado (más lo que tenga en firme). Pide dos cosas: que haya promedio que apagar y que lo
+    // cargado llegue a una semana de ese promedio.
+    var modeled = !!(rr > 0 && !hypKeep[c.c] && hypFirst[c.c] && wk >= hypFirst[c.c] && (hypTot[c.c] || 0) >= rr);
     if (c.sporadic) {
       // Order-driven. WITHIN its committed horizon (week ≤ its last committed week) the committed IS the
       // known demand → use it, drop the smeared average (0 in the weeks it didn't order). BEYOND the
       // horizon (no more orders on file) the average RESUMES — it will order again, so we keep the
       // run-rate (conservative: avoids under-buying for its eventual return).
-      if ((last && wk <= last) || hypThis[c.c]) adj += (cm - rr);   // known: committed replaces the average
+      if (modeled || (last && wk <= last) || hypThis[c.c]) adj += (cm - rr);   // known: committed replaces the average
       // else: beyond horizon → keep baseline run-rate (adj += 0)
     } else {
-      adj += Math.max(0, cm - rr);                 // steady: excess over run-rate only
+      if (modeled) adj += (cm - rr);               // modelada: su promedio se apaga, cuentan tus escenarios
+      else adj += Math.max(0, cm - rr);            // steady: excess over run-rate only
     }
   });
   Object.keys(comThis).forEach(function(cust){ if (!seen[cust] && !_hpDS(cust)) adj += comThis[cust]; });   // unknown accounts → full committed (contra-orden excluido)
@@ -23965,9 +23988,11 @@ function simGetState() {
       hypotheticalSales:  Array.isArray(s.hypotheticalSales) ? s.hypotheticalSales : [],
       quotes:             Array.isArray(s.quotes) ? s.quotes : [],
       downgradedPos:      Array.isArray(s.downgradedPos) ? s.downgradedPos : [],
+      // Cuentas donde el usuario pidió CONSERVAR el run-rate aunque tengan escenarios cargados.
+      hsKeepRr:           (s.hsKeepRr && typeof s.hsKeepRr === 'object' && !Array.isArray(s.hsKeepRr)) ? s.hsKeepRr : {},
     };
   } catch (e) {
-    return { hypotheticalOrders: [], hypotheticalSales: [], quotes: [], downgradedPos: [] };
+    return { hypotheticalOrders: [], hypotheticalSales: [], quotes: [], downgradedPos: [], hsKeepRr: {} };
   }
 }
 function simSaveState(state) {
@@ -23975,7 +24000,7 @@ function simSaveState(state) {
 }
 function simResetState() {
   if (!confirm('Clear all hypothetical orders and quotes? This cannot be undone.')) return;
-  simSaveState({ hypotheticalOrders: [], hypotheticalSales: [], quotes: [], downgradedPos: [] });
+  simSaveState({ hypotheticalOrders: [], hypotheticalSales: [], quotes: [], downgradedPos: [], hsKeepRr: {} });
   renderSimulator();
 }
 
@@ -25350,7 +25375,47 @@ function simHypoSalesForWeek(mondayISO){
   return simGetState().hypotheticalSales.reduce(function(s,o){ return s + ((o.on !== false && simHypoSaleWk(o) === mondayISO) ? (+o.cases||0) : 0); }, 0);
 }
 function simActiveHypoSales(){
-  return simGetState().hypotheticalSales.filter(function(o){ return o.on !== false; }).map(function(o){ return { customer: o.customer, wk: simHypoSaleWk(o), cases: (+o.cases||0) }; });
+  var st = simGetState(), keep = st.hsKeepRr || {};
+  return st.hypotheticalSales.filter(function(o){ return o.on !== false; }).map(function(o){
+    return { customer: o.customer, wk: simHypoSaleWk(o), cases: (+o.cases||0), keepRr: !!keep[o.customer] }; });
+}
+// Qué cuentas quedan MODELADAS por lo que hay cargado — la misma regla que aplica hybridSalesForWeek,
+// acá para poder mostrarla. Sin esto el plan bajaría solo, sin nada en pantalla que lo explique.
+function simHsModeled(){
+  var out = [];
+  try{
+    var raw = (typeof _dmModelG !== 'undefined' && _dmModelG) ? _dmModelG
+              : ((typeof window !== 'undefined' && window._dmModelG) || null);
+    var win = (typeof dmWindow === 'function') ? dmWindow('ginger') : 13;
+    var m = (typeof mtoNetModel === 'function') ? mtoNetModel(raw, 'ginger', win) : raw;   // mismas tasas netas que la proyección
+    if(!m || !m.customers) return out;
+    var key = (win === 3) ? 'rr3Cases' : (win === 6) ? 'rr6Cases' : (win === 26) ? 'rr26Cases' : 'rrCases';
+    var keep = (simGetState().hsKeepRr) || {}, agg = {};
+    simActiveHypoSales().forEach(function(h){
+      if(!h || !h.customer || !h.wk) return;
+      var a = agg[h.customer] || (agg[h.customer] = { cases:0, first:null });
+      a.cases += (+h.cases||0);
+      if(!a.first || h.wk < a.first) a.first = h.wk;
+    });
+    Object.keys(agg).forEach(function(cust){
+      var c = null;
+      m.customers.forEach(function(x){ if(x && x.c === cust) c = x; });
+      var rr = c ? ((c[key] != null ? c[key] : c.rrCases) || 0) : 0;
+      if(!(rr > 0)) return;                                   // sin promedio no hay nada que apagar
+      var modeled = (agg[cust].cases >= rr && !keep[cust]);
+      // Un escenario chico no apaga nada y tampoco merece una línea: seis pruebas de 20 cajas serían
+      // seis renglones que no dicen nada. Se avisa solo cuando estuvo cerca del corte (media semana).
+      if(!modeled && !keep[cust] && agg[cust].cases < rr * 0.5) return;
+      out.push({ customer: cust, rr: Math.round(rr), first: agg[cust].first, cases: agg[cust].cases,
+                 keep: !!keep[cust], modeled: modeled });
+    });
+  }catch(e){}
+  return out;
+}
+function simToggleHsKeepRr(cust){
+  var st = simGetState(); if(!st.hsKeepRr) st.hsKeepRr = {};
+  if(st.hsKeepRr[cust]) delete st.hsKeepRr[cust]; else st.hsKeepRr[cust] = 1;
+  simSaveState(st); renderSimulator();
 }
 function simHsCustomers(){
   var m = (typeof _dmModelG !== 'undefined' && _dmModelG) ? _dmModelG : null;
@@ -25401,7 +25466,36 @@ function simRenderHypoSales(){
       + '<button onclick="simRemoveHypoSale(\''+o.id+'\')" style="border:0;background:none;color:var(--gray-400);font-size:16px;cursor:pointer;padding:0 3px">×</button>'
       + '</div>';
   }).join('') + '</div>'
+  + simHsModeledHTML()
   + '<div style="font-size:11px;color:var(--gray-400);font-family:var(--fm);margin-top:8px">'+total.toLocaleString()+' cs of scenario demand active · reflected in the projection below (Demand column, 🧪)</div>';
+}
+// Una cuenta modelada baja la demanda de todas las semanas que siguen. Eso NUNCA puede pasar en
+// silencio: acá se dice cuál cuenta, desde qué semana y cuántas cajas por semana se apagaron, con el
+// botón para volver atrás. Es la diferencia entre una regla y una sorpresa.
+function simHsModeledHTML(){
+  var rows = (typeof simHsModeled === 'function') ? simHsModeled() : [];
+  if(!rows.length) return '';
+  var _e = (typeof esc === 'function') ? esc : function(x){ return String(x); };
+  var wkLab = function(iso){ return (typeof cxWeekNo === 'function') ? ('W' + cxWeekNo(iso)) : String(iso); };
+  var btn = function(cust, txt){
+    return '<button onclick="simToggleHsKeepRr(\''+String(cust).replace(/'/g,"\\'")+'\')" style="margin-left:auto;border:1px solid var(--gray-200);background:var(--white);border-radius:6px;font-size:11px;padding:3px 9px;cursor:pointer;color:var(--gray-600);white-space:nowrap">'+txt+'</button>';
+  };
+  return '<div style="display:flex;flex-direction:column;gap:5px;margin-top:8px">' + rows.map(function(x){
+    if(x.modeled){
+      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid #DDD0FB;border-radius:7px;background:#FBF9FE;font-size:12px;color:var(--gray-700)">'
+        + '<span style="font-weight:600">'+_e(x.customer)+'</span>'
+        + '<span style="color:var(--gray-500)">modeled by scenario from '+wkLab(x.first)+' · run-rate off (−'+x.rr.toLocaleString()+' cs/wk from that week on)</span>'
+        + btn(x.customer, 'keep run-rate') + '</div>';
+    }
+    if(x.keep){
+      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px dashed var(--gray-200);border-radius:7px;background:var(--white);font-size:12px;color:var(--gray-600)">'
+        + '<span style="font-weight:600">'+_e(x.customer)+'</span>'
+        + '<span style="color:var(--gray-500)">run-rate kept on ('+x.rr.toLocaleString()+' cs/wk) · scenarios add on top of it</span>'
+        + btn(x.customer, 'model it') + '</div>';
+    }
+    return '<div style="padding:6px 10px;border:1px dashed var(--gray-200);border-radius:7px;background:var(--white);font-size:12px;color:var(--gray-500)">'
+      + '<span style="font-weight:600;color:var(--gray-700)">'+_e(x.customer)+'</span> · scenario is under one week of its average ('+x.rr.toLocaleString()+' cs/wk), so its run-rate stays on</div>';
+  }).join('') + '</div>';
 }
 function winRenderToggle(hostId){
   var host=document.getElementById(hostId); if(!host) return;

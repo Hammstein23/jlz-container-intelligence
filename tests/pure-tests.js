@@ -2188,6 +2188,48 @@ group('Un escenario puede sumar demanda, nunca borrarla');
   check('cuenta desconocida entra entera', hs(W4, [{customer:'Nueva', wk:W4, cases:300}]), base + 300);
 })();
 
+group('Cuenta modelada por escenario: su run-rate se apaga hacia adelante');
+// El escenario ya reemplazaba el promedio en SU semana, pero las otras semanas lo seguian contando:
+// con Sol-ti en 185 cs/sem y embarques cargados en la 39, la 38/40/42/43 pedian 185 cajas que ya
+// estaban en los escenarios. Medio contenedor de compra que nadie iba a pedir.
+// Ahora, si lo cargado llega a UNA semana del promedio de la cuenta, el promedio se apaga desde su
+// primer escenario en adelante. Hacia atras no se toca nada, y una prueba chica no apaga nada.
+(function(){
+  var W3='2026-09-14', W4='2026-09-21', W5='2026-09-28', W6='2026-10-05';
+  var modelo=function(){ return { customers:[
+    { c:'Sol-ti',  sporadic:true,  status:'active', rrCases:185 },
+    { c:'Pareja',  sporadic:false, status:'active', rrCases:400 } ] }; };
+  cmPlanEntries   = function(){ return []; };
+  mtoByCustomer   = function(){ return {}; };
+  dmWindow        = function(){ return 13; };
+  _cmProd         = function(c){ return c.product||'ginger'; };
+  cmCasesInBuyPack= function(c){ return c.cases||0; };
+  var base=736;
+  var hs=function(wk, extra){ return hybridSalesForWeek(wk, base, modelo(), 'ginger', extra||[]); };
+
+  var esc=[{ customer:'Sol-ti', wk:W4, cases:700 }];
+  check('la semana previa al escenario sigue con el promedio', hs(W3, esc), base);
+  check('en su semana, el escenario ocupa el lugar del promedio', hs(W4, esc), base + 700 - 185);
+  check('y de ahi en adelante el promedio ya no vuelve',        hs(W5, esc), base - 185);
+  check('tampoco dos semanas despues',                          hs(W6, esc), base - 185);
+
+  var chico=[{ customer:'Sol-ti', wk:W4, cases:20 }];
+  check('una prueba chica no apaga el promedio hacia adelante', hs(W5, chico), base);
+
+  var keep=[{ customer:'Sol-ti', wk:W4, cases:700, keepRr:true }];
+  check('con el run-rate conservado a mano, la semana siguiente lo mantiene', hs(W5, keep), base);
+  check('y en su semana el escenario sigue contando',                        hs(W4, keep), base + 700 - 185);
+
+  var par=[{ customer:'Pareja', wk:W4, cases:900 }];
+  check('cuenta pareja modelada: en su semana, escenario menos su promedio', hs(W4, par), base + 900 - 400);
+  check('y despues queda sin su promedio',                                   hs(W5, par), base - 400);
+  check('cuenta pareja con escenario chico: solo el excedente, sin apagar nada',
+        hs(W5, [{ customer:'Pareja', wk:W4, cases:100 }]), base);
+
+  // El Buy Planner llama sin escenarios: nada de esto puede moverle un numero.
+  check('sin escenarios, la semana no cambia', hs(W5, []), base);
+})();
+
 group('bpRowAtDate · la semana que CONTIENE la llegada, no la siguiente');
 // Con una venta hipotetica de 700 cajas, el Simulator proyectaba MAS stock a la llegada que el Buy
 // Planner (3.801 contra 3.697). No era el escenario: era que cada uno media en una semana distinta.
