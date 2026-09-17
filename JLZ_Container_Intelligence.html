@@ -18928,6 +18928,10 @@ function invmRunway(p, origin, weeks, opts){
              hypoIn:sumIn, hypoOut:sumOut,
              incoming:Object.keys(arr).reduce(function(t,k){ return t+(arr[k]||0); },0)+sumIn,
              peak:peak, peakWk:peakWk, dipWeek:dip,
+             // Con committed por semana arranca del FÍSICO (las comprometidas salen semana a semana, dentro de
+             // la demanda); sin él, del libre. La tarjeta lo tiene que nombrar bien: decía "254 free" arriba
+             // de una cuenta que dice "244 free".
+             startsOnHand:!!(WD && WD.hasCommWk),
              overShelf:(shelf!=null && peak>shelf), runwayWks:(start+Object.keys(arr).reduce(function(t,k){ return t+(arr[k]||0); },0))/d };
   }catch(e){ return null; }
 }
@@ -19431,7 +19435,7 @@ function invmBuySuggestionHTML(p, origin, opts){
         + 'Next 12 weeks if you buy nothing</div>'
         + '<div style="position:relative;display:flex;align-items:flex-end;gap:2px;height:'+(H+12)+'px">'+bars+shelfLine+'</div>'
         + '<div style="margin-top:4px;font-size:10.5px;font-family:var(--fm);color:var(--gray-500);line-height:1.5">'
-        + '<b>'+fr(R.start)+'</b> free + <b>'+fr(R.incoming)+'</b> already on the way = <b>'+(Math.round(R.runwayWks*10)/10)+' weeks</b> of supply at '+fr(R.demand)+' cs/wk. '
+        + '<b>'+fr(R.start)+'</b> '+(R.startsOnHand?'on hand':'free')+' + <b>'+fr(R.incoming)+'</b> already on the way = <b>'+(Math.round(R.runwayWks*10)/10)+' weeks</b> of supply at '+fr(R.demand)+' cs/wk. '
         + verdict + '</div></div>';
     }
   }catch(e){}

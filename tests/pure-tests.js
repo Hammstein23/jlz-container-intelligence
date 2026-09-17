@@ -6117,6 +6117,10 @@ group('La sugerencia de compra consume la semana del conteo IGUAL que la tabla')
     check('la pista arranca donde arranca la tabla', R.start, 250);
     check('y su primera semana consume lo mismo que la tabla', Math.round(R.rows[0].demand*10)/10, 70);
     check('al cerrar la semana del conteo quedan 180, no 110', Math.round(R.rows[0].raw), 180);
+    // La tarjeta nombra bien ese arranque: son las cajas en cámara, no las libres (la cuenta de abajo dice 210 free).
+    ok('la pista sabe que arranca del físico', R.startsOnHand === true);
+    var _h1 = invmBuySuggestionHTML('turmeric', 'Fiji');
+    ok('y la tarjeta dice "250 on hand", no "250 free"', _h1.indexOf('<b>250</b> on hand + ') > -1 && _h1.indexOf('<b>250</b> free') < 0);
 
     // Y la compra se mide con esa semana, no con la plana.
     var g = invmBuySuggestion('turmeric', 'Fiji');
@@ -6130,6 +6134,13 @@ group('La sugerencia de compra consume la semana del conteo IGUAL que la tabla')
     ok('son 70 cajas más de lo que daba la cuenta vieja (libre − semanas enteras)',
        idx > 0 && Math.round(a.stockAtLanding - (210 - 100*idx)) === 70);
     check('y la compra sale de ahí', g.buy, Math.max(0, Math.ceil((10/7)*100 - a.stockAtLanding)));
+
+    // Sin committed por semana arranca del libre, y ahí sí dice "free".
+    invmCommittedByWeek = function(){ return {}; };
+    var _R0 = invmRunway('turmeric', 'Fiji', 4);
+    ok('sin committed por semana arranca del libre y lo dice', _R0.start === 210 && _R0.startsOnHand === false
+       && invmBuySuggestionHTML('turmeric', 'Fiji').indexOf('<b>210</b> free + ') > -1);
+    invmCommittedByWeek = function(){ var o = {}; o[WK0] = 40; return o; };
 
     // Sin fecha de conteo no se prorratea: se asume foto de lunes, que es el lado seguro.
     SNAP = null;
