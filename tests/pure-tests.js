@@ -6413,6 +6413,57 @@ group('La curva de venta por día sale de tus ventas, no de una convención');
 })();
 } catch (_e) { ok('curva de la semana no tira excepción: ' + ((_e && _e.message) || _e), false); }
 
+try {
+group('Lo ya reempacado no está "por salir": salió del conteo antes de la foto');
+// El 17-sep, 29 de las 39 cs pedidas de turmeric-Fiji eran packs de 5 lb ya reempacados el 15 y el 16: su
+// granel salió del lote de 30 ANTES del conteo del jueves. Contarlas como pendientes hacía que la semana
+// consumiera 69 en vez de 54, y el plan pedía ~15 cs de más (189 en vez de 174).
+(function(){
+  var WK = '2026-09-14';
+  productCaseLb  = function(){ return 30; };
+  _cmProd        = function(c){ return c.product || 'turmeric'; };
+  _cmOriginFor   = function(c){ return c.origin || ''; };
+  _cmIsCrossDock = function(c, cd){ return !!(cd && c && cd[c.customer]); };
+  mtoByCustomer  = function(p, w, o){ return (o && o.crossDockOnly) ? { 'Sol-ti':1 } : {}; };
+  dmWindow       = function(){ return 3; };
+  cmPlanEntries  = function(){ return [
+    { type:'inv', product:'turmeric', origin:'Fiji', wk:WK, customer:"Albert's", cases:5,   sku:'OG-TUR-30Lbs-PR-FJ',    lot:'W2976A2698252' },
+    { type:'inv', product:'turmeric', origin:'Fiji', wk:WK, customer:"Albert's", cases:10,  sku:'OG-TUR-5Lbs-PR-FJ',     lot:'W2977A2698256' },
+    { type:'inv', product:'turmeric', origin:'Fiji', wk:WK, customer:'Erewhon',  cases:9,   sku:'OG-TUR-5Lbs-PR-FJ',     lot:'W2979A2698383' },
+    { type:'inv', product:'turmeric', origin:'Fiji', wk:WK, customer:'Sol-ti',   cases:700, sku:'OG-TUR-30Lbs-cat2-FJ',  lot:'2674160-0001' } ]; };
+  var FOTO = { lots:[ { lot:'W2977A2698256', cases:60 }, { lot:'W2979A2698383', cases:54 },
+                      { lot:'W2976A2698252', cases:5 } ] };          // los dos de 5 lb, ya reempacados
+  var _realLoad = wlotLoadStore;
+  wlotLoadStore = function(){ return FOTO; };
+  try {
+    check('de las 24 cs pedidas, solo las 5 en caja de 30 siguen en el conteo', cmFirmForWeek('turmeric','Fiji',WK), 5);
+
+    // Y la proyección prorratea contra ESO: 5 enteras + la mitad de lo que falta.
+    invmCommittedByWeek = function(){ var o = {}; o[WK] = 24; return o; };
+    prodInvState = function(){ return { _savedAt:'2026-09-17' }; };   // jueves: queda media semana
+    var W = invmWeekDemands('turmeric', 'Fiji', { p:'turmeric', origin:'Fiji', onHandCases:254, availCases:244, unbilledCases:0 }, 98, [WK]);
+    check('la semana del conteo consume 5 + la mitad de 93', Math.round(W.rows[0].demW*10)/10, Math.round((5 + (98-5)*0.5)*10)/10);
+    ok('y eso es menos que contar las 24 como pendientes', W.rows[0].demW < (24 + (98-24)*0.5));
+
+    // Un pedido de 5 lb TODAVÍA sin reempacar sí está: su granel sigue dentro de la caja de 30.
+    FOTO = { lots:[ { lot:'W2976A2698252', cases:5 } ] };
+    check('sin reempacar, el pedido de 5 lb cuenta entero', cmFirmForWeek('turmeric','Fiji',WK), 24);
+
+    // Lo cruzado nunca entra, esté o no reempacado.
+    ok('las 700 de Sol-ti no entran nunca', cmFirmForWeek('turmeric','Fiji',WK) < 700);
+
+    // Sin foto de reempaques no se puede saber: devuelve null y el que llama usa el committed entero.
+    wlotLoadStore = function(){ return null; };
+    check('sin foto no adivina', cmFirmForWeek('turmeric','Fiji',WK), null);
+    var W2 = invmWeekDemands('turmeric', 'Fiji', { p:'turmeric', origin:'Fiji', onHandCases:254, availCases:244, unbilledCases:0 }, 98, [WK]);
+    check('y ahí la semana vuelve al lado conservador', Math.round(W2.rows[0].demW*10)/10, Math.round((24 + (98-24)*0.5)*10)/10);
+  } finally {
+    wlotLoadStore = _realLoad;
+    prodInvState = function(){ return {}; };
+  }
+})();
+} catch (_e) { ok('firme en el conteo no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
 // ═══ El entorno se limpia entre grupos ══════════════════════════════════════
 // Guardián del arreglo de arriba. Si alguien saca la restauración de `group()`, esto falla y
 // dice por qué — en vez de que un test futuro mida un stub ajeno y nadie se entere.

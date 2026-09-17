@@ -18114,6 +18114,44 @@ function invmCommittedByWeek(p, origin, fromWk){
   all.forEach(function(c){ out[c.wk]=(out[c.wk]||0)+(parseFloat(c.cases)||0); });
   return out;
 }
+// ── De lo ya pedido, lo que TODAVÍA está en el conteo ────────────────────────────────────────────
+// Un pedido de 5 lb ya reempacado no está en las cajas que se compran: al reempacar, el granel sale del
+// lote de 30 (WholesaleWare lo factura como venta interna a JLZ Produce Manufacturing), así que esas
+// cajas ya salieron del conteo ANTES de que lo tomáramos. Tratarlas igual que a un pedido pendiente las
+// descuenta dos veces: el 2026-09-17 eran 29 de las 39 cs pedidas de turmeric-Fiji, la semana del conteo
+// consumía 69 en vez de 54 y el plan pedía ~15 cs de más (189 en vez de 174).
+// Cuenta como firme lo que sigue adentro: el pack que se compra, y un pack chico solo mientras NO se haya
+// reempacado — su W-lot todavía no aparece en la foto del Inventory Report. Devuelve null si no se puede
+// decidir (sin foto de reempaques), y ahí el que llama se queda con el committed entero, que es el lado
+// conservador de siempre. Ver [[committed-pack-units]] y [[monday-routine-redesign]].
+function cmFirmForWeek(p, origin, wk){
+  try{
+    if(typeof cmPlanEntries !== 'function' || !wk) return null;
+    var snap = {}, hayFoto = false;
+    try{
+      var st = (typeof wlotLoadStore === 'function') ? wlotLoadStore(WLOT_SNAP_LS) : null;
+      ((st && st.lots) || []).forEach(function(l){ if(l && l.lot){ snap[String(l.lot)] = 1; hayFoto = true; } });
+    }catch(e){}
+    if(!hayFoto) return null;                                  // sin foto no se puede saber qué se reempacó
+    var caseLb = (typeof productCaseLb === 'function') ? (productCaseLb(p) || 30) : 30;
+    var cd = {}; try{ cd = (typeof mtoByCustomer === 'function')
+        ? (mtoByCustomer(p, (typeof dmWindow === 'function') ? dmWindow(p, origin) : 13, {crossDockOnly:true}) || {}) : {}; }catch(e){}
+    var tot = 0;
+    cmPlanEntries().forEach(function(c){
+      if(!c || c.type !== 'inv' || c.wk !== wk) return;
+      if(((typeof _cmProd === 'function') ? _cmProd(c) : 'ginger') !== p) return;
+      if(origin && origin !== 'all' && typeof _cmOriginFor === 'function'){
+        var o = _cmOriginFor(c); if(o && o !== origin) return;
+      }
+      if(typeof _cmIsCrossDock === 'function' && _cmIsCrossDock(c, cd)) return;   // nunca entró a cámara
+      var pk = (typeof wlotPackOf === 'function') ? wlotPackOf(c.sku) : { lb:null };
+      var chico = !!(pk && pk.lb && Math.abs(pk.lb - caseLb) > 0.01);
+      if(chico && c.lot && snap[String(c.lot)]) return;                            // ya reempacado
+      tot += (+c.cases || 0);
+    });
+    return tot;
+  }catch(e){ return null; }
+}
 // Show/hide the past-weeks block in a product's projection (turmeric/garlic/shallots + ginger-Hawaii).
 // Preference is per product and per device.
 function invmToggleHist(p){
@@ -18285,7 +18323,13 @@ function invmWeekDemands(p, origin, s, weekly, wks){
     // que ya pasaron. El committed no se prorratea — son órdenes reales con fecha.
     // Sin fecha de guardado NO se prorratea: se asume foto de inicio de semana, que es el lado seguro
     // (proyecta más consumo, nunca menos).
-    if(i===0 && snap && typeof bpSnapWeekDemand==='function') demW=bpSnapWeekDemand(demW, commW, 1, snap);
+    // Lo que NO se prorratea es lo pedido que todavía está en el conteo (cmFirmForWeek): un pedido de
+    // 5 lb ya reempacado salió del lote de 30 antes de la foto, y contarlo como pendiente lo descuenta
+    // dos veces. Sin foto de reempaques, se usa el committed entero, como antes.
+    if(i===0 && snap && typeof bpSnapWeekDemand==='function'){
+      var _fw = (typeof cmFirmForWeek==='function') ? cmFirmForWeek(P, O, wkISO) : null;
+      demW=bpSnapWeekDemand(demW, (_fw!=null ? _fw : commW), 1, snap);
+    }
     return { wkISO:wkISO, commW:commW, demW:demW };
   });
   return { start:start, snap:snap, hasCommWk:hasCommWk, rows:rows };
@@ -29280,13 +29324,21 @@ function dmWeekStatus(){
   var _infl = (function(){ try{ var sp=((typeof PRODUCTS==='object' && PRODUCTS[prod])||{}).shrinkPct||0;
                                 return sp>0 ? 1/(1-Math.min(0.6, sp/100)) : 1; }catch(e){ return 1; } })();
   var weekly = Math.max(0, salesBase * _infl);                  // lo que sale de cámara en una semana entera
-  var firm = Math.max(0, namedCs);
-  var demW = Math.max(firm, weekly);
+  var booked = Math.max(0, namedCs);                            // TODO lo pedido para esta semana
+  // Lo pedido que todavía está en el conteo. Un pedido de 5 lb ya reempacado salió del lote de 30 antes
+  // de la foto: sigue siendo salida de la semana (por eso pesa en `demW`), pero ya no está por salir.
+  var _fw = (typeof cmFirmForWeek === 'function') ? cmFirmForWeek(prod, _org || 'all', wk) : null;
+  var firm = (_fw != null) ? Math.max(0, _fw) : booked;
+  var repacked = Math.max(0, booked - firm);
+  var demW = Math.max(booked, weekly);
   var ahead = (typeof bpSnapWeekDemand === 'function') ? bpSnapWeekDemand(demW, firm, 1, new Date())
                                                        : demW * pace.aheadPct;
   // Cada orden ya pedida, con su día y su pack. La conversión no se veía en ningún lado: 60 cajas de
   // 5 lb son 10 de las de 30 que se compran, y así es como entran a la cuenta.
   var lines = [], excluded = [], byDay = {};
+  var _snapLots = {};
+  try{ var _ws = (typeof wlotLoadStore === 'function') ? wlotLoadStore(WLOT_SNAP_LS) : null;
+       ((_ws && _ws.lots) || []).forEach(function(l){ if(l && l.lot) _snapLots[String(l.lot)] = 1; }); }catch(e){}
   if(typeof cmPlanEntries === 'function'){
     cmPlanEntries().forEach(function(c){
       if(!c || c.type !== 'inv' || c.wk !== wk) return;
@@ -29294,9 +29346,11 @@ function dmWeekStatus(){
       var _o = (typeof _cmOriginFor === 'function') ? (_cmOriginFor(c) || '') : '';
       if(_org && _o && _o !== _org) return;
       var pk = (typeof wlotPackOf === 'function') ? wlotPackOf(c.sku) : { label:'', lb:null };
+      var _chico = !!(pk.lb && Math.abs(pk.lb - caseLb) > 0.01);
       var row = { date: c.date || '', customer: c.customer || '(no name)', cs: +c.cases || 0,
                   pack: pk.label || '', origin: _o,
-                  sold: (pk.lb && Math.abs(pk.lb - caseLb) > 0.01) ? Math.round((+c.cases || 0) * caseLb / pk.lb) : null };
+                  sold: _chico ? Math.round((+c.cases || 0) * caseLb / pk.lb) : null,
+                  outOfCount: !!(_chico && c.lot && _snapLots[String(c.lot)]) };
       if(_isDS(c.customer) && !c.fromCooler){ excluded.push(row); return; }      // cruzado: no toca el almacén
       lines.push(row);
       if(row.date) byDay[row.date] = (byDay[row.date] || 0) + row.cs;
@@ -29338,7 +29392,8 @@ function dmWeekStatus(){
   // ceros y se lee como si estuviera roto, cuando el número es correcto.
   return { prod: prod, origin: _org, wk: wk, pace: pace, est: est, ahead: Math.round(ahead),
            weekly: Math.round(weekly), soldWk: Math.round(salesBase), infl: _infl, caseLb: caseLb,
-           firm: Math.round(firm), unbooked: Math.max(0, Math.round(ahead - firm)),
+           firm: Math.round(firm), booked: Math.round(booked), repacked: Math.round(repacked),
+           unbooked: Math.max(0, Math.round(ahead - firm)),
            behind: Math.max(0, Math.round(demW - ahead)), invoiced: Math.round(invoiced),
            lines: lines, excluded: excluded, byDay: byDay, byOrigin: byOrigin,
            named: named, namedCs: Math.round(namedCs), rrAll: _rrW / caseLb, ds: _ds,
@@ -29435,13 +29490,21 @@ function renderWeekPanel(){
      + (s.invoiced > 0 ? (' &middot; invoiced so far <b>' + N(s.invoiced) + ' cs</b>'
          + (s.staleDays > 1 ? (', loaded through ' + E(s.lastLoaded)) : '')) : '')
      + '</td></tr>';
+  // Un pedido de pack chico ya reempacado NO está por salir: su granel salió del lote de compra cuando se
+  // reempacó, antes del conteo. Va acá, con los días cerrados, y no en "still ahead".
+  if(s.repacked > 0){
+    h += '<tr class="sub"><td>&mdash; already repacked</td><td class="n">' + N(s.repacked) + ' cs</td>'
+       + '<td class="m">booked in 5/10 lb cases and already repacked &mdash; that bulk left the '
+       + N(s.caseLb) + ' lb lots before the count</td></tr>';
+  }
   h += '<tr class="hi"><td>Still ahead</td><td class="n">' + N(s.ahead) + ' cs</td>'
      + '<td class="m">what still has to leave the warehouse</td></tr>';
   // Plegado sigue nombrando a los clientes: es lo que se lee de un vistazo. Desplegado, cada orden con
   // su día y su pack, así que los nombres ya están abajo y arriba va la regla.
   var _quien = s.named.slice(0, 3).map(function(x){ return E(x.c) + ' ' + N(x.cs); }).join(' &middot; ')
              + (s.named.length > 3 ? (' &middot; +' + (s.named.length - 3) + ' more') : '');
-  h += '<tr class="sub"><td>&mdash; booked orders</td><td class="n">' + N(_firm) + ' cs</td>'
+  h += '<tr class="sub"><td>&mdash; booked' + (s.repacked > 0 ? ', still to pick' : ' orders') + '</td>'
+     + '<td class="n">' + N(_firm) + ' cs</td>'
      + '<td class="m">' + ((!abierto && _quien) ? _quien : 'counted whole &mdash; they have a delivery date')
      + (_lines.length ? (' <button type="button" onclick="dmWeekToggleOrders()" style="border:0;background:none;'
          + 'padding:0 0 0 5px;color:var(--jlz);font-family:var(--fm);font-size:10.5px;cursor:pointer;text-decoration:underline">'
@@ -29454,7 +29517,9 @@ function renderWeekPanel(){
          + '<td class="n">' + N(l.cs) + ' cs</td>'
          + '<td class="m">' + (l.sold
               ? (N(l.sold) + ' cases of ' + E(l.pack) + ' &rarr; ' + N(l.cs) + ' of ' + N(s.caseLb) + ' lb')
-              : (l.pack ? (E(l.pack) + ' case') : '')) + '</td></tr>';
+              : (l.pack ? (E(l.pack) + ' case') : ''))
+         + (l.outOfCount ? ' <span style="color:var(--amber-700)">&middot; already repacked, out of the count</span>' : '')
+         + '</td></tr>';
     });
   }
   if(_exc.length){
