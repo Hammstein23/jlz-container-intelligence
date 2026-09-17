@@ -18152,6 +18152,115 @@ function cmFirmForWeek(p, origin, wk){
     return tot;
   }catch(e){ return null; }
 }
+// ── La fecha, con su semana ─────────────────────────────────────────────────────────────────────
+// El plan se habla en semanas (las tablas dicen "Wk 38") y las tarjetas hablaban solo en fechas, así
+// que había que traducir a mano para cruzarlas. Pedido de Juan, 2026-09-17.
+function bpDateWk(iso){
+  var s = String(iso == null ? '' : iso);
+  if(!/^\d{4}-\d{2}-\d{2}/.test(s)) return s;
+  var w = null; try{ w = (typeof isoWeek === 'function') ? isoWeek(s.slice(0, 10)) : null; }catch(e){}
+  return s + (w ? (' · Wk ' + w) : '');
+}
+// ── La insignia del committed: la misma en las tres proyecciones, y se puede abrir ───────────────
+// Era "📋39" con un tooltip: el número estaba, pero nada decía qué era (Juan: "le has puesto un
+// emoticon, pero no queda claro"). Ahora dice "39 booked" y es un botón — el clic abre las órdenes
+// de esa semana, con el cliente, el día, el pack y si ya salió del conteo.
+function cmWeekBadge(p, origin, wk, cases){
+  if(!(+cases > 0) || !wk) return '';
+  var n = Math.round(+cases).toLocaleString('en-US');
+  var arg = function(x){ return String(x == null ? '' : x).replace(/\\/g, '').replace(/'/g, ''); };
+  return ' <button type="button" onclick="cmWeekOrdersOpen(\'' + arg(p) + '\',\'' + arg(origin) + '\',\'' + arg(wk) + '\')"'
+    + ' title="Orders already booked for this week &mdash; click to see them"'
+    + ' style="border:1px solid #ddd6fe;background:#f5f3ff;color:#6d28d9;font-family:var(--fm);font-size:9.5px;'
+    + 'font-weight:700;padding:1px 6px;border-radius:999px;cursor:pointer;white-space:nowrap;vertical-align:1px">'
+    + n + ' booked</button>';
+}
+function cmWeekOrdersClose(){
+  var m = (typeof document !== 'undefined') ? document.getElementById('cm-week-modal') : null;
+  if(m) m.style.display = 'none';
+}
+// La ventanita de la insignia. Muestra las órdenes de ESA semana tal como las cuenta el plan: las que
+// todavía tienen que salir, las de pack chico que ya se reempacaron (su granel salió del conteo antes
+// de la foto) y las cruzadas, que nunca entran a cámara.
+function cmWeekOrdersOpen(p, origin, wk){
+  if(typeof document === 'undefined') return;
+  var html = cmWeekOrdersHTML(p, origin, wk);
+  if(!html) return;
+  var m = document.getElementById('cm-week-modal');
+  if(!m){
+    m = document.createElement('div'); m.id = 'cm-week-modal';
+    m.setAttribute('style', 'display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.3);z-index:400;'
+      + 'align-items:flex-start;justify-content:center;padding:48px 20px;overflow-y:auto');
+    m.addEventListener('click', function(e){ if(e.target === m) cmWeekOrdersClose(); });
+    document.addEventListener('keydown', function(e){ if(e.key === 'Escape') cmWeekOrdersClose(); });
+    document.body.appendChild(m);
+  }
+  m.innerHTML = html;
+  m.style.display = 'flex';
+}
+// El contenido de esa ventana, aparte y PURO: así se puede probar sin navegador (el `document` del
+// harness no sabe crear elementos), que es lo que decide si los estados y la cuenta de abajo cierran.
+function cmWeekOrdersHTML(p, origin, wk){
+  if(typeof cmPlanEntries !== 'function') return '';
+  var esc = (typeof libEsc === 'function') ? libEsc : function(x){ return String(x == null ? '' : x); };
+  var f = function(n){ return Math.round(n || 0).toLocaleString('en-US'); };
+  var day = function(iso){ return iso ? ((typeof dmcDateLabel === 'function' && dmcDateLabel(iso)) || String(iso).slice(5)) : '—'; };
+  var caseLb = (typeof productCaseLb === 'function') ? (productCaseLb(p) || 30) : 30;
+  var snap = {};
+  try{ var ws = (typeof wlotLoadStore === 'function') ? wlotLoadStore(WLOT_SNAP_LS) : null;
+       ((ws && ws.lots) || []).forEach(function(l){ if(l && l.lot) snap[String(l.lot)] = 1; }); }catch(e){}
+  var cd = {}; try{ cd = (typeof mtoByCustomer === 'function')
+      ? (mtoByCustomer(p, (typeof dmWindow === 'function') ? dmWindow(p, origin) : 13, {crossDockOnly:true}) || {}) : {}; }catch(e){}
+  var filas = [], porSalir = 0, reemp = 0, cruz = 0;
+  cmPlanEntries().forEach(function(c){
+    if(!c || c.type !== 'inv' || c.wk !== wk) return;
+    if(((typeof _cmProd === 'function') ? _cmProd(c) : 'ginger') !== p) return;
+    if(origin && origin !== 'all' && typeof _cmOriginFor === 'function'){ var o = _cmOriginFor(c); if(o && o !== origin) return; }
+    var pk = (typeof wlotPackOf === 'function') ? wlotPackOf(c.sku) : { label:'', lb:null };
+    var chico = !!(pk.lb && Math.abs(pk.lb - caseLb) > 0.01);
+    var cs = +c.cases || 0;
+    var estado, color;
+    if(typeof _cmIsCrossDock === 'function' && _cmIsCrossDock(c, cd)){
+      estado = 'ships from the port, never in stock'; color = 'var(--gray-400)'; cruz += cs;
+    } else if(chico && c.lot && snap[String(c.lot)]){
+      estado = 'already repacked &mdash; out of the count'; color = 'var(--amber-700)'; reemp += cs;
+    } else {
+      estado = 'still to pick'; color = 'var(--jlz)'; porSalir += cs;
+    }
+    filas.push({ date: c.date || '', customer: c.customer || '(no name)', orderNo: c.orderNo || '',
+                 cs: cs, pack: pk.label || '', chico: chico,
+                 sold: chico ? Math.round(cs * caseLb / pk.lb) : null, estado: estado, color: color });
+  });
+  filas.sort(function(a, b){ return String(a.date).localeCompare(String(b.date)) || (b.cs - a.cs); });
+  var lbl = (typeof productLabel === 'function') ? productLabel(p) : p;
+  var td = 'padding:7px 10px;border-bottom:1px solid var(--gray-100);font-size:12px';
+  var html = '<div style="background:var(--white);border-radius:8px;box-shadow:0 12px 32px rgba(0,0,0,.18);width:100%;max-width:720px;font-family:var(--fb)">'
+    + '<div style="padding:15px 20px;border-bottom:1px solid var(--gray-200);display:flex;justify-content:space-between;gap:12px;align-items:flex-start">'
+    + '<div><div style="font-size:15px;font-weight:700;color:var(--gray-800)">Booked for ' + esc(bpDateWk(wk).replace(/^\d{4}-\d{2}-\d{2}\s*·\s*/, '')) + ' &middot; '
+      + esc(lbl) + (origin ? (' &middot; ' + esc(origin)) : '') + '</div>'
+    + '<div style="font-size:11.5px;color:var(--gray-500);margin-top:3px">Orders sold and not yet invoiced, in ' + caseLb + ' lb cases &mdash; week of ' + esc(day(wk)) + '</div></div>'
+    + '<button onclick="cmWeekOrdersClose()" aria-label="Close" style="border:none;background:none;cursor:pointer;color:var(--gray-400);font-size:20px;padding:0 6px;line-height:1">&times;</button>'
+    + '</div>'
+    + (filas.length
+        ? ('<table style="width:100%;border-collapse:collapse"><tbody>'
+           + filas.map(function(r){
+               return '<tr><td style="' + td + ';color:var(--gray-500);font-family:var(--fm);white-space:nowrap">' + esc(day(r.date)) + '</td>'
+                 + '<td style="' + td + ';color:var(--gray-800)">' + esc(r.customer)
+                 + (r.orderNo ? ('<span style="color:var(--gray-400);font-family:var(--fm);font-size:10.5px"> &middot; ' + esc(r.orderNo) + '</span>') : '') + '</td>'
+                 + '<td style="' + td + ';text-align:right;font-weight:700;font-family:var(--fm);white-space:nowrap">' + f(r.cs) + ' cs</td>'
+                 + '<td style="' + td + ';color:var(--gray-500);font-family:var(--fm);font-size:11px;white-space:nowrap">'
+                 + (r.sold ? (f(r.sold) + ' &times; ' + esc(r.pack)) : (r.pack ? esc(r.pack) : '')) + '</td>'
+                 + '<td style="' + td + ';color:' + r.color + ';font-size:11px">' + r.estado + '</td></tr>'; }).join('')
+           + '</tbody></table>')
+        : '<div style="padding:18px 20px;color:var(--gray-500);font-size:12.5px">No orders booked for this week.</div>')
+    + '<div style="padding:11px 20px;border-top:1px solid var(--gray-200);background:var(--gray-50);font-size:11.5px;color:var(--gray-600);line-height:1.6">'
+    + '<b>' + f(porSalir) + ' cs</b> still to leave the warehouse'
+    + (reemp > 0 ? (' &middot; <span style="color:var(--amber-700)">' + f(reemp) + ' cs already repacked, so that bulk left the '
+        + caseLb + ' lb lots before the count</span>') : '')
+    + (cruz > 0 ? (' &middot; <span style="color:var(--gray-500)">' + f(cruz) + ' cs go from the port to the customer</span>') : '')
+    + '</div></div>';
+  return html;
+}
 // Show/hide the past-weeks block in a product's projection (turmeric/garlic/shallots + ginger-Hawaii).
 // Preference is per product and per device.
 function invmToggleHist(p){
@@ -18508,7 +18617,8 @@ function invmProjectionHTML(s){
       +'<td style="text-align:left;padding:8px 12px;color:var(--gray-700)">'+(w.i===0?'<span style="color:var(--jlz);font-weight:700">now</span> ':'')+'<b>'+String(wkNo(w.wkISO)).trim()+'</b> <span style="color:var(--gray-400);font-weight:400;font-size:10px;font-family:var(--fm)">'+((typeof dmWeekRange==='function')?dmWeekRange(w.wkISO):lbl(w.wkISO))+'</span></td>'
       +'<td style="text-align:right;padding:8px 12px;color:var(--gray-500);font-size:11px">'+(w.start>0?f(w.start):'—')+'</td>'
       +'<td style="text-align:right;padding:8px 12px">'+inCell+'</td>'
-      +'<td style="text-align:right;padding:8px 12px;color:#b91c1c">−'+f(w.demW)+(w.commW>0?(' <span title="'+f(w.commW)+' cs already booked (unshipped, not yet invoiced)" style="color:#7c3aed;font-weight:700;font-size:9px">📋'+f(w.commW)+'</span>'):'')+'</td>'
+      +'<td style="text-align:right;padding:8px 12px;color:#b91c1c">−'+f(w.demW)
+      + ((typeof cmWeekBadge==='function') ? cmWeekBadge(s.p, s.origin, w.wkISO, w.commW) : '')+'</td>'
       +'<td style="text-align:right;padding:8px 12px;font-weight:700;color:'+endColor+'">'+f(w.end)+'</td>'
       +'<td style="text-align:right;padding:8px 12px;font-weight:600;color:'+covColor+'">'+f1(cover)+'w</td>'
       +'<td style="padding:8px 12px">'+stB+'</td>'
@@ -19359,8 +19469,11 @@ function invmBuySuggestionHTML(p, origin, opts){
   // piensa así ("hasta el sábado, llega el martes"), y una fecha sola obliga a buscar el calendario.
   var conDias=!!(g.deliveryDays && g.deliveryDays.length);
   var diaTxt=function(iso){ var m=String(iso||'').match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if(!conDias || !m) return String(iso||'');
-    return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(+m[1], +m[2]-1, +m[3]).getDay()]+' '+iso; };
+    if(!m) return String(iso||'');
+    // Día de la semana cuando el proveedor entrega días fijos, y SIEMPRE el número de semana: el plan se
+    // habla en semanas (las tablas dicen "Wk 38") y la tarjeta hablaba solo en fechas (Juan, 2026-09-17).
+    var d=(typeof bpDateWk==='function') ? bpDateWk(iso) : String(iso);
+    return (conDias ? (['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(+m[1], +m[2]-1, +m[3]).getDay()]+' ') : '')+d; };
   var dia=function(iso){ return esc(diaTxt(iso)); };
   var diasEntrega=conDias ? (function(){
     var n=g.deliveryDays.map(function(d){ return ['Sundays','Mondays','Tuesdays','Wednesdays','Thursdays','Fridays','Saturdays'][d]; });
@@ -19372,7 +19485,7 @@ function invmBuySuggestionHTML(p, origin, opts){
   // Una fecha límite a más de medio año no es información, es ruido: se dice que no corre y ya.
   var head = (g.buy>0)
     ? ('Buy <b>'+f(g.buy)+'</b> cases &middot; order '+(late?'<b>now</b>':('by <b>'+dia(g.orderBy)+'</b>'+(g.offset<=14?(' &middot; in '+g.offset+'d'):'')))
-        +(conDias ? (' &middot; delivered <b>'+dia(g.arrives)+'</b>') : (' &middot; lands <b>'+esc(g.arrives)+'</b>')))
+        +(conDias ? (' &middot; delivered <b>'+dia(g.arrives)+'</b>') : (' &middot; lands <b>'+dia(g.arrives)+'</b>')))
     : (g.far ? '<b>Covered</b> &mdash; nothing to order for months'
              : '<b>Covered</b> &mdash; nothing to order yet &middot; next order-by around <b>'+esc(g.orderBy)+'</b>');
   // "Order now" con cobertura de semanas se lee como una contradicción si no se dice por qué:
@@ -19641,10 +19754,10 @@ function bpGingerSuggestionHTML(src){
   var escalonado = !!(SCH && SCH.some(function(x){ return x.orderBy!==SCH[0].orderBy; }));
   var head='Buy <b>'+R.containers+'</b> container'+(R.containers>1?'s':'')+' &middot; ~<b>'+f(R.netCases)+'</b> cases'
     + (escalonado
-        ? (' &middot; <b>not all at once</b> &middot; first by <b>'+esc(SCH[0].orderBy)+'</b>, last by <b>'+esc(SCH[SCH.length-1].orderBy)+'</b>')
+        ? (' &middot; <b>not all at once</b> &middot; first by <b>'+esc(bpDateWk(SCH[0].orderBy))+'</b>, last by <b>'+esc(bpDateWk(SCH[SCH.length-1].orderBy))+'</b>')
         : (ya ? ' &middot; order <b>now</b>'
               : (plazoISO ? (' &middot; order by <b>'+plazoISO+'</b>'+(plazoDias!=null?(' &middot; in '+plazoDias+'d'):'')) : ''))
-          + (lands? (' &middot; lands <b>'+lands+'</b>') : ''));
+          + (lands? (' &middot; lands <b>'+esc(bpDateWk(lands))+'</b>') : ''));
   var cal='';
   if(escalonado){
     cal='<div style="margin-top:8px;border:1px solid var(--gray-200);border-left:3px solid var(--jlz);border-radius:6px;overflow:hidden">'
@@ -19655,10 +19768,10 @@ function bpGingerSuggestionHTML(src){
           var sep=(i>0)?Math.round((new Date(x.orderBy+'T12:00:00')-new Date(SCH[i-1].orderBy+'T12:00:00'))/86400000):0;
           return '<tr style="border-top:1px solid var(--gray-100)">'
             + '<td style="padding:5px 9px;color:var(--gray-400);white-space:nowrap">#'+x.n+'</td>'
-            + '<td style="padding:5px 9px;white-space:nowrap">order by <b>'+esc(x.orderBy)+'</b>'
+            + '<td style="padding:5px 9px;white-space:nowrap">order by <b>'+esc(bpDateWk(x.orderBy))+'</b>'
               + (x.late?' <span style="color:#DC2626">(overdue)</span>':(' <span style="color:var(--gray-400)">('+x.daysLeft+'d)</span>'))
               + (sep>0?('<span style="color:var(--gray-400)"> &middot; '+sep+'d after the previous</span>'):'')+'</td>'
-            + '<td style="padding:5px 9px;color:var(--gray-500);white-space:nowrap">lands '+esc(x.landsWk)+'</td>'
+            + '<td style="padding:5px 9px;color:var(--gray-500);white-space:nowrap">lands '+esc(bpDateWk(x.landsWk))+'</td>'
             // "floor" era la ultima palabra de la tarjeta que no decia que es. Se entiende sola o no sirve.
             + '<td style="padding:5px 9px;text-align:right;color:var(--gray-500);white-space:nowrap">lowest '+f(x.trough)+' cases</td>'
             + '</tr>'; }).join('')
@@ -20635,6 +20748,8 @@ function renderBuyPlanner() {
       arrivalOrders: arrivals,
       demand: wkDemand,
       committed: committedWk,
+      wkISO: _wkKey,                 // la insignia del committed abre las órdenes de ESA semana
+
       endingStock: runningStock,
       weeksOfCoverage: 0,          // se calcula abajo: necesita las demandas de las semanas SIGUIENTES
     };
@@ -20829,10 +20944,7 @@ function renderBuyPlanner() {
       // aunque la fila trae el dato desde siempre. Sin ella, "−488" no dice cuánto de esa semana ya
       // está pedido y cuánto es estimación. Mismo formato y mismo texto que la otra tabla.
       + '<td style="padding:8px 12px;text-align:right;color:var(--red-600)">−' + Math.round(r.demand).toLocaleString()
-        + ((+r.committed > 0)
-            ? (' <span title="' + Math.round(r.committed).toLocaleString() + ' cs already booked (unshipped, not yet invoiced)"'
-               + ' style="color:#7c3aed;font-weight:700;font-size:9px">📋' + Math.round(r.committed).toLocaleString() + '</span>')
-            : '')
+        + ((typeof cmWeekBadge === 'function') ? cmWeekBadge('ginger', '', r.wkISO, r.committed) : '')
       + '</td>'
       + '<td style="padding:8px 12px;text-align:right;font-weight:700;color:' + (r.endingStock <= 0 ? 'var(--red-600)' : 'var(--gray-800)') + '">' + Math.round(r.endingStock).toLocaleString() + '</td>'
       + '<td style="padding:8px 12px;text-align:right;font-weight:600;color:' + coverColor + '">' + r.weeksOfCoverage.toFixed(1) + 'w</td>'
@@ -25512,8 +25624,7 @@ function simRenderProjection(realOrders, hypoOrders) {
       + '</td>'
       // Misma insignia del committed que el Buy Planner y la tabla de los otros productos.
       + '<td style="padding:8px 12px;text-align:right;color:var(--red-600)">−' + Math.round(wkDemand).toLocaleString()
-        + ((+_commWk > 0) ? (' <span title="' + Math.round(_commWk).toLocaleString() + ' cs already booked (unshipped, not yet invoiced)"'
-             + ' style="color:#7c3aed;font-weight:700;font-size:9px">📋' + Math.round(_commWk).toLocaleString() + '</span>') : '')
+        + ((typeof cmWeekBadge === 'function') ? cmWeekBadge('ginger', '', _sw.key, _commWk) : '')
         + ((typeof _hypoSalesWk !== 'undefined' && _hypoSalesWk > 0) ? '<div style="font-size:9px;color:#7C3AED;font-weight:600">🧪 scenario</div>' : '') + '</td>'
       + '<td style="padding:8px 12px;text-align:right;font-weight:700;color:' + (running <= 0 ? 'var(--red-600)' : 'var(--gray-800)') + '">' + Math.round(running).toLocaleString() + '</td>'
       + '<td style="padding:8px 12px;text-align:right;font-weight:600;color:' + coverColor + '">' + cover.toFixed(1) + 'w</td>'

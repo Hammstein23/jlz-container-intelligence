@@ -2423,7 +2423,7 @@ group('La linea de compra de ginger · ordenar en el plazo no llega el mismo dia
   var h = bpGingerSuggestionHTML();
   ok('arma la linea', h.indexOf('Buy <b>1</b> container')>-1);
   ok('el plazo es el del plan',  h.indexOf('order by <b>'+iso(37)+'</b>')>-1);
-  ok('y aterriza plazo + lead',  h.indexOf('lands <b>'+iso(74)+'</b>')>-1);
+  ok('y aterriza plazo + lead',  h.indexOf('lands <b>'+iso(74)+' \u00b7 Wk ')>-1);
   ok('NO aterriza el mismo dia que se ordena', h.indexOf('lands <b>'+iso(37)+'</b>')<0);
 
   // ── El titular va anclado a la fecha que PROTEGE, no a la del quiebre ────────────────────────
@@ -2441,7 +2441,7 @@ group('La linea de compra de ginger · ordenar en el plazo no llega el mismo dia
   var hp = bpGingerSuggestionHTML();
   ok('el titular ordena por la fecha que protege', hp.indexOf('order by <b>'+iso(30)+'</b> &middot; in 30d')>-1);
   ok('y ya NO por la del quiebre',                 hp.indexOf('order by <b>'+iso(37)+'</b>')<0);
-  ok('aterriza donde dice el plan',                hp.indexOf('lands <b>'+iso(67)+'</b>')>-1);
+  ok('aterriza donde dice el plan',                hp.indexOf('lands <b>'+iso(67)+' \u00b7 Wk ')>-1);
   ok('cuantifica el piso que se toca',             hp.indexOf('<b>1,263</b> cases')>-1);
   ok('nombra el colchon en cajas, sin jerga',      hp.indexOf('safety level of 866 cases')>-1);
   ok('y dice que pasa si se ordena tarde',         hp.indexOf('your stock reaches zero')>-1);
@@ -2473,8 +2473,8 @@ group('La linea de compra de ginger · ordenar en el plazo no llega el mismo dia
     { n:2, orderBy:iso(30), daysLeft:30, landsWk:iso(67), trough:1033, cases:1320, late:false } ];
   var hc = bpGingerSuggestionHTML();
   ok('el titular avisa que no van juntos', hc.indexOf('not all at once')>-1);
-  ok('y da la primera y la ultima fecha',
-     hc.indexOf('first by <b>'+iso(16)+'</b>')>-1 && hc.indexOf('last by <b>'+iso(30)+'</b>')>-1);
+  ok('y da la primera y la ultima fecha, cada una con su semana',
+     hc.indexOf('first by <b>'+iso(16)+' \u00b7 Wk ')>-1 && hc.indexOf('last by <b>'+iso(30)+' \u00b7 Wk ')>-1);
   ok('el calendario es el rotulo de accion',  hc.indexOf('Order on this schedule')>-1);
   ok('dice cuantos dias separan uno de otro', hc.indexOf('14d after the previous')>-1);
   ok('el punto mas bajo se dice en palabras', hc.indexOf('lowest 1,364 cases')>-1);
@@ -2495,7 +2495,7 @@ group('La linea de compra de ginger · ordenar en el plazo no llega el mismo dia
   // Sin plazo no hay nada que esperar: la cuenta arranca hoy.
   window._bpDigest.seaDeadline = null;
   var h2 = bpGingerSuggestionHTML();
-  ok('sin plazo, aterriza hoy + lead', h2.indexOf('lands <b>'+iso(37)+'</b>')>-1);
+  ok('sin plazo, aterriza hoy + lead', h2.indexOf('lands <b>'+iso(37)+' \u00b7 Wk ')>-1);
   ok('y no promete un plazo que no tiene', h2.indexOf('order by')<0);
   window._bpDigest = null;
 })();
@@ -4542,7 +4542,7 @@ group('U08 · la tarjeta del Simulator lee los mismos plazos que la del Buy Plan
   var espejo = {}; for (var k in S) espejo[k] = S[k];
   espejo.seaDeadline = mar; espejo.airDeadline = aire;
   var hBp = bpGingerSuggestionHTML(espejo);
-  var lands = function(h){ var m = /lands <b>([0-9-]+)<\/b>/.exec(h); return m ? m[1] : null; };
+  var lands = function(h){ var m = /lands <b>([0-9-]+)(?: \u00b7 Wk \d+)?<\/b>/.exec(h); return m ? m[1] : null; };
   ok('no hay fecha que proteja: se usa el respaldo', !(S.protect && S.protect.protect));
   ok('las dos tarjetas dicen "lands"', lands(hBp) != null && lands(hSim) != null);
   check('y aterrizan el mismo día', lands(hSim), lands(hBp));
@@ -6262,7 +6262,8 @@ group('Sbimal · entrega martes y sábado, y se pide 10 días antes de la entreg
   check('y la cuenta de la tarjeta muestra ese mismo stock', g.steps.stockAtLanding, a.stockBeforeDelivery);
   var html = invmBuySuggestionHTML('turmeric', 'Fiji');
   ok('la tarjeta dice qué días entrega', html.indexOf('delivers only on Tuesdays and Saturdays') > -1);
-  ok('y la entrega con su día de la semana', /delivered <b>(Tue|Sat) \d{4}-\d{2}-\d{2}<\/b>/.test(html));
+  ok('y la entrega con su día de la semana y su número de semana',
+     /delivered <b>(Tue|Sat) \d{4}-\d{2}-\d{2} \u00b7 Wk \d+<\/b>/.test(html));
 
   // ── Bajo el colchón pase lo que pase: la fecha es la última para el PRIMER camión, no "hoy" ─────
   // El 17-sep la app decía "ordená hoy" cuando pedir hoy o el sábado 19 traía el mismo martes 29.
@@ -6463,6 +6464,49 @@ group('Lo ya reempacado no está "por salir": salió del conteo antes de la foto
   }
 })();
 } catch (_e) { ok('firme en el conteo no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
+try {
+group('La insignia del committed se entiende y se abre · y las fechas dicen su semana');
+// Juan, 2026-09-17: "le has puesto un emoticon, pero no queda claro que se refiere a eso… que si le
+// damos un clic al número salga una ventanita". Y las tarjetas hablaban solo en fechas mientras las
+// tablas hablan en semanas.
+(function(){
+  check('una fecha lleva su semana ISO', bpDateWk('2026-01-01'), '2026-01-01 · Wk 1');
+  check('y respeta el formato de la app', bpDateWk('2026-10-14'), '2026-10-14 · Wk ' + isoWeek('2026-10-14'));
+  check('lo que no es fecha queda igual', bpDateWk('mañana'), 'mañana');
+
+  var b = cmWeekBadge('turmeric', 'Fiji', '2026-09-14', 39);
+  ok('la insignia dice qué es, no un emoticón', b.indexOf('39 booked') > -1 && b.indexOf('📋') < 0);
+  ok('y es un botón que abre la semana', /<button/.test(b) && b.indexOf("cmWeekOrdersOpen('turmeric','Fiji','2026-09-14')") > -1);
+  check('sin nada pedido no se dibuja', cmWeekBadge('turmeric', 'Fiji', '2026-09-14', 0), '');
+
+  // La ventanita: cada orden con su estado, y la cuenta de abajo.
+  var WK = '2026-09-14';
+  productCaseLb  = function(){ return 30; };
+  productLabel   = function(p){ return p; };
+  _cmProd        = function(c){ return c.product || 'turmeric'; };
+  _cmOriginFor   = function(c){ return c.origin || ''; };
+  _cmIsCrossDock = function(c, cd){ return !!(cd && c && cd[c.customer]); };
+  mtoByCustomer  = function(p, w, o){ return (o && o.crossDockOnly) ? { 'Sol-ti':1 } : {}; };
+  dmWindow       = function(){ return 3; };
+  cmPlanEntries  = function(){ return [
+    { type:'inv', product:'turmeric', origin:'Fiji', wk:WK, customer:"Albert's", orderNo:'2697884', cases:5,  sku:'OG-TUR-30Lbs-PR-FJ', date:'2026-09-16', lot:'W1' },
+    { type:'inv', product:'turmeric', origin:'Fiji', wk:WK, customer:'Erewhon',  orderNo:'2698377', cases:9,  sku:'OG-TUR-5Lbs-PR-FJ',  date:'2026-09-16', lot:'W2' },
+    { type:'inv', product:'turmeric', origin:'Fiji', wk:WK, customer:'Sol-ti',   orderNo:'2675697', cases:700, sku:'OG-TUR-30Lbs-cat2-FJ', date:'2026-09-17', lot:'L9' } ]; };
+  var _realLoad = wlotLoadStore;
+  wlotLoadStore = function(){ return { lots:[{ lot:'W2', cases:54 }] }; };     // el de 5 lb ya reempacado
+  try {
+    var h = cmWeekOrdersHTML('turmeric', 'Fiji', WK);
+    ok('nombra a cada cliente con su orden', h.indexOf("Albert's") > -1 && h.indexOf('2698377') > -1);
+    ok('el de 30 lb todavía tiene que salir', /still to pick/.test(h));
+    ok('el de 5 lb ya reempacado se marca como fuera del conteo', /already repacked/.test(h) && /out of the count/.test(h));
+    ok('el cruzado dice que no toca la cámara', /never in stock/.test(h));
+    ok('y la cuenta de abajo separa las tres cosas',
+       h.indexOf('<b>5 cs</b> still to leave') > -1 && /9 cs already repacked/.test(h) && /700 cs go from the port/.test(h));
+    ok('con la conversión de pack a la vista', h.indexOf('54 × 5 lb') > -1 || h.indexOf('54 &times; 5 lb') > -1);
+  } finally { wlotLoadStore = _realLoad; }
+})();
+} catch (_e) { ok('la ventanita del committed no tira excepción: ' + ((_e && _e.message) || _e), false); }
 
 // ═══ El entorno se limpia entre grupos ══════════════════════════════════════
 // Guardián del arreglo de arriba. Si alguien saca la restauración de `group()`, esto falla y

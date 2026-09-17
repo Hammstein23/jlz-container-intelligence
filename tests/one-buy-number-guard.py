@@ -71,11 +71,15 @@ else:
 # La de los otros cuatro productos la tenia desde siempre y las dos de ginger no, aunque sus filas
 # traian el dato: "-488" no decia cuanto de esa semana ya estaba pedido. Juan lo noto mirando las dos
 # tablas juntas.
-_badge = len(re.findall(r"cs already booked \(unshipped, not yet invoiced\)", src))
-if _badge >= 3:
-    ok('las tres proyecciones muestran cuanto de la semana ya esta pedido')
+_badge = len(re.findall(r"cmWeekBadge\(", src))
+if _badge >= 4:   # la funcion + las tres tablas
+    ok('las tres proyecciones muestran cuanto de la semana ya esta pedido, con la misma insignia')
 else:
-    bad('solo %d tabla(s) muestran el committed de la semana: tienen que ser 3' % _badge)
+    bad('la insignia del committed no esta en las tres tablas (%d usos de cmWeekBadge)' % _badge)
+if 'function cmWeekOrdersHTML(' in src and 'cmWeekOrdersOpen(' in src:
+    ok('y el numero se puede abrir: la lista de ordenes de esa semana')
+else:
+    bad('la insignia no abre nada: vuelve a ser un numero sin explicacion')
 
 # ── El lead time de mar por defecto es el real ────────────────────────────────────────────────
 # 36 dias, no 37: con 37 la cuenta caia un martes y el calendario la corria al miercoles ANTERIOR,
