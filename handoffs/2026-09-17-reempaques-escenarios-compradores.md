@@ -17,7 +17,7 @@
 - **`d1024e1`, `b4ecd24`, `5273f2a` — Repack follow-up** dentro de la tabla "Repacked — River Road" → [[wlot-follow-up]]. Vocabulario de Juan: "Fulfillment" y "Fix in WholesaleWare".
 - **`e454505` — un origen en cero no desaparece:** también entra el que tiene proveedor y ventas en 6 meses (volvió turmeric-Hawaii).
 - **`d22d788`, `d2ce0c6` — "not available in the market"** por línea → [[market-pause-rule]]. Turmeric-Hawaii quedó marcado con fecha 15/9.
-- **`d11be74` — lotes viejos:** proveedor >45 días, River Road >20 → [[old-lot-flags]].
+- **`d11be74` — lotes viejos:** proveedor >45 días, River Road >20 → [[old-lot-flags]]. **Verificado en vivo el 17/9** (Chrome de Juan, solo lectura, datos del 14/9): 4 lotes de proveedor (ginger Hawaii 1, turmeric Fiji 3) y 12 reempaques (ginger Perú 2, ginger Hawaii 2, turmeric Fiji 3, turmeric Hawaii 3, garlic 2), lo mismo que el mockup; turmeric·Fiji muestra el recuadro y 6 marcas.
 - **`dc30e89` — cuenta modelada por escenario** → [[scenario-modeled-account]]. Si los escenarios de una cuenta suman una semana de su promedio, su run-rate se apaga desde su primer escenario en adelante (Sol-ti: −185 cs/sem). El Buy Planner no cambia.
 - **`8a93c9f` — test frágil:** "el nuevo no" buscaba `/[45] days/`, que también matchea "84 days"; ahora compara los números.
 
@@ -32,7 +32,9 @@
    Si se usa el Simulator con embarques de Sol-ti, tiene que aparecer "modeled by scenario from W… · run-rate off (−185 cs/wk)".
 2. **`/lunes` del 21/9.** Paso 2: el Unshipped del 14/9 traía **846 cs** comprometidas en semanas ya pasadas. Paso 5: lotes viejos y Repack follow-up en el reporte.
 3. **Dar de baja en WholesaleWare dos W-lots devueltos hace 8-9 meses:** turmeric HI 72 cs `W1832B1917641` y garlic 5 lb 50 cs `W1996A2031125`. Valida: no están en el Inventory Report del 21/9.
-4. **Turmeric-Hawaii en pausa:** corregir la fecha de inicio con "Change dates" (sin ventas desde agosto, no 15/9). **[JUAN]** fecha esperada de vuelta y estimado de arranque. Valida: compra 0 y la barra con la fecha de agosto.
+4. **Turmeric-Hawaii en pausa desde el 15/9 — la fecha está bien.** La última venta fue el **8/9** (4 cs a Whole Foods; antes, 40 cs el 28/8). Regla de Juan: la semana de la última venta es la última que cuenta; con el 15/9 cuenta la del 7/9 y desde la del 14/9 no.
+   **[JUAN]** ¿en agosto tampoco hubo producto? Whole Foods compró en 4 de las 5 semanas del 6/7 al 7/8, y después solo el 28/8 y el 8/9. Si no hubo, la fecha pasa al 10/8 con "Change dates". Si queda el 15/9, los ceros del 10, 17 y 31/8 cuentan y, si vuelve hasta el 27/10 (6 semanas), el plan arranca con ~12 cs/sem. Al volver: fecha y estimado de arranque.
+   Valida: compra 0 y la barra con la fecha elegida.
 5. **Pedido 2674160** (turmeric·Fiji para Sol-ti): el proveedor confirmó entrega el **17/9** → pasarlo a Arrived. Valida: sale de "en camino" de turmeric·Fiji.
 6. **Jamuve LLC (fuera del repo, WholesaleWare).** Cliente creado con contactos, dirección de pago y notas. Falta:
    - Payment Terms en **PACA 10**: quedó "Due on receipt" y con el usuario de Juan no hay dónde editarlo;
@@ -48,7 +50,8 @@
 
 **Espera a Juan:**
 - **Lead time de mar:** el código tiene 37 días y lo real son 36. Con 37 se ordena una semana antes (más stock, más conservador); con 36, una semana después, y la orden igual protege.
-- **Cuándo ordenar ginger** (punto 1) y **qué hacer con turmeric-Hawaii** (punto 4).
+- **Cuándo ordenar ginger** (punto 1) y **si en agosto ya faltaba turmeric-Hawaii** (punto 4).
+- **Filtro "30+ / 45+ days" de Inventory:** quedó al lado del recuadro de lotes viejos porque lo había pedido Juan y tiene tests (U28 y `lot-tables-guard.py`). Si le sobra, se saca.
 - **Jamuve:** PACA 10 sin referencias o pago anticipado. El riesgo es de cobro, no de compra.
 - **Los handoffs son públicos:** Pages sirve `handoffs/*.md` (HTTP 200). Decidir si se sacan de ahí.
 - Opcional: nivel de servicio 95% → 97% (colchón de ~2,1 a ~2,4 semanas).
