@@ -19059,6 +19059,48 @@ function invmWindowFit(p, origin, testWeeks){
 // cuando no hay modelo. Todo lo que muestre cajas a comprar pasa por acá — el KPI de Inventory y la
 // tarjeta del Simulator incluidos— o vuelven los dos números que se contradicen en pantallas
 // distintas, que es el defecto que esta auditoría existe para cerrar.
+// ── Proveedores que entregan solo ciertos días de la semana ──────────────────────────────────────
+// Sbimal (turmeric-Fiji) entrega en el almacén martes y sábado, y el pedido se pone 10 días antes de la
+// entrega, cualquier día (Juan, 2026-09-17). Sin esto la sugerencia contaba "pedido + 10 días", cualquier
+// día, y medía toda llegada como si fuera el lunes: el 17-sep decía "ordená el viernes 18, llega el lunes
+// 28" cuando lo real era "hasta el sábado 19, llega el martes 29", y el lunes 28 se vende del stock viejo.
+// Una entrega de sábado salía peor: cinco días de venta que la app daba por cubiertos, y pedía de menos.
+// Cada día de entrega es un calendario de bpProtectPlan (el mismo mecanismo que el contenedor de
+// ginger-Perú), sin día de cierre: se puede pedir cualquier día.
+function invmDeliveryCalendars(sup){
+  var dias=(sup && Array.isArray(sup.deliveryDays)) ? sup.deliveryDays : null;
+  if(!dias || !dias.length) return null;
+  var venta=(typeof DM_SELL_DAYS==='number' && DM_SELL_DAYS>0) ? DM_SELL_DAYS : 6;
+  var out=[];
+  dias.forEach(function(d){
+    var dow=+d; if(!(dow>=0 && dow<=6)) return;             // 0 domingo … 6 sábado, como getDay()
+    var off=(dow+6)%7;                                       // días después del lunes: martes 1, sábado 5
+    out.push({ dow:dow, deliveryOffset:off, preDeliveryShare:Math.min(off, venta)/venta, orderDow:null });
+  });
+  return out.length ? out : null;
+}
+// Un plan por día de entrega, y se queda con UNO: la entrega más tardía que todavía cuida el colchón
+// (pedir más tarde es más barato, igual que en ginger). Si ninguna lo cuida, la PRIMERA entrega que
+// todavía se alcanza. Devuelve el plan de ese día entero, así las fechas de la tarjeta (ordenar hasta,
+// no antes de, no después de) salen todas del mismo calendario.
+function invmPlanDeliveries(rows, opts, cals){
+  if(!cals || !cals.length) return bpProtectPlan(rows, opts);
+  var planes=cals.map(function(c){
+    var pl=bpProtectPlan(rows, Object.assign({}, opts, { calendar:c }));
+    if(pl) pl.calendar=c;
+    return pl;
+  }).filter(Boolean);
+  var elegido=null;
+  planes.forEach(function(pl){
+    if(pl.horizonShort || !pl.protect) return;
+    if(!elegido || String(pl.protect.deliveryDate) > String(elegido.protect.deliveryDate)) elegido=pl;
+  });
+  if(!elegido) planes.forEach(function(pl){
+    if(pl.horizonShort || !pl.best) return;
+    if(!elegido || String(pl.best.deliveryDate) < String(elegido.best.deliveryDate)) elegido=pl;
+  });
+  return elegido || planes[0] || null;
+}
 function invmOrderCases(p, origin){
   try{ var g=invmBuySuggestion(p, origin); if(g && g.buy!=null) return g.buy; }catch(e){}
   try{ var st=invmProductStats(p, origin);
@@ -19085,6 +19127,8 @@ function invmBuySuggestion(p, origin, opts){
     // objetivo y la fecha saldrían de leads distintos, así que la cuenta mostrada no cerraría.
     var best=sup.reduce(function(a,b){ return ((+b.leadDays||0)>(+a.leadDays||0))?b:a; });
     var lead=+best.leadDays||14;
+    // Días en que ese proveedor entrega (Sbimal: martes y sábado). Sin días, se entrega cualquier día.
+    var cals=(typeof invmDeliveryCalendars==='function') ? invmDeliveryCalendars(best) : null;
     // Lo que ya viene navegando sale de `s`, no de una segunda llamada: `invmProductStats` resuelve
     // el origen (un 'all' cae al primero con lotes) y contar por separado con el origen crudo daba
     // dos "incoming" distintos para la misma tarjeta.
@@ -19134,12 +19178,13 @@ function invmBuySuggestion(p, origin, opts){
         try{ WD=invmWeekDemands(p, origin||'all', s, dCases, RW.rows.map(function(r){ return r.wk; })); }catch(e){ WD=null; }
       }
       try{
-        return bpProtectPlan(
-          RW.rows.map(function(r, i){ return { wkISO:r.wk, arrivals:+r.arrived||0,
-                                            demand:((WD && WD.rows[i]) ? WD.rows[i].demW : dCases) + (+r.hypoSale||0) }; }),
-          { startCases:(RW.start!=null?RW.start:(s.availCases||0)),
-            safetyCases:(s.safetyWks||0)*dCases, leadDays:lead,
-            addCases:Math.max(buyPlano||0, Math.ceil(upTo)) });
+        var filas=RW.rows.map(function(r, i){ return { wkISO:r.wk, arrivals:+r.arrived||0,
+                                            demand:((WD && WD.rows[i]) ? WD.rows[i].demW : dCases) + (+r.hypoSale||0) }; });
+        var cfg={ startCases:(RW.start!=null?RW.start:(s.availCases||0)),
+                  safetyCases:(s.safetyWks||0)*dCases, leadDays:lead,
+                  addCases:Math.max(buyPlano||0, Math.ceil(upTo)) };
+        // Con días de entrega, un plan por día y se queda con la entrega que corresponde (invmPlanDeliveries).
+        return (cals && typeof invmPlanDeliveries==='function') ? invmPlanDeliveries(filas, cfg, cals) : bpProtectPlan(filas, cfg);
       }catch(e){ return null; }
     };
     // ── La cantidad se mide EN LA FECHA EN QUE LLEGA, no hoy ─────────────────────────────────────
@@ -19154,11 +19199,20 @@ function invmBuySuggestion(p, origin, opts){
       var ancla=vivo?pl.protect:((pl.floorUnavoidable && pl.best)?pl.best:null);
       if(!ancla) return pl;
       var upTo=(s.targetWks||0)*o.demand;
-      o.orderBy=vivo?ancla.orderBy:addD(0);
-      o.offset =vivo?ancla.daysLeft:0;
+      // Sin fecha que cuide el colchón la respuesta es "ahora". Con días de entrega se sabe algo más: hasta
+      // qué día se llega a la PRIMERA entrega posible. Pedir hoy o ese día trae el mismo camión, así que la
+      // fecha es esa (el 17-sep: hasta el sábado 19 para el martes 29), no hoy.
+      var hastaEntrega=(!vivo && ancla.deliveryDate && ancla.orderBy && ancla.daysLeft!=null && ancla.daysLeft>=0);
+      o.orderBy=vivo?ancla.orderBy:(hastaEntrega?ancla.orderBy:addD(0));
+      o.offset =vivo?ancla.daysLeft:(hastaEntrega?ancla.daysLeft:0);
       o.far    =o.offset>180;
-      o.buy    =Math.max(0, Math.ceil(upTo-(ancla.stockAtLanding||0)));
-      o.landsWk=ancla.landsWk; o.stockAtLanding=ancla.stockAtLanding; o.orderUpTo=upTo;
+      // Con días de entrega la cantidad se mide EL DÍA de la entrega: lo que se vende del lunes a ese día
+      // sale del stock viejo (el lunes antes de un martes, lunes a viernes antes de un sábado). Sin días
+      // de entrega, al empezar la semana en que llega, como siempre.
+      var alLlegar=(ancla.stockBeforeDelivery!=null) ? ancla.stockBeforeDelivery : ancla.stockAtLanding;
+      o.buy    =Math.max(0, Math.ceil(upTo-(alLlegar||0)));
+      o.landsWk=ancla.landsWk; o.stockAtLanding=alLlegar; o.orderUpTo=upTo;
+      o.deliveryDate=ancla.deliveryDate||null;
       return pl;
     };
     var planWin={};
@@ -19180,6 +19234,7 @@ function invmBuySuggestion(p, origin, opts){
                 supply:supply, needed:(s.targetWks||0)*now.demand };
     if(now.landsWk){ steps.landsWk=now.landsWk; steps.stockAtLanding=now.stockAtLanding;
                      steps.orderUpTo=now.orderUpTo; }
+    if(now.deliveryDate) steps.deliveryDate=now.deliveryDate;
     var fit=null; try{ fit=invmWindowFit(p, origin); }catch(e){}
     // ── Sin producto en el mercado no se sugiere compra ───────────────────────────────────────────
     // La cuenta se hace igual (cobertura, fechas) y la cantidad queda en `buyIfAvailable` para quien quiera
@@ -19193,7 +19248,9 @@ function invmBuySuggestion(p, origin, opts){
              // Igual que en ginger: llega = fecha límite + lead. Con el plazo vencido la sugerencia
              // dice "order now", y ahí sí se cuenta desde hoy. Turmeric mostraba "ordenar 19-sep,
              // llega 20-sep" con 10 días de lead: era hoy+10, no la consecuencia de esperar al plazo.
-             arrives:addD(Math.max(0,now.offset)+lead), win:win, others:others, targetWks:s.targetWks||0 };
+             // Con días de entrega, la llegada es la entrega del plan (martes o sábado), nunca plazo + lead.
+             arrives:(now.deliveryDate || addD(Math.max(0,now.offset)+lead)), win:win, others:others, targetWks:s.targetWks||0,
+             deliveryDays:(cals ? cals.map(function(c){ return c.dow; }) : null) };
     if(_pz){ _res.paused=_pz; _res.buyIfAvailable=_res.buy; _res.buy=0; }
     return _res;
   }catch(e){ return null; }
@@ -19205,14 +19262,24 @@ function invmBuySuggestionHTML(p, origin, opts){
   var esc=(typeof libEsc==='function')?libEsc:function(x){ return String(x==null?'':x); };
   var f=function(n){ return Math.round(n||0).toLocaleString('en-US'); };
   var f1=function(n){ return (!isFinite(n))?'∞':(Math.round((n||0)*10)/10).toFixed(1); };
+  // Con días de entrega (Sbimal: martes y sábado) cada fecha lleva su día de la semana: el pedido se
+  // piensa así ("hasta el sábado, llega el martes"), y una fecha sola obliga a buscar el calendario.
+  var conDias=!!(g.deliveryDays && g.deliveryDays.length);
+  var diaTxt=function(iso){ var m=String(iso||'').match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if(!conDias || !m) return String(iso||'');
+    return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(+m[1], +m[2]-1, +m[3]).getDay()]+' '+iso; };
+  var dia=function(iso){ return esc(diaTxt(iso)); };
+  var diasEntrega=conDias ? (function(){
+    var n=g.deliveryDays.map(function(d){ return ['Sundays','Mondays','Tuesdays','Wednesdays','Thursdays','Fridays','Saturdays'][d]; });
+    return (n.length>1) ? (n.slice(0,-1).join(', ')+' and '+n[n.length-1]) : n[0]; })() : '';
   var late=g.offset<0, soon=g.offset>=0&&g.offset<=7;
   var tone=(late||g.buy>0&&soon)?{bg:'#FEF2F2',bd:'#FECACA',fg:'#991B1B'}
           : soon?{bg:'#FFFBEB',bd:'#FDE68A',fg:'#92400E'}
           : {bg:'var(--gray-50)',bd:'var(--gray-200)',fg:'var(--gray-700)'};
   // Una fecha límite a más de medio año no es información, es ruido: se dice que no corre y ya.
   var head = (g.buy>0)
-    ? ('Buy <b>'+f(g.buy)+'</b> cases &middot; order '+(late?'<b>now</b>':('by <b>'+esc(g.orderBy)+'</b>'+(g.offset<=14?(' &middot; in '+g.offset+'d'):'')))
-        +' &middot; lands <b>'+esc(g.arrives)+'</b>')
+    ? ('Buy <b>'+f(g.buy)+'</b> cases &middot; order '+(late?'<b>now</b>':('by <b>'+dia(g.orderBy)+'</b>'+(g.offset<=14?(' &middot; in '+g.offset+'d'):'')))
+        +(conDias ? (' &middot; delivered <b>'+dia(g.arrives)+'</b>') : (' &middot; lands <b>'+esc(g.arrives)+'</b>')))
     : (g.far ? '<b>Covered</b> &mdash; nothing to order for months'
              : '<b>Covered</b> &mdash; nothing to order yet &middot; next order-by around <b>'+esc(g.orderBy)+'</b>');
   // "Order now" con cobertura de semanas se lee como una contradicción si no se dice por qué:
@@ -19222,7 +19289,9 @@ function invmBuySuggestionHTML(p, origin, opts){
     + (late ? (g.belowSafety
         ? (' &mdash; under your '+f1(g.safetyWks)+'-week safety level')
         : (' &mdash; less than the '+g.leadDays+' days it takes to arrive')) : '')
-    + ' &middot; '+esc(g.supplier)+' takes '+g.leadDays+' days'+(g.mode?(' by '+esc(g.mode)):'')
+    + (conDias
+        ? (' &middot; '+esc(g.supplier)+' delivers only on '+diasEntrega+', and the order has to go in at least '+g.leadDays+' days before')
+        : (' &middot; '+esc(g.supplier)+' takes '+g.leadDays+' days'+(g.mode?(' by '+esc(g.mode)):'')))
     + (g.excluded>0?(' &middot; '+f(g.excluded)+' excluded cases left out'):'');
   // ── Las mismas tres fechas que ginger ─────────────────────────────────────────────────────────
   // Este producto llegaba por otro camino —una cobertura plana dividida por la demanda— que sabe
@@ -19247,14 +19316,21 @@ function invmBuySuggestionHTML(p, origin, opts){
         + '</div>';
     };
     var accion='', ctx=[];
-    if(P.floorUnavoidable && P.best){
+    if(P.floorUnavoidable && P.best && P.best.deliveryDate && P.best.orderBy && P.best.daysLeft!=null && P.best.daysLeft>=0){
+      // Con días de entrega: la fecha que importa es la última para llegar al primer camión posible.
+      accion = caja('Order by', diaTxt(P.best.orderBy), P.best.daysLeft,
+        'This is the last day to order for the first delivery you can still get, <b>'+dia(P.best.deliveryDate)+'</b>. '
+        + 'Even so, your stock drops to <b>'+f(P.best.trough)+'</b> cases ('+wkc(P.best.trough)+') before it arrives, '
+        + 'below your safety level of '+f(P.safetyCases)+' cases.', true);
+    } else if(P.floorUnavoidable && P.best){
       accion = caja('Order now', null, null,
         'Even today&rsquo;s order bottoms out at <b>'+f(P.best.trough)+'</b> cases ('+wkc(P.best.trough)+') the week of '
         + esc(P.best.troughWk)+', below your safety level of '+f(P.safetyCases)+' cases. Nothing you order today can arrive before that.', true);
     } else if(P.protect){
-      accion = caja('Order by', P.protect.orderBy, P.protect.daysLeft,
+      accion = caja('Order by', diaTxt(P.protect.orderBy), P.protect.daysLeft,
         'Order by this date and your stock never drops below your safety level of '+f(P.safetyCases)+' cases. '
-        + 'The lowest it gets is <b>'+f(P.protect.trough)+'</b> cases, the week of '+esc(P.protect.troughWk)+'.',
+        + 'The lowest it gets is <b>'+f(P.protect.trough)+'</b> cases, the week of '+esc(P.protect.troughWk)+'.'
+        + (P.protect.deliveryDate ? (' It is delivered on <b>'+dia(P.protect.deliveryDate)+'</b>.') : ''),
         (P.protect.daysLeft!=null && P.protect.daysLeft<=7));
     }
     if(P.free && P.protect && P.free.orderBy !== P.protect.orderBy)
@@ -19303,7 +19379,9 @@ function invmBuySuggestionHTML(p, origin, opts){
       // "objetivo − lo que tengo HOY" mientras el número sale de otra cuenta era el desglose
       // decorativo que esta tarjeta existe para no ser.
       + ((S.stockAtLanding!=null)
-          ? ( row('At '+esc(S.landsWk||''), 'what you are projected to have when it lands', n2(S.stockAtLanding)+' cs')
+          ? ( (S.deliveryDate
+                ? row('At '+dia(S.deliveryDate), 'what you are projected to have the day it is delivered', n2(S.stockAtLanding)+' cs')
+                : row('At '+esc(S.landsWk||''), 'what you are projected to have when it lands', n2(S.stockAtLanding)+' cs'))
             + row('Order up to', n2(S.targetWks)+' wk &times; '+n2(g.demand)+' cs/wk', n2(S.orderUpTo)+' cs')
             + row('Decision', '&minus; '+n2(S.stockAtLanding)+' you will already have by then',
                   '<b style="color:'+(g.buy>0?'var(--jlz)':'var(--gray-700)')+'">'
@@ -27630,7 +27708,9 @@ const PRODUCTS = {
   turmeric: {
     label:'Turmeric', organic:true, caseLb:30, shrinkPct:5, // shrink placeholder
     suppliers:[
-      {name:'Sbimal LLC',        origin:'Fiji',   procurement:'local', incoterm:'Delivered', mode:'air', leadDays:10},
+      // Sbimal entrega en el almacén SOLO martes y sábado, y el pedido va 10 días antes de la entrega, cualquier
+      // día (Juan, 2026-09-17). deliveryDays usa getDay(): 2 = martes, 6 = sábado. Ver invmDeliveryCalendars.
+      {name:'Sbimal LLC',        origin:'Fiji',   procurement:'local', incoterm:'Delivered', mode:'air', leadDays:10, deliveryDays:[2,6]},
       {name:'Crown Pacific LLC', origin:'Hawaii', procurement:'local', incoterm:'Delivered', mode:'air', leadDays:10},
       {name:'Kailani',           origin:'Hawaii', procurement:'local', incoterm:'Delivered', mode:'air', leadDays:14},
     ],

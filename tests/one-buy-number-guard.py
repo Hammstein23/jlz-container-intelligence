@@ -59,8 +59,27 @@ if not m:
     bad('no se encontro applyPlan: la cantidad no se mide sobre la proyeccion')
 elif re.search(r'o\.buy\s*=\s*Math\.max\(0,\s*Math\.ceil\(upTo-\(ancla\.stockAtLanding', m.group(1)):
     ok('la cantidad sale de objetivo menos lo proyectado a la llegada')
+# Con dias de entrega (Sbimal, martes y sabado) se mide EL DIA de la entrega, que sigue saliendo de la
+# misma proyeccion: el stock al empezar esa semana menos lo que se vende antes del camion.
+elif (re.search(r'o\.buy\s*=\s*Math\.max\(0,\s*Math\.ceil\(upTo-\(alLlegar', m.group(1))
+      and re.search(r'var alLlegar=\(ancla\.stockBeforeDelivery!=null\) \? ancla\.stockBeforeDelivery : ancla\.stockAtLanding;', m.group(1))):
+    ok('la cantidad sale de objetivo menos lo proyectado a la llegada (el dia de la entrega, si el proveedor tiene dias)')
 else:
     bad('la cantidad ya no sale de objetivo menos lo proyectado a la llegada')
+
+# ── Dias de entrega: solo los proveedores que de verdad los tienen ────────────────────────────
+# Sbimal (turmeric-Fiji) entrega martes y sabado y se pide 10 dias antes (Juan, 2026-09-17). Un
+# calendario puesto en otro proveedor cambia fechas y cantidades de ese producto sin que nadie lo
+# pida — lo mismo que Juan pidio evitar con el calendario de ginger-Peru.
+_sup = re.findall(r"\{name:'([^']+)'[^}]*deliveryDays:\[([^\]]*)\]", src)
+if _sup == [('Sbimal LLC', '2,6')]:
+    ok('solo Sbimal tiene dias de entrega, y son martes y sabado')
+else:
+    bad('dias de entrega inesperados en PRODUCTS: %r' % (_sup,))
+if 'invmPlanDeliveries(filas, cfg, cals)' in src:
+    ok('la sugerencia de compra usa esos dias')
+else:
+    bad('la sugerencia de compra ya no pasa los dias de entrega al plan')
 
 # ── Cada tarjeta contesta con SUS datos ─────────────────────────────────────────────────────────
 # Antes habia una sola: la del Buy Planner, renderizada DENTRO del Simulator. Asi que el Simulator

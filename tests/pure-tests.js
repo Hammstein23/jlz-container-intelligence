@@ -6140,6 +6140,86 @@ group('La sugerencia de compra consume la semana del conteo IGUAL que la tabla')
 })();
 } catch (_e) { ok('semana del conteo en la sugerencia no tira excepción: ' + ((_e && _e.message) || _e), false); }
 
+try {
+group('Sbimal · entrega martes y sábado, y se pide 10 días antes de la entrega');
+// Juan, 2026-09-17: "puedo pedir cuando quiera, pero los pedidos solo llegan los martes y sábado". La app
+// contaba pedido + 10 días, cualquier día, y medía toda llegada como si fuera el lunes.
+(function(){
+  var C = invmDeliveryCalendars({ name:'Sbimal LLC', leadDays:10, deliveryDays:[2,6] });
+  check('dos días de entrega, dos calendarios', C && C.length, 2);
+  check('el martes es un día después del lunes', C[0].deliveryOffset, 1);
+  check('antes de la entrega del martes se vende solo el lunes', Math.round(C[0].preDeliveryShare*6), 1);
+  check('el sábado, cinco días después', C[1].deliveryOffset, 5);
+  check('antes de la del sábado, de lunes a viernes', Math.round(C[1].preDeliveryShare*6), 5);
+  ok('sin día de cierre: se pide cualquier día', C[0].orderDow === null && C[1].orderDow === null);
+  check('un proveedor sin días de entrega no tiene calendario', invmDeliveryCalendars({ name:'Christopher Ranch', leadDays:3 }), null);
+
+  // ── El caso del jueves 17-sep, con la fecha fija ──────────────────────────────────────────────
+  // 254 cs; la semana del conteo consume 68,6 (prorrateada) y las siguientes 98,11; colchón 128,3.
+  var HOY = '2026-09-17T12:00:00';
+  var rows = ['2026-09-14','2026-09-21','2026-09-28','2026-10-05','2026-10-12','2026-10-19']
+    .map(function(w, i){ return { wkISO:w, arrivals:0, demand:(i === 0 ? 68.6 : 98.11) }; });
+  var base = { startCases:254, safetyCases:128.3, leadDays:10, addCases:269, today:HOY };
+  var P = invmPlanDeliveries(rows, base, C);
+  check('la primera entrega que se alcanza es el martes 29', (P.best || {}).deliveryDate, '2026-09-29');
+  check('pidiendo hasta el sábado 19: diez días antes', (P.best || {}).orderBy, '2026-09-19');
+  check('el lunes 28 se vende del stock viejo: quedan 71 el día de la entrega', (P.best || {}).stockBeforeDelivery, 71);
+  ok('y eso ya queda bajo el colchón: ninguna fecha lo evita', P.floorUnavoidable === true && !P.protect);
+  check('sin calendario la app decía viernes 18 (y medía el lunes 28)', (bpProtectPlan(rows, base).protect || {}).orderBy, '2026-09-18');
+
+  // ── Con stock de sobra: la entrega MÁS TARDÍA que todavía cuida el colchón ─────────────────────
+  // Martes 13-oct cuida el colchón (221 antes del camión) y sábado 17-oct también (155); martes 20-oct ya no.
+  var H = invmPlanDeliveries(rows, Object.assign({}, base, { startCases:600 }), C);
+  check('elige el sábado 17-oct, la última entrega que no baja del colchón', (H.protect || {}).deliveryDate, '2026-10-17');
+  check('pidiendo hasta el miércoles 7-oct', (H.protect || {}).orderBy, '2026-10-07');
+  check('con lunes a viernes vendidos del stock viejo', (H.protect || {}).stockBeforeDelivery, 155);
+  check('y todo el plan es el del sábado', (H.calendar || {}).dow, 6);
+
+  // ── La sugerencia de compra de punta a punta (con el reloj real) ───────────────────────────────
+  PRODUCTS = { turmeric:{ label:'Turmeric', caseLb:30, shrinkPct:0, suppliers:[
+    { name:'Sbimal LLC', origin:'Fiji', mode:'air', leadDays:10, deliveryDays:[2,6] } ] } };
+  var STATS = { p:'turmeric', label:'Turmeric', caseLb:30, shrinkPct:0, origin:'Fiji',
+                onHandCases:600, availCases:600, unbilledCases:0, committedCases:0, incomingCases:0,
+                weeklyCasesBuy:100, leadWks:10/7, safetyWks:1, targetWks:10/7+1, win:3 };
+  invmProductStats    = function(){ return STATS; };
+  invmProductModel    = function(){ return { caseLb:30, runRate3:100*30, runRate6:100*30, runRate13:100*30, runRate26:null }; };
+  invmProductArrivals = function(){ return {}; };
+  whatifArrivals      = function(){ return {}; };
+  invmCommittedByWeek = function(){ return {}; };
+  prodInvState        = function(){ return {}; };
+  var g = invmBuySuggestion('turmeric', 'Fiji');
+  var dow = function(iso){ return new Date(String(iso) + 'T12:00:00').getDay(); };
+  ok('llega un martes o un sábado', !!g && [2, 6].indexOf(dow(g.arrives)) > -1);
+  check('y se pide diez días antes de esa entrega',
+        Math.round((new Date(g.arrives + 'T12:00:00') - new Date(g.orderBy + 'T12:00:00')) / 86400000), 10);
+  var a = g.protect.protect || g.protect.best;
+  ok('el día de la entrega hay menos que el lunes de esa semana', a.stockBeforeDelivery < a.stockAtLanding);
+  check('la cantidad se mide ese día', g.buy, Math.max(0, Math.ceil((10/7 + 1)*100 - a.stockBeforeDelivery)));
+  check('y la cuenta de la tarjeta muestra ese mismo stock', g.steps.stockAtLanding, a.stockBeforeDelivery);
+  var html = invmBuySuggestionHTML('turmeric', 'Fiji');
+  ok('la tarjeta dice qué días entrega', html.indexOf('delivers only on Tuesdays and Saturdays') > -1);
+  ok('y la entrega con su día de la semana', /delivered <b>(Tue|Sat) \d{4}-\d{2}-\d{2}<\/b>/.test(html));
+
+  // ── Bajo el colchón pase lo que pase: la fecha es la última para el PRIMER camión, no "hoy" ─────
+  // El 17-sep la app decía "ordená hoy" cuando pedir hoy o el sábado 19 traía el mismo martes 29.
+  STATS.onHandCases = 150; STATS.availCases = 150;
+  var gu = invmBuySuggestion('turmeric', 'Fiji'), U = gu.protect;
+  ok('con 150 cs no hay fecha que cuide el colchón', U.floorUnavoidable === true);
+  check('la fecha es la última para la primera entrega posible', gu.orderBy, U.best.orderBy);
+  check('y la llegada es esa entrega', gu.arrives, U.best.deliveryDate);
+  check('los días que quedan son los de esa fecha', gu.offset, U.best.daysLeft);
+  var hu = invmBuySuggestionHTML('turmeric', 'Fiji');
+  ok('la tarjeta lo dice con palabras', hu.indexOf('last day to order for the first delivery you can still get') > -1);
+  STATS.onHandCases = 600; STATS.availCases = 600;
+
+  // Un proveedor sin días de entrega sigue como siempre.
+  PRODUCTS.turmeric.suppliers[0] = { name:'Sbimal LLC', origin:'Fiji', mode:'air', leadDays:10 };
+  var g2 = invmBuySuggestion('turmeric', 'Fiji');
+  ok('sin días de entrega no hay día de entrega', g2.deliveryDays === null && !g2.steps.deliveryDate);
+  ok('y la tarjeta no inventa días', invmBuySuggestionHTML('turmeric', 'Fiji').indexOf('delivers only on') < 0);
+})();
+} catch (_e) { ok('días de entrega de Sbimal no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
 // ═══ El entorno se limpia entre grupos ══════════════════════════════════════
 // Guardián del arreglo de arriba. Si alguien saca la restauración de `group()`, esto falla y
 // dice por qué — en vez de que un test futuro mida un stub ajeno y nadie se entere.
