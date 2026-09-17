@@ -17036,7 +17036,28 @@ function nowcastProductModel(m, p, origin){
   return out;
 }
 // Demand model for any product (ginger via prod model; focused product live; else built on-demand from raw rows).
-function invmProductModel(p,origin){
+// Los modelos por ventana se comparten mientras dura UN dibujado y se tiran en el siguiente tick: la
+// tarjeta, el KPI y el veredicto de la proyección llaman a la sugerencia tres veces seguidas y armaban
+// el mismo modelo cada vez (22 ms cada uno, medido). No sobrevive a un click ni a un import — cada
+// evento del navegador es otro tick —, así que no puede quedar viejo. Sin `setTimeout` (el harness de
+// tests) no se cachea nada: no habría quien lo limpie.
+var _invmWinModels = null;
+function invmWinModel(p, origin, w){
+  var k=p+'|'+(origin||'all')+'|'+w, cache=_invmWinModels;
+  if(!cache){
+    cache={};
+    try{ if(typeof setTimeout==='function'){ setTimeout(function(){ _invmWinModels=null; }, 0); _invmWinModels=cache; } }catch(e){}
+  }
+  if(cache[k]!==undefined) return cache[k];
+  var m=null; try{ m=invmProductModel(p, origin||'all', w); }catch(e){}
+  cache[k]=m; return m;
+}
+// `winNet` fuerza con qué ventana se netea lo comprado CONTRA ORDEN. Sin él manda la ventana activa, y
+// entonces las lecturas de las OTRAS ventanas que muestra la tarjeta cuentan lumps que su propio run-rate
+// no debería ver: el 2026-09-17, con turmeric-Fiji en 3 semanas, la lectura de 6 decía 689 cs contra las
+// 168 que daba esa misma ventana cuando estaba activa — los 700 cs de Sol-ti del 13-ago quedaban sin
+// netear porque el horizonte de neteo era de 3 semanas. Cada lectura se netea con SU ventana.
+function invmProductModel(p,origin,winNet){
   origin=origin||'all';
   // Los atajos de 'all' devuelven modelos SIN netear lo comprado contra orden, e invmProductStats da por
   // hecho que viene neto. Solo se usan si no hay nada que netear; si hay, se arma por el camino que netea.
@@ -17053,7 +17074,8 @@ function invmProductModel(p,origin){
     // mecanismos para lo mismo daban dos números distintos (101 contra 88 en turmeric). Un solo lugar.
     try{
       var _f = _dmRawAll.filter(function(r){ return (r.prod||'ginger')===p && invmOriginMatch(r,origin); });
-      try{ if(typeof mtoNetRows==='function') _f = mtoNetRows(_f, p, (typeof dmWindow==='function')?dmWindow(p,origin):13); }catch(e){}
+      var _wNet = (+winNet>0) ? +winNet : ((typeof dmWindow==='function')?dmWindow(p,origin):13);
+      try{ if(typeof mtoNetRows==='function') _f = mtoNetRows(_f, p, _wNet); }catch(e){}
       return dmBuild(_f, false, p, origin);
     }catch(e){ return null; }
   }
@@ -19163,7 +19185,19 @@ function invmBuySuggestion(p, origin, opts){
     // tarjeta leía `m.runRateN` directo y el override no llegaba nunca — el panel de arriba decía
     // "manual" y la sugerencia de abajo seguía calculando con el historial crudo.
     var ovrLbs=(s.demandOverride!=null && s.demandOverride>0) ? s.demandOverride*cl : null;
-    var rateFor=function(w){ return (ovrLbs!=null)?ovrLbs:invmRunRateLbs(m,w); };
+    var winAct=s.win||13;
+    // Cada ventana lee su propio modelo, neteado con SU ventana (ver invmProductModel). El modelo de la
+    // ventana activa ya está armado; los otros solo se arman si hay algo contra orden que netear.
+    var _hayMarcas=false;
+    try{ _hayMarcas=(typeof mtoByCustomer==='function') && Object.keys(mtoByCustomer(p, 26)||{}).length>0; }catch(e){}
+    var _mWin={};
+    var modelFor=function(w){
+      if(+w===+winAct || ovrLbs!=null || !_hayMarcas) return m;
+      if(_mWin[w]) return _mWin[w];
+      var mm=null; try{ mm=invmWinModel(p, origin||'all', +w); }catch(e){}
+      return (_mWin[w]=mm||m);
+    };
+    var rateFor=function(w){ return (ovrLbs!=null)?ovrLbs:invmRunRateLbs(modelFor(w),w); };
     var byWin={ 3:one(rateFor(3)), 6:one(rateFor(6)), 13:one(rateFor(13)), 26:one(rateFor(26)) };
     // ── Las cuatro lecturas se deciden con la MISMA vara ─────────────────────────────────────────
     // La proyección (arranque y llegadas) no depende de la ventana; solo la demanda. Se arma una vez
@@ -19221,7 +19255,7 @@ function invmBuySuggestion(p, origin, opts){
     };
     var planWin={};
     Object.keys(byWin).forEach(function(w){ planWin[w]=applyPlan(byWin[w]); });
-    var win=s.win||13;
+    var win=winAct;
     var now=byWin[win]||byWin[13]||byWin[3]; if(!now) return null;
     var prot=planWin[win]||null;
     now.safetyWks=s.safetyWks||0;

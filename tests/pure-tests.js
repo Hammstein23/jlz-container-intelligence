@@ -6231,6 +6231,63 @@ group('Sbimal · entrega martes y sábado, y se pide 10 días antes de la entreg
 })();
 } catch (_e) { ok('días de entrega de Sbimal no tira excepción: ' + ((_e && _e.message) || _e), false); }
 
+try {
+group('Cada lectura de ventana netea lo contra-orden con SU ventana');
+// Con turmeric-Fiji en 3 semanas, la tarjeta ofrecía "6wk → 689 cs" cuando esa misma ventana, activa,
+// daba 168: el modelo se armaba una sola vez y neteaba lo comprado para Sol-ti con el horizonte de la
+// ventana ACTIVA, así que las lecturas más largas contaban lumps que su propio run-rate no debería ver.
+(function(){
+  var NET = [], MARCAS = true;
+  var _realNet = mtoNetRows;
+  // Filas con edad en semanas: el neteo saca las contra-orden que caen DENTRO del horizonte.
+  _dmRawAll = [ { prod:'turmeric', c:'Sol-ti', lbs:21000, edad:5, mto:true },
+                { prod:'turmeric', c:'Sol-ti', lbs:21000, edad:12, mto:true },
+                { prod:'turmeric', c:"Earl's", lbs:9000,  edad:2 } ];
+  invmOriginMatch = function(){ return true; };
+  mtoByCustomer   = function(){ return MARCAS ? { 'Sol-ti':100 } : {}; };
+  mtoNetRows      = function(rows, p, weeks){ NET.push(+weeks);
+    return rows.filter(function(r){ return !(r.mto && r.edad <= weeks); }); };
+  dmBuild         = function(rows){
+    var lbs = rows.reduce(function(t, r){ return t + (r.lbs||0); }, 0);
+    return { caseLb:30, runRate3:lbs, runRate6:lbs, runRate13:lbs, runRate26:lbs }; };
+  dmWindow        = function(){ return 3; };
+  try {
+    // 1. El modelo netea con la ventana que se le pide, no con la activa.
+    NET = []; var m3 = invmProductModel('turmeric','Fiji');
+    check('sin pedir ventana netea con la activa', NET.join(','), '3');
+    NET = []; var m13 = invmProductModel('turmeric','Fiji', 13);
+    check('pidiendo 13 semanas, netea con 13', NET.join(','), '13');
+    ok('y con 13 sale más volumen contra-orden que con 3', m13.runRate13 < m3.runRate3);
+
+    // 2. La tarjeta arma un modelo por ventana.
+    PRODUCTS = { turmeric:{ label:'Turmeric', caseLb:30, shrinkPct:0, suppliers:[
+      { name:'Sbimal LLC', origin:'Fiji', mode:'air', leadDays:10 } ] } };
+    invmProductStats    = function(){ return { p:'turmeric', label:'Turmeric', caseLb:30, shrinkPct:0, origin:'Fiji',
+      onHandCases:600, availCases:600, unbilledCases:0, committedCases:0, incomingCases:0,
+      weeklyCasesBuy:100, leadWks:10/7, safetyWks:1, targetWks:10/7+1, win:3 }; };
+    invmProductArrivals = function(){ return {}; };
+    whatifArrivals      = function(){ return {}; };
+    invmCommittedByWeek = function(){ return {}; };
+    prodInvState        = function(){ return {}; };
+    NET = [];
+    var g = invmBuySuggestion('turmeric','Fiji');
+    check('las cuatro lecturas piden su propia ventana', NET.slice().sort(function(a,b){ return a-b; }).join(','), '3,6,13,26');
+    ok('y sin setTimeout no se cachea nada (el harness no lo tiene)', typeof setTimeout !== 'function' ? _invmWinModels === null : true);
+    var por = {}; g.others.forEach(function(o){ por[o.win] = o.buy; });
+    ok('y la de 6 semanas ya no pide más que la de 3', por[6] <= g.buy);
+    ok('la de 13, que netea todo el lump, pide todavía menos', por[13] <= por[6]);
+
+    // 3. Sin nada marcado contra orden no se arma un modelo de más.
+    MARCAS = false; NET = [];
+    invmBuySuggestion('turmeric','Fiji');
+    check('sin marcas, un solo modelo', NET.join(','), '3');
+  } finally {
+    mtoNetRows = _realNet; dmBuild = undefined; _dmRawAll = null;
+    prodInvState = function(){ return {}; };
+  }
+})();
+} catch (_e) { ok('neteo por ventana no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
 // ═══ El entorno se limpia entre grupos ══════════════════════════════════════
 // Guardián del arreglo de arriba. Si alguien saca la restauración de `group()`, esto falla y
 // dice por qué — en vez de que un test futuro mida un stub ajeno y nadie se entere.
