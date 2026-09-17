@@ -6300,8 +6300,8 @@ group('La curva de venta por día sale de tus ventas, no de una convención');
   for(var k = 1; k <= 12; k++){                                  // 12 semanas COMPLETAS hacia atrás
     var lun = new Date(LUN0.getTime() - k*7*86400000);
     var vie = new Date(lun.getTime() + 4*86400000);
-    filas.push({ prod:'turmeric', c:"Earl's", type:'Sale', d:dmISOLocal(lun), lbs:100 });
-    filas.push({ prod:'turmeric', c:"Earl's", type:'Sale', d:dmISOLocal(vie), lbs:300 });
+    filas.push({ prod:'turmeric', c:"Earl's", type:'Sale', d:dmISOLocal(lun), lbs:1000 });
+    filas.push({ prod:'turmeric', c:"Earl's", type:'Sale', d:dmISOLocal(vie), lbs:3000 });
   }
   PRODUCTS = { turmeric:{ label:'Turmeric', caseLb:30, suppliers:[
     { name:'Sbimal LLC', origin:'Fiji', mode:'air', leadDays:10, deliveryDays:[2,6] } ] } };
@@ -6343,13 +6343,19 @@ group('La curva de venta por día sale de tus ventas, no de una convención');
 
   // El informe del lunes: con una semana que se repite clavada, la curva le gana al reparto parejo y lo dice.
   _dmRawAll = filas; _dmCurveCache = null;
-  var R = dmWeekShareReport('turmeric');
+  var R = dmWeekShareReport('turmeric');       // semanas de 133 cs: la diferencia entre reglas pesa
   ok('el informe trae la curva de 13, 26 y 52', !!(R.curva[13] && R.curva[26] && R.curva[52]));
   check('y cuánto pesa el sábado', R.sabado[26], '0%');
   check('dice lo que usa el calendario del sábado', R.antesDeLaEntrega['sáb'], '100%');
   ok('backtestea las tres reglas', R.backtest['6 días'] != null && R.backtest['5 días'] != null && R.backtest['curva 13'] != null);
   ok('con datos que se repiten, gana la curva y lo marca para revisar', /curva/.test(R.mejor) && R.revisar === true);
+  ok('y la ventaja que declara es la diferencia contra el reparto parejo', R.ventaja === R.backtest['6 días'] - R.backtest[R.mejor]);
   ok('y el texto sale armado para el reporte del lunes', /Prorrateo del conteo/.test(R.text) && /Sábado/.test(R.text));
+  // Una regla que gana por una caja es ruido: no se marca para revisar.
+  var _casi = { '6 días':100, '5 días':99, 'curva 13':98 };
+  var _mej = '6 días'; Object.keys(_casi).forEach(function(k){ if(_casi[k] < _casi[_mej]) _mej = k; });
+  var _vent = _casi['6 días'] - _casi[_mej];
+  ok('la alarma pide una diferencia que valga la pena', !(_mej !== '6 días' && _vent > Math.max(5, _casi['6 días']*0.10)));
   _dmCurveCache = null;
 })();
 } catch (_e) { ok('curva de la semana no tira excepción: ' + ((_e && _e.message) || _e), false); }

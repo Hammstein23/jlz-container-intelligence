@@ -29178,20 +29178,22 @@ function dmWeekShareReport(prod){
   var tabla={}, mejor=null;
   REGLAS.forEach(function(nombre){
     var n=err[nombre+'|n']||0; if(!n) return;
-    var e=err[nombre]/n*4;                                            // error medio por semana
-    tabla[nombre]=Math.round(e);
-    if(mejor===null || e<tabla[mejor]) mejor=nombre;
+    tabla[nombre]=Math.round(err[nombre]/n);                          // cajas erradas en un conteo típico
+    if(mejor===null || tabla[nombre]<tabla[mejor]) mejor=nombre;
   });
   var pre={};
   [2,6].forEach(function(dow){ pre[D[dow]]=pct(dmWeekShareBefore(dow, prod||null))+'%'; });
-  var revisar=!!(mejor && mejor!=='6 días');
+  // `revisar` pide una diferencia que valga la pena. En turmeric y garlic otra regla gana por una caja
+  // —ruido, no señal—, y una alarma que salta todos los lunes se deja de leer a la segunda semana.
+  var base=tabla['6 días'], ventaja=(base!=null && mejor && tabla[mejor]!=null) ? (base-tabla[mejor]) : 0;
+  var revisar=!!(mejor && mejor!=='6 días' && ventaja > Math.max(5, base*0.10));
   return { prod:(prod||'todos'), semanas:nWk, curva:curvas, sabado:sabado, antesDeLaEntrega:pre,
-           backtest:tabla, mejor:mejor, revisar:revisar,
+           backtest:tabla, mejor:mejor, ventaja:Math.round(ventaja), revisar:revisar,
            text: 'Semana (26 sem): '+curvas[26]+'. Sábado+domingo '+sabado[26]+'. '
                + 'Antes de una entrega de martes se vendió '+pre['mar']+', de sábado '+pre['sáb']+'. '
-               + 'Prorrateo del conteo: '+(mejor||'?')+' es el más preciso ('
-               + REGLAS.filter(function(r){ return tabla[r]!=null; }).map(function(r){ return r+' '+tabla[r]+' cs'; }).join(' · ')+')'
-               + (revisar ? ' — REVISAR: el reparto parejo de 6 días dejó de ganar.' : '.') };
+               + 'Prorrateo del conteo: gana '+(mejor||'?')+' — cajas erradas en un conteo típico: '
+               + REGLAS.filter(function(r){ return tabla[r]!=null; }).map(function(r){ return r+' '+tabla[r]; }).join(' · ')
+               + (revisar ? '. REVISAR: el reparto parejo de 6 días dejó de ganar por '+Math.round(ventaja)+' cs.' : '.') };
 }
 
 // Los números de la semana en curso para el producto+origen activo. Devuelve null si todavía no hay
