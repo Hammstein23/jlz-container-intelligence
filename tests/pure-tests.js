@@ -6084,6 +6084,62 @@ group('Lotes viejos para revisar · en la tabla de Inventory');
 })();
 } catch (_e) { ok('lotes viejos en la tabla no tira excepción: ' + ((_e && _e.message) || _e), false); }
 
+try {
+group('La sugerencia de compra consume la semana del conteo IGUAL que la tabla');
+// El 17-sep (conteo del jueves) la tabla de proyección de turmeric-Fiji decía 87 cs para el lunes 28 y la
+// sugerencia 48: la sugerencia arrancaba del libre y restaba la semana del conteo ENTERA con un número
+// plano. De ese 48 salía la compra, 221 cs en vez de 182. Ahora las dos leen invmWeekDemands.
+(function(){
+  var WK0 = dmWeekKey(new Date());
+  var JUE = '2026-09-17';                                   // un jueves: queda la mitad de la semana
+  PRODUCTS = { turmeric:{ label:'Turmeric', caseLb:30, shrinkPct:0, suppliers:[
+    { name:'Sbimal LLC', origin:'Fiji', mode:'air', leadDays:10 } ] } };
+  var STATS = { p:'turmeric', label:'Turmeric', caseLb:30, shrinkPct:0, origin:'Fiji',
+                onHandCases:250, unbilledCases:0, committedCases:40, availCases:210, incomingCases:0,
+                weeklyCasesBuy:100, leadWks:10/7, safetyWks:0, targetWks:10/7, win:3 };
+  invmProductStats    = function(){ return STATS; };
+  invmProductModel    = function(){ return { caseLb:30, runRate3:100*30, runRate6:100*30, runRate13:100*30, runRate26:null }; };
+  invmProductArrivals = function(){ return {}; };
+  whatifArrivals      = function(){ return {}; };
+  invmCommittedByWeek = function(){ var o = {}; o[WK0] = 40; return o; };
+  var SNAP = JUE;
+  prodInvState = function(){ return SNAP ? { _savedAt: SNAP } : {}; };
+  try {
+    // La cuenta compartida: arranca del físico; la semana del conteo consume las 40 comprometidas enteras
+    // y la mitad del resto de la demanda (quedan jueves, viernes y sábado).
+    var W = invmWeekDemands('turmeric', 'Fiji', STATS, 100, [WK0, 'x1', 'x2']);
+    check('arranca del físico, no del libre', W.start, 250);
+    check('la semana del conteo: 40 comprometidas + la mitad de las otras 60', Math.round(W.rows[0].demW*10)/10, 70);
+    check('las semanas siguientes, enteras', W.rows[1].demW, 100);
+
+    // La pista de la sugerencia lee lo mismo.
+    var R = invmRunway('turmeric', 'Fiji', 26);
+    check('la pista arranca donde arranca la tabla', R.start, 250);
+    check('y su primera semana consume lo mismo que la tabla', Math.round(R.rows[0].demand*10)/10, 70);
+    check('al cerrar la semana del conteo quedan 180, no 110', Math.round(R.rows[0].raw), 180);
+
+    // Y la compra se mide con esa semana, no con la plana.
+    var g = invmBuySuggestion('turmeric', 'Fiji');
+    var P = g && g.protect, a = P && (P.protect || P.best);
+    ok('hay plan con fecha de llegada', !!(a && a.landsWk));
+    var idx = -1;
+    R.rows.forEach(function(r, i){ if(a && r.wk === a.landsWk) idx = i; });
+    var antes = 0; for(var j=0;j<idx;j++) antes += R.rows[j].demand;
+    check('lo que hay al llegar = físico − lo que sale antes, con la semana del conteo prorrateada',
+          a.stockAtLanding, Math.round(250 - antes));
+    ok('son 70 cajas más de lo que daba la cuenta vieja (libre − semanas enteras)',
+       idx > 0 && Math.round(a.stockAtLanding - (210 - 100*idx)) === 70);
+    check('y la compra sale de ahí', g.buy, Math.max(0, Math.ceil((10/7)*100 - a.stockAtLanding)));
+
+    // Sin fecha de conteo no se prorratea: se asume foto de lunes, que es el lado seguro.
+    SNAP = null;
+    check('sin fecha de conteo la semana se consume entera', invmWeekDemands('turmeric', 'Fiji', STATS, 100, [WK0]).rows[0].demW, 100);
+  } finally {
+    prodInvState = function(){ return {}; };
+  }
+})();
+} catch (_e) { ok('semana del conteo en la sugerencia no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
 // ═══ El entorno se limpia entre grupos ══════════════════════════════════════
 // Guardián del arreglo de arriba. Si alguien saca la restauración de `group()`, esto falla y
 // dice por qué — en vez de que un test futuro mida un stub ajeno y nadie se entere.

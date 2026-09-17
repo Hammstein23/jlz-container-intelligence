@@ -70,8 +70,16 @@ if bad:
 # reporte del 2026-09-03: "el buy planner y el simulator están desalineados".
 PROJECTORS = {
     'renderBuyPlanner':    'proyección de ginger-Perú',
-    'invmProjectionHTML':  'proyección de turmeric/garlic/shallots + ginger-Hawaii',
+    'invmWeekDemands':     'lo que sale cada semana en turmeric/garlic/shallots + ginger-Hawaii (tabla y sugerencia)',
     'simRenderProjection': 'proyección del Simulator',
+}
+# La tabla de proyección y la sugerencia de compra de esos cuatro productos no calculan la semana por su
+# cuenta: leen invmWeekDemands. El 2026-09-17 la sugerencia restaba la semana del conteo entera y la tabla
+# no — misma pantalla, 48 cs contra 87 al llegar el pedido, y 221 cs de compra en vez de 182.
+SHARED_WEEKS = {
+    'invmProjectionHTML':  'tabla de proyección',
+    'invmRunway':          'pista de la sugerencia de compra',
+    'invmBuySuggestion':   'plan de la sugerencia de compra (cada ventana)',
 }
 
 def body_of(name):
@@ -93,6 +101,12 @@ for fn, what in PROJECTORS.items():
         missing.append((fn, what, 'no se encontró la función'))
     elif 'bpSnapWeekDemand' not in b:
         missing.append((fn, what, 'no llama a bpSnapWeekDemand'))
+for fn, what in SHARED_WEEKS.items():
+    b = body_of(fn)
+    if b is None:
+        missing.append((fn, what, 'no se encontró la función'))
+    elif 'invmWeekDemands(' not in b:
+        missing.append((fn, what, 'no lee la semana de invmWeekDemands: vuelve a haber dos cuentas'))
 
 if missing:
     print('✗ una proyección no prorratea la semana del conteo:\n')
@@ -104,6 +118,7 @@ if missing:
     sys.exit(1)
 
 print('  ok   prorrateo: las %d proyecciones pasan por bpSnapWeekDemand' % len(PROJECTORS))
+print('  ok   la tabla y la sugerencia de compra leen la misma semana (invmWeekDemands)')
 
 # ── Tercer guardián: la merma va en la DEMANDA, no en el stock ──────────────────────────────────
 # `available` tiene que ser el conteo físico menos lo comprometido — nada más. Con 48 cajas en cámara
@@ -147,9 +162,9 @@ UNBILLED = {
     'invmProductStats':    'disponible de turmeric/garlic/shallots + ginger-Hawaii',
 }
 sin = [(fn, what) for fn, what in UNBILLED.items() if 'cmUnbilled(' not in (body_of(fn) or '')]
-proj = body_of('invmProjectionHTML') or ''
-if 'unbilledCases' not in proj:
-    sin.append(('invmProjectionHTML', 'proyección de los otros productos: arranca del físico y no resta lo sin facturar'))
+weeks = body_of('invmWeekDemands') or ''
+if 'unbilledCases' not in weeks:
+    sin.append(('invmWeekDemands', 'proyección de los otros productos: arranca del físico y no resta lo sin facturar'))
 m_av = re.search(r'var\s+availCases\s*=([^;]*);', stats)
 if not m_av or 'unbilledCases' not in m_av.group(1):
     sin.append(('invmProductStats', 'availCases no resta unbilledCases'))

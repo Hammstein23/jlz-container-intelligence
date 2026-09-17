@@ -18196,6 +18196,72 @@ function invmDirectShipOrdersHTML(p, origin){
 }
 function _dsDesde(){ try{ var d=new Date(Date.now()-13*7*86400000);
   return (typeof dmISOLocal==='function')?dmISOLocal(d):d.toISOString().slice(0,10); }catch(e){ return ''; } }
+// ── Cuánto sale de cámara cada semana de la proyección: UNA sola cuenta ──────────────────────────
+// La tabla de proyección y la sugerencia de compra proyectaban la misma línea por dos caminos. La
+// tabla arranca del físico, consume el committed de cada semana y prorratea la semana del conteo; la
+// sugerencia arrancaba del libre y restaba la semana ENTERA con un número plano. Conteo del jueves
+// 17-sep, turmeric-Fiji: la tabla decía 87 cs para el lunes 28, la sugerencia 48 — y de esos 48 salía
+// la compra, 221 cs en vez de 182. Desde entonces las dos leen de acá.
+//   weekly = demanda semanal CON merma (cada ventana de la sugerencia pasa la suya)
+//   wks    = las semanas a proyectar (lunes ISO), empezando por la semana en curso
+// Devuelve el stock de arranque y lo que sale cada semana; sumar llegadas y restar es de cada pantalla.
+function invmWeekDemands(p, origin, s, weekly, wks){
+  s=s||{}; wks=wks||[];
+  var P=s.p||p, O=s.origin||origin;
+  // Confirmed orders (committed/unshipped) placed in their week — the near-term booked demand. When present,
+  // start from PHYSICAL on-hand and consume committed per week (max vs run-rate); no lump upfront subtraction.
+  // Without per-week committed (no import), fall back to the old behavior: start from available (lump-netted).
+  var cbw=(typeof invmCommittedByWeek==='function')?(invmCommittedByWeek(P, O)||{}):{};
+  var hasCommWk=false; for(var _ck in cbw){ if(cbw[_ck]>0){ hasCommWk=true; break; } }
+  // Fecha del conteo de inventario. `prodInvSave` la sella al guardar; es del store completo, no por
+  // producto, pero /lunes carga los cuatro en la misma sesión así que en la práctica coincide.
+  var snap=null;
+  try{ var _pst=(typeof prodInvState==='function')?prodInvState():null;
+       if(_pst && _pst._savedAt) snap=new Date(_pst._savedAt+'T00:00:00'); }catch(e){}
+  // Lo sin facturar (cmUnbilled) sale de la foto, como el committed: `availCases` ya lo trae neto, el
+  // físico no.
+  var unbCs=+s.unbilledCases||0;
+  var start=hasCommWk ? (s.onHandCases-unbCs) : (s.availCases!=null?s.availCases:s.onHandCases);
+  var wk0=wks[0], rpk={};
+  if(hasCommWk && wk0){
+    // Lo REEMPACADO se SUMA a la demanda de stock; no compite con ella en el max(). `weekly` ya
+    // viene neto de esas cuentas (mtoNetRows) y su contenedor sí entra en las llegadas, así que
+    // meter su committed en el max() con el run-rate borraba la demanda de todos los demás esa
+    // semana: garlic con 210 cs de Whole Foods contra 37 cs/wk consumía 210 en vez de 247, y el
+    // stock quedaba 37 cs alto de ahí en adelante. Mismo conjunto que el nowcast: contra-orden menos
+    // lo cruzado (lo cruzado ya no está en `cbw`). Mismos filtros que invmCommittedByWeek: semana en
+    // curso en adelante, producto y origen.
+    try{
+      if(typeof mtoByCustomer==='function' && typeof cmPlanEntries==='function'){
+        var _rpW=(typeof dmWindow==='function')?dmWindow(P,O):13;
+        var _rpCd=mtoByCustomer(P,_rpW,{crossDockOnly:true})||{}, _rpC={}, _rpN=0;
+        Object.keys(mtoByCustomer(P,_rpW)||{}).forEach(function(c){
+          if(!Object.prototype.hasOwnProperty.call(_rpCd,c)){ _rpC[c]=1; _rpN++; } });
+        if(_rpN) cmPlanEntries().forEach(function(c){
+          if(!c || c.type!=='inv' || !c.wk || _cmProd(c)!==P || String(c.wk)<wk0) return;
+          if(!Object.prototype.hasOwnProperty.call(_rpC, c.customer)) return;
+          if(O && O!=='all' && _cmOriginFor(c)!==O) return;
+          rpk[c.wk]=(rpk[c.wk]||0)+(parseFloat(c.cases)||0);
+        });
+      }
+    }catch(e){ rpk={}; }
+  }
+  var rows=wks.map(function(wkISO, i){
+    var commW=cbw[wkISO]||0;
+    if(i===0 && hasCommWk){ Object.keys(cbw).forEach(function(k){ if(k<wkISO) commW+=cbw[k]; }); }   // overdue/backlog folds into now
+    var commR=hasCommWk ? Math.min(commW, rpk[wkISO]||0) : 0;
+    var demW=hasCommWk ? Math.max(commW-commR, weekly)+commR : weekly;                                   // booked week uses its order; else run-rate
+    // ── La semana del CONTEO se consume solo por lo que le queda ────────────────────────────────
+    // Mismo bug que tenía el Buy Planner de ginger: estos cuatro también se cargan a mitad de semana
+    // (el mismo /lunes), así que descontar la semana COMPLETA desde esa foto cuenta dos veces los días
+    // que ya pasaron. El committed no se prorratea — son órdenes reales con fecha.
+    // Sin fecha de guardado NO se prorratea: se asume foto de inicio de semana, que es el lado seguro
+    // (proyecta más consumo, nunca menos).
+    if(i===0 && snap && typeof bpSnapWeekDemand==='function') demW=bpSnapWeekDemand(demW, commW, 1, snap);
+    return { wkISO:wkISO, commW:commW, demW:demW };
+  });
+  return { start:start, snap:snap, hasCommWk:hasCommWk, rows:rows };
+}
 function invmProjectionHTML(s){
   var p=s.p, N=13;
   var f=function(n){ return Math.round(n||0).toLocaleString('en-US'); };
@@ -18211,59 +18277,22 @@ function invmProjectionHTML(s){
   var base=new Date();
   var baseMon; try{ baseMon=(typeof dmWeekKey==='function')?dmWeekKey(base):null; }catch(e){ baseMon=null; }
   var baseDate=baseMon?new Date(baseMon+'T12:00:00'):base;
-  // Confirmed orders (committed/unshipped) placed in their week — the near-term booked demand. When present,
-  // start from PHYSICAL on-hand and consume committed per week (max vs run-rate); no lump upfront subtraction.
-  // Without per-week committed (no import), fall back to the old behavior: start from available (lump-netted).
-  var cbw=(typeof invmCommittedByWeek==='function')?invmCommittedByWeek(s.p, s.origin):{};
-  var hasCommWk=false; for(var _ck in cbw){ if(cbw[_ck]>0){ hasCommWk=true; break; } }
-  // Fecha del conteo de inventario. `prodInvSave` la sella al guardar; es del store completo, no por
-  // producto, pero /lunes carga los cuatro en la misma sesión así que en la práctica coincide.
-  var _projSnap=null;
-  try{ var _pst=(typeof prodInvState==='function')?prodInvState():null;
-       if(_pst && _pst._savedAt) _projSnap=new Date(_pst._savedAt+'T00:00:00'); }catch(e){}
-  // Lo sin facturar (cmUnbilled) sale de la foto, como el committed: `availCases` ya lo trae neto, el
-  // físico no.
+  var _wkKeys=[];
+  for(var _k=0;_k<N;_k++){
+    var dd=new Date(baseDate.getTime()+_k*7*86400000);
+    var _kISO; try{ _kISO=(typeof dmWeekKey==='function')?dmWeekKey(dd):dd.toISOString().slice(0,10); }catch(e){ _kISO=dd.toISOString().slice(0,10); }
+    _wkKeys.push(_kISO);
+  }
+  // Arranque, committed por semana y prorrateo del conteo: la MISMA cuenta que la sugerencia de compra.
+  var _WD=invmWeekDemands(s.p, s.origin, s, weeklyCases, _wkKeys);
+  var hasCommWk=_WD.hasCommWk, _projSnap=_WD.snap;
+  // Lo sin facturar ya viene restado en el arranque; acá solo se muestra.
   var _unbCs=+s.unbilledCases||0;
-  var weeks=[], start=hasCommWk ? (s.onHandCases-_unbCs) : (s.availCases!=null?s.availCases:s.onHandCases), firstShort=null;
+  var weeks=[], start=_WD.start, firstShort=null;
   for(var i=0;i<N;i++){
-    var dd=new Date(baseDate.getTime()+i*7*86400000);
-    var wkISO; try{ wkISO=(typeof dmWeekKey==='function')?dmWeekKey(dd):dd.toISOString().slice(0,10); }catch(e){ wkISO=dd.toISOString().slice(0,10); }
+    var wkISO=_wkKeys[i];
     var arr=arrivals[wkISO]||0, sc=scen[wkISO]||0; if(arr>0) hasArr=true; if(sc>0) hasScen=true;
-    var commW=cbw[wkISO]||0;
-    if(i===0 && hasCommWk){ Object.keys(cbw).forEach(function(k){ if(k<wkISO) commW+=cbw[k]; }); }   // overdue/backlog folds into now
-    if(i===0 && hasCommWk){
-      // Lo REEMPACADO se SUMA a la demanda de stock; no compite con ella en el max(). `weeklyCases` ya
-      // viene neto de esas cuentas (mtoNetRows) y su contenedor sí entra en las llegadas, así que
-      // meter su committed en el max() con el run-rate borraba la demanda de todos los demás esa
-      // semana: garlic con 210 cs de Whole Foods contra 37 cs/wk consumía 210 en vez de 247, y el
-      // stock quedaba 37 cs alto de ahí en adelante. Mismo conjunto que el nowcast: contra-orden menos
-      // lo cruzado (lo cruzado ya no está en `cbw`). Mismos filtros que invmCommittedByWeek: semana en
-      // curso en adelante, producto y origen.
-      var _rpk={};
-      try{
-        if(typeof mtoByCustomer==='function' && typeof cmPlanEntries==='function'){
-          var _rpW=(typeof dmWindow==='function')?dmWindow(s.p,s.origin):13;
-          var _rpCd=mtoByCustomer(s.p,_rpW,{crossDockOnly:true})||{}, _rpC={}, _rpN=0;
-          Object.keys(mtoByCustomer(s.p,_rpW)||{}).forEach(function(c){
-            if(!Object.prototype.hasOwnProperty.call(_rpCd,c)){ _rpC[c]=1; _rpN++; } });
-          if(_rpN) cmPlanEntries().forEach(function(c){
-            if(!c || c.type!=='inv' || !c.wk || _cmProd(c)!==s.p || String(c.wk)<wkISO) return;
-            if(!Object.prototype.hasOwnProperty.call(_rpC, c.customer)) return;
-            if(s.origin && s.origin!=='all' && _cmOriginFor(c)!==s.origin) return;
-            _rpk[c.wk]=(_rpk[c.wk]||0)+(parseFloat(c.cases)||0);
-          });
-        }
-      }catch(e){ _rpk={}; }
-    }
-    var commR=hasCommWk ? Math.min(commW, (_rpk&&_rpk[wkISO])||0) : 0;
-    var demW=hasCommWk ? Math.max(commW-commR, weeklyCases)+commR : weeklyCases;                                   // booked week uses its order; else run-rate
-    // ── La semana del CONTEO se consume solo por lo que le queda ────────────────────────────────
-    // Mismo bug que tenía el Buy Planner de ginger: estos cuatro también se cargan a mitad de semana
-    // (el mismo /lunes), así que descontar la semana COMPLETA desde esa foto cuenta dos veces los días
-    // que ya pasaron. El committed no se prorratea — son órdenes reales con fecha.
-    // Sin fecha de guardado NO se prorratea: se asume foto de inicio de semana, que es el lado seguro
-    // (proyecta más consumo, nunca menos).
-    if(i===0 && _projSnap && typeof bpSnapWeekDemand==='function') demW=bpSnapWeekDemand(demW, commW, 1, _projSnap);
+    var commW=_WD.rows[i].commW, demW=_WD.rows[i].demW;
     var end=start+arr+sc-demW;
     if(firstShort===null && end<safetyCases) firstShort=i;
     weeks.push({i:i,wkISO:wkISO,start:start,arr:arr,scen:sc,end:end,commW:commW,demW:demW});
@@ -18346,7 +18375,7 @@ function invmProjectionHTML(s){
         var _hinfl=(s.shrinkPct>0)?(1/(1-Math.min(0.6,s.shrinkPct/100))):1;
         hw.forEach(function(w){ w.arrivals=_harr[w.week]||[]; w.arrCases=w.arrivals.reduce(function(t,a){return t+a.cases;},0); w.out=Math.round(w.sold*_hinfl); });
         var _hsnaps=(typeof stockSnapFor==='function')?stockSnapFor(s.p):{};
-        var _hcursor=(hasCommWk ? (s.onHandCases-_unbCs) : (s.availCases!=null?s.availCases:s.onHandCases));
+        var _hcursor=_WD.start;
         for(var _i=hw.length-1;_i>=0;_i--){ var _w=hw[_i];
           _w.end=_hcursor; _w.start=_hcursor+_w.out-_w.arrCases; _w.est=true;
           if(_hsnaps[_w.week]!=null){ _w.end=_hsnaps[_w.week]; _w.start=_hsnaps[_w.week]+_w.out-_w.arrCases; _w.est=false; }
@@ -18860,30 +18889,38 @@ function invmRunway(p, origin, weeks, opts){
       try{ if(typeof simActiveHypoSales==='function' && p==='ginger')
              simActiveHypoSales().forEach(function(h){ if(h&&h.wk) hypoOut[h.wk]=(hypoOut[h.wk]||0)+(+h.cases||0); }); }catch(e){}
     }
-    var start=s.availCases||0;
+    var base=new Date(), wks=[];
+    for(var _w=0;_w<N;_w++){ var _wk=null; try{ _wk=dmWeekKey(new Date(base.getTime()+_w*7*86400000)); }catch(e){} wks.push(_wk); }
+    var start=s.availCases||0, WD=null;
     if(p==='ginger' && origin==='Peru'){                 // store propio: bruto − committed
       try{ var st=bpInvState();
            var br=Object.keys(st.rows||{}).reduce(function(a,k){ return a+(+((st.rows[k]||{}).cases)||0); },0);
            start=br-((typeof committedInvForWeek==='function')?(committedInvForWeek(dmWeekKey(new Date()),'ginger')||0):0)
                    -((typeof cmUnbilled==='function')?(cmUnbilled('ginger','all',{store:'bp'}).held||0):0);   // sin facturar, todavía en el conteo
       }catch(e){}
+    } else {
+      // Arranque, committed por semana y la semana del conteo prorrateada: la misma cuenta que la tabla de
+      // proyección (invmWeekDemands). Antes arrancaba del libre y restaba la semana entera: con el conteo de
+      // un jueves se comía tres días que ya habían pasado y la compra salía de más.
+      try{ WD=invmWeekDemands(p, origin||'all', s, d, wks); }catch(e){ WD=null; }
+      if(WD && isFinite(WD.start)) start=WD.start; else WD=null;
     }
     var shelf=null;
     try{ var meta=(typeof PRODUCTS==='object'&&PRODUCTS[p])||{}; shelf=meta.shelfWks||((p==='ginger')?8:null); }catch(e){}
-    var base=new Date(), rows=[], stock=start, peak=0, peakWk=null, dip=null;
+    var rows=[], stock=start, peak=0, peakWk=null, dip=null;
     for(var i=0;i<N;i++){
-      var dt=new Date(base.getTime()+i*7*86400000), wk;
-      try{ wk=dmWeekKey(dt); }catch(e){ wk=null; }
+      var wk=wks[i];
       var inc=wk?((arr[wk]||0)+(hypoIn[wk]||0)):0;
       var extra=wk?(hypoOut[wk]||0):0;
-      stock=stock+inc-d-extra;
+      var dem=(WD && WD.rows[i]) ? WD.rows[i].demW : d;
+      stock=stock+inc-dem-extra;
       var cover=(d>0)? Math.max(0,stock)/d : 0;
       if(cover>peak){ peak=cover; peakWk=wk; }
       if(dip===null && stock<=0) dip=i;
       // `stock` va recortado en cero porque dibuja las barras; `raw` y `demand` son para la cuenta,
       // que necesita ver cuánto se hunde de verdad y cuánto sale cada semana.
       rows.push({ i:i, wk:wk, arrived:inc, hypoSale:extra, stock:Math.max(0,stock), raw:stock,
-                  demand:d+extra, cover:cover });
+                  demand:dem+extra, cover:cover });
     }
     var sumIn=Object.keys(hypoIn).reduce(function(t,k){ return t+(hypoIn[k]||0); },0);
     var sumOut=Object.keys(hypoOut).reduce(function(t,k){ return t+(hypoOut[k]||0); },0);
@@ -19088,10 +19125,18 @@ function invmBuySuggestion(p, origin, opts){
     var planFor=function(dCases, buyPlano){
       if(!RW || !RW.rows || !RW.rows.length || !(dCases>0)) return null;
       var upTo=(s.targetWks||0)*dCases;
+      // Lo que sale cada semana con la demanda de ESTA ventana, por la misma cuenta que la tabla de
+      // proyección: committed por semana y la semana del conteo prorrateada. Antes era un número plano
+      // desde hoy, y un conteo de jueves restaba tres días que ya habían pasado. Ginger-Perú tiene su
+      // propio arranque (y su propio Buy Planner): sigue con la demanda plana.
+      var WD=null;
+      if(!(p==='ginger' && origin==='Peru')){
+        try{ WD=invmWeekDemands(p, origin||'all', s, dCases, RW.rows.map(function(r){ return r.wk; })); }catch(e){ WD=null; }
+      }
       try{
         return bpProtectPlan(
-          RW.rows.map(function(r){ return { wkISO:r.wk, arrivals:+r.arrived||0,
-                                            demand:dCases + (+r.hypoSale||0) }; }),
+          RW.rows.map(function(r, i){ return { wkISO:r.wk, arrivals:+r.arrived||0,
+                                            demand:((WD && WD.rows[i]) ? WD.rows[i].demW : dCases) + (+r.hypoSale||0) }; }),
           { startCases:(RW.start!=null?RW.start:(s.availCases||0)),
             safetyCases:(s.safetyWks||0)*dCases, leadDays:lead,
             addCases:Math.max(buyPlano||0, Math.ceil(upTo)) });
