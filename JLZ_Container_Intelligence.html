@@ -4722,7 +4722,7 @@ function authInjectLogo() {
           </div>
           <div>
             <label class="field-label" style="font-size:var(--text-10)">Ocean transit</label>
-            <input type="number" id="bp-lt-sea-ocean" value="18" min="0" max="60" step="1" oninput="renderBuyPlanner()" class="input input-mono input-sm" style="width:70px"/>
+            <input type="number" id="bp-lt-sea-ocean" value="17" min="0" max="60" step="1" oninput="renderBuyPlanner()" class="input input-mono input-sm" style="width:70px"/>
           </div>
           <div>
             <label class="field-label" style="font-size:var(--text-10)">Port → WH</label>
@@ -14828,10 +14828,16 @@ function confirmImport() {
 // otros productos llegan por aire o por tierra con otro ritmo. Los días de tránsito siguen en los campos de
 // lead time del Buy Planner; esto solo dice QUÉ DÍA de la semana se ordena y se entrega.
 var BP_PE_CALENDAR = { orderDow: 3, deliveryOffset: 3, preDeliveryShare: 3/6 };
+// Los días de mar reales son 36, no 37 (Juan, 2026-09-17: "ordenamos máximo un miércoles y las cargas
+// llegan los jueves"; su ejemplo: pide mié 16-sep → embarca 3-oct → puerto lun 19-oct → almacén jue 22-oct).
+// Con 37 la cuenta caía un martes y el calendario la corría al miércoles ANTERIOR: pedía una semana antes
+// de lo necesario (7-oct en vez de 14-oct para la entrega del 19-nov). Ojo: el tramo `ocean` está guardado
+// en la hoja con formato de FECHA ("1900-01-16"), así que el campo numérico lo descarta y manda este
+// default — por eso se corrige acá y no en la hoja. Ver [[ginger-sea-calendar]].
 const BP_LEAD_DEFAULTS = {
   sea_harvest_proc:   12,
   sea_inland_to_port:  4,
-  sea_ocean_transit:  18,
+  sea_ocean_transit:  17,
   sea_port_to_wh:      3,
   air_harvest_proc:   10,
   air_inland_to_air:   3,
@@ -23715,10 +23721,13 @@ async function pullSettingsFromSheet() {
         ['bpLtAirHarvest', 'bp-lt-air-harvest'],
         ['bpLtAirInland',  'bp-lt-air-inland'],
       ];
+      // Un tramo de lead time son DÍAS. La hoja devolvió `bpLtSeaOcean` como "1900-01-16" (la celda
+      // quedó con formato de fecha), y un <input type="number"> descarta ese texto: el campo se veía
+      // VACÍO y el plan caía al default sin decirlo. Lo que no es un número no pisa el campo.
       ltMap.forEach(([k, id]) => {
-        if (data.settings[k] != null && document.getElementById(id)) {
-          document.getElementById(id).value = data.settings[k];
-        }
+        const el = document.getElementById(id);
+        const v = parseFloat(data.settings[k]);
+        if (data.settings[k] != null && el && isFinite(v) && v >= 0 && v < 400) el.value = v;
       });
       // Seed the dirty-gate cache with the server's values so the render below
       // (and any later identical renders) are no-ops and can't re-push/clobber.
@@ -29317,7 +29326,10 @@ function dmWeekStatus(){
       var fo = 0; try{ fo = (typeof invmCommittedByWeek === 'function') ? (invmCommittedByWeek(prod, o)[wk] || 0) : 0; }catch(e){}
       var wo = Math.max(fo, rr * _infl);
       if(wo <= 0 && fo <= 0) return;
-      byOrigin.push({ origin:o, weekly:wo, firm:fo,
+      // Un origen marcado sin producto tiene demanda, pero no se puede vender: el número sin la marca se
+      // lee como algo que podés despachar esta semana. Turmeric-Hawaii mostraba 15 cs/sem estando en pausa.
+      var pz = null; try{ pz = (typeof mktPauseActive === 'function') ? mktPauseActive(prod, o) : null; }catch(e){}
+      byOrigin.push({ origin:o, weekly:wo, firm:fo, paused:!!pz,
                       ahead:(typeof bpSnapWeekDemand === 'function') ? bpSnapWeekDemand(wo, fo, 1, new Date()) : wo * pace.aheadPct });
     });
   }
@@ -29458,8 +29470,12 @@ function renderWeekPanel(){
   if(_byOrg.length > 1){
     h += '<tr><td colspan="3" style="padding-top:9px"><span class="m">By origin &mdash; each one buys on its own</span></td></tr>';
     _byOrg.forEach(function(o){
-      h += '<tr class="sub"><td>&mdash; ' + E(o.origin) + '</td><td class="n">' + N(o.ahead) + ' cs</td>'
-         + '<td class="m">' + N(o.weekly) + ' cs/wk &middot; ' + N(o.firm) + ' booked</td></tr>';
+      h += '<tr class="sub"><td>&mdash; ' + E(o.origin)
+         + (o.paused ? ' <span style="color:var(--amber-700);font-family:var(--fm);font-size:9.5px">NOT AVAILABLE</span>' : '')
+         + '</td><td class="n"' + (o.paused ? ' style="color:var(--gray-400)"' : '') + '>' + N(o.ahead) + ' cs</td>'
+         + '<td class="m">' + N(o.weekly) + ' cs/wk &middot; ' + N(o.firm) + ' booked'
+         + (o.paused ? ' &middot; <span style="color:var(--amber-700)">marked out of the market: this is demand you cannot ship</span>' : '')
+         + '</td></tr>';
     });
   }
   h += '</table>';

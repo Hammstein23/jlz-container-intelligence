@@ -67,6 +67,30 @@ elif (re.search(r'o\.buy\s*=\s*Math\.max\(0,\s*Math\.ceil\(upTo-\(alLlegar', m.g
 else:
     bad('la cantidad ya no sale de objetivo menos lo proyectado a la llegada')
 
+# ── El lead time de mar por defecto es el real ────────────────────────────────────────────────
+# 36 dias, no 37: con 37 la cuenta caia un martes y el calendario la corria al miercoles ANTERIOR,
+# o sea pedia una semana antes (7-oct en vez de 14-oct para la entrega del 19-nov). El default manda
+# de verdad porque la hoja guarda `bpLtSeaOcean` con formato de fecha y el campo numerico lo descarta.
+_m = re.search(r"const BP_LEAD_DEFAULTS = \{(.*?)\};", src, re.S)
+if not _m:
+    bad('no se encontro BP_LEAD_DEFAULTS')
+else:
+    _v = dict(re.findall(r"(\w+):\s*(\d+)", _m.group(1)))
+    _sea = sum(int(_v.get(k, 0)) for k in ('sea_harvest_proc', 'sea_inland_to_port', 'sea_ocean_transit', 'sea_port_to_wh'))
+    if _sea == 36:
+        ok('el mar por defecto son 36 dias (miercoles a jueves, el ejemplo de Juan)')
+    else:
+        bad('el mar por defecto da %d dias, no 36' % _sea)
+    _inp = re.search(r'id="bp-lt-sea-ocean"[^>]*value="(\d+)"', src)
+    if _inp and _inp.group(1) == _v.get('sea_ocean_transit'):
+        ok('y el campo del formulario arranca en el mismo numero')
+    else:
+        bad('el campo bp-lt-sea-ocean no coincide con el default')
+if re.search(r"isFinite\(v\) && v >= 0 && v < 400", src):
+    ok('un ajuste de lead time que no sea numero no pisa el campo')
+else:
+    bad('la hoja puede volver a blanquear un tramo de lead time con un valor con formato de fecha')
+
 # ── Dias de entrega: solo los proveedores que de verdad los tienen ────────────────────────────
 # Sbimal (turmeric-Fiji) entrega martes y sabado y se pide 10 dias antes (Juan, 2026-09-17). Un
 # calendario puesto en otro proveedor cambia fechas y cantidades de ese producto sin que nadie lo

@@ -2861,6 +2861,13 @@ ok('la tira de días marca el que ya cerró y lo pedido en él', /MON 31/.test(_
 ok('dice lo ya facturado, para contrastar', _painted.indexOf('invoiced so far') >= 0);
 ok('lo cruzado se nombra y se deja afuera', /Sol-ti/.test(_painted) && /never enters the warehouse/.test(_painted));
 ok('y con todos los orígenes, cada uno con lo suyo', /By origin/.test(_painted) && /Hawaii/.test(_painted));
+// Un origen sin producto en el mercado tiene demanda pero no se puede despachar: el número solo se lee mal.
+_base.byOrigin = [{ origin:'Peru', weekly:990, firm:42, ahead:516, paused:false },
+                  { origin:'Hawaii', weekly:10, firm:0, ahead:5, paused:true }];
+renderWeekPanel();
+ok('el origen marcado sin producto lo dice', /NOT AVAILABLE/.test(_painted) && /cannot ship/.test(_painted));
+ok('y el que sí tiene producto no', (_painted.match(/NOT AVAILABLE/g) || []).length === 1);
+check('sigue cerrando bien', balanceOK(_painted), true);
 
 // El detalle va PLEGADO (Juan): el total se ve siempre, las órdenes solo si se piden.
 var _lsReal = localStorage;
