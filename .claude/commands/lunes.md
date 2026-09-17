@@ -481,6 +481,39 @@ WholesaleWare: excluir solo los saca del disponible. La línea para el reporte s
 `invmReviewReport().text` en la consola, y cada lote de `invmReviewReport().lots`. Nombrá los que pesen en
 cajas; los de 1–2 cajas suelen ser muestras.
 
+### La semana por dentro — se revisa TODOS los lunes (pedido de Juan, 2026-09-17)
+
+Dos supuestos de la app dependen de cómo se reparte tu venta dentro de la semana: cuánto falta vender
+desde el día del conteo (el prorrateo) y cuánto se vendió antes de que llegue una entrega (Sbimal, que
+entrega martes y sábado). Los dos se miden de tus propias ventas, así que se miran cada lunes:
+
+```javascript
+// Cómo se reparte la venta por día, y si la regla de prorrateo sigue siendo la mejor.
+(function(){
+  var r = dmWeekShareReport();
+  console.log(r.text);
+  console.log('  curva 13 sem: ' + r.curva[13]);
+  console.log('  curva 52 sem: ' + r.curva[52] + '  ·  sábado+domingo ' + r.sabado[52]);
+  ['ginger','turmeric','garlic','shallots'].forEach(function(p){
+    var x = dmWeekShareReport(p);
+    console.log('  ' + p + ': ' + x.curva[26] + '  ·  mejor regla: ' + (x.mejor || '—') + (x.revisar ? '  ← REVISAR' : ''));
+  });
+})();
+```
+
+Qué mirar:
+
+- **`REVISAR`**: el reparto parejo de 6 días dejó de ser el más preciso. Medido el 2026-09-17 sobre 26
+  semanas, ganaba en ginger (177 cajas de error por semana contra 181-189 de la curva) porque el mix de
+  días se mueve mucho de semana a semana. Si deja de ganar, habláalo con Juan **antes** de cambiarlo: ese
+  prorrateo lo usan las cinco pantallas de compra.
+- **El peso del sábado.** En septiembre de 2026 era el 1% de la venta (hace un año, 3-5%). De ahí sale lo
+  que la app supone vendido antes de una entrega de sábado (99%). Si el sábado vuelve a moverse, la curva
+  lo toma sola; solo hay que verlo para saberlo.
+- **Un producto con una curva rarísima** suele ser poca historia (shallots tiene 6 órdenes en meses), no
+  un cambio de hábito. Con menos de 8 semanas cargadas la app usa la curva general y, si tampoco alcanza,
+  vuelve a la cuenta de días hábiles.
+
 - **Marcá cualquier movimiento grande contra la semana pasada.** Un run-rate que salta de golpe
   casi siempre es un dato raro, no una tendencia.
 - **Ventana de reacción:** ginger 6 semanas, los otros 3. Solo la de ginger alimenta el Buy Planner

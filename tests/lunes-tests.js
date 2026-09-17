@@ -69,6 +69,7 @@ var S_3B       = snipBy(/availCases/,         'paso 3b · doble descuento');
 var S_CONSOLE  = snipBy(/invariants-console/, 'paso 4b · chequeo de consola');
 var S_VENCIDAS = snipBy(/vencida/,            'paso 2 · committed vencido sin facturar');
 var S_TRANSIT  = snipBy(/DOBLE CONTEO/,     'paso 3c · órdenes que ya llegaron y siguen en camino');
+var S_CURVA    = snipBy(/dmWeekShareReport/, 'paso 5 · la semana por dentro');
 
 // ════ Snippet B — los cuatro productos del store product-aware ══════════════
 group('Snippet B — inventario por producto');
@@ -151,10 +152,13 @@ ok('y cargar el bruto en los dos es lo correcto en los dos',
 
 // ════ El runbook no perdió ningún snippet ═══════════════════════════════════
 group('Integridad del runbook');
-check('sigue teniendo los 6 bloques de código', SNIPPET_COUNT, 6);
+check('sigue teniendo los 7 bloques de código', SNIPPET_COUNT, 7);
 ok('el snippet A es el de ginger-Perú (por PO)', /bpInvSave/.test(S_GINGER) && /jlzPo/.test(S_GINGER));
 ok('el snippet B es el product-aware', /prodInvSave/.test(S_PROD) && /excluded/.test(S_PROD));
 ok('el snippet B hace REEMPLAZO total, no merge', /\.lots = LOTS/.test(S_PROD));
+ok('el paso 5 revisa la curva de la semana y las reglas de prorrateo',
+   /dmWeekShareReport\(\)/.test(S_CURVA) && /revisar/.test(S_CURVA) && /curva/.test(S_CURVA));
+ok('y lo hace por producto, no solo en el agregado', /shallots/.test(S_CURVA) && /mejor/.test(S_CURVA));
 ok('el paso 3b muestra on-hand, committed y available', /onHandCases/.test(S_3B) && /committedCases/.test(S_3B) && /availCases/.test(S_3B));
 ok('el paso 3b también cubre ginger-Perú, que vive en el otro store', /bpInvState/.test(S_3B) && /committedInvForWeek/.test(S_3B));
 // Cada store tiene que quedar asociado a SU convención: buscar las palabras sueltas no sirve,

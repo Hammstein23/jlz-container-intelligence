@@ -19093,7 +19093,7 @@ function invmWindowFit(p, origin, testWeeks){
 // Una entrega de sábado salía peor: cinco días de venta que la app daba por cubiertos, y pedía de menos.
 // Cada día de entrega es un calendario de bpProtectPlan (el mismo mecanismo que el contenedor de
 // ginger-Perú), sin día de cierre: se puede pedir cualquier día.
-function invmDeliveryCalendars(sup){
+function invmDeliveryCalendars(sup, prod){
   var dias=(sup && Array.isArray(sup.deliveryDays)) ? sup.deliveryDays : null;
   if(!dias || !dias.length) return null;
   var venta=(typeof DM_SELL_DAYS==='number' && DM_SELL_DAYS>0) ? DM_SELL_DAYS : 6;
@@ -19101,7 +19101,12 @@ function invmDeliveryCalendars(sup){
   dias.forEach(function(d){
     var dow=+d; if(!(dow>=0 && dow<=6)) return;             // 0 domingo … 6 sábado, como getDay()
     var off=(dow+6)%7;                                       // días después del lunes: martes 1, sábado 5
-    out.push({ dow:dow, deliveryOffset:off, preDeliveryShare:Math.min(off, venta)/venta, orderDow:null });
+    // Cuánto se vendió antes de que llegue el camión: medido de las ventas (dmWeekShareBefore), no
+    // "días hábiles antes / 6". El sábado vende el 1%, así que después de una entrega de sábado no
+    // queda por vender un sexto de la semana como suponía la cuenta vieja, queda casi nada.
+    var share=null; try{ share=(typeof dmWeekShareBefore==='function') ? dmWeekShareBefore(dow, prod) : null; }catch(e){ share=null; }
+    out.push({ dow:dow, deliveryOffset:off,
+               preDeliveryShare:(share!=null ? share : Math.min(off, venta)/venta), orderDow:null });
   });
   return out.length ? out : null;
 }
@@ -19154,7 +19159,7 @@ function invmBuySuggestion(p, origin, opts){
     var best=sup.reduce(function(a,b){ return ((+b.leadDays||0)>(+a.leadDays||0))?b:a; });
     var lead=+best.leadDays||14;
     // Días en que ese proveedor entrega (Sbimal: martes y sábado). Sin días, se entrega cualquier día.
-    var cals=(typeof invmDeliveryCalendars==='function') ? invmDeliveryCalendars(best) : null;
+    var cals=(typeof invmDeliveryCalendars==='function') ? invmDeliveryCalendars(best, p) : null;
     // Lo que ya viene navegando sale de `s`, no de una segunda llamada: `invmProductStats` resuelve
     // el origen (un 'all' cae al primero con lotes) y contar por separado con el origen crudo daba
     // dos "incoming" distintos para la misma tarjeta.
@@ -29054,6 +29059,139 @@ function dmWeekPace(d){
   var done = (day === 0) ? DM_SELL_DAYS : Math.max(0, day - 1);   // días hábiles YA cerrados
   if(done > DM_SELL_DAYS) done = DM_SELL_DAYS;
   return { done: done, ahead: DM_SELL_DAYS - done, aheadPct: (DM_SELL_DAYS - done) / DM_SELL_DAYS };
+}
+
+// ── Cómo se reparte la venta DENTRO de la semana, medido de las ventas cargadas ──────────────────
+// Backtest del 2026-09-17 sobre 26 semanas (la curva calculada solo con datos ANTERIORES a cada
+// semana): para adivinar CUÁNTO FALTA vender desde el día del conteo, el reparto parejo en 6 días le
+// gana a la curva medida — ginger 177 cajas de error por semana contra 181-189, y repartir en 5 es lo
+// peor (187). El mix de días se mueve tanto de semana a semana que la curva le pega al promedio y no a
+// ninguna semana concreta. Por eso `bpSnapWeekDemand` (el prorrateo del conteo) NO usa esto.
+// Lo que sí es estable es qué días existen: sábado y domingo son el 1% de la venta de los últimos seis
+// meses (3-5% hace un año). Esta curva contesta solo esa pregunta —cuánto se vendió ANTES de una
+// entrega que llega tal día—, que es la que necesita un proveedor con días fijos de entrega (Sbimal,
+// martes y sábado): antes de una de sábado se vendió el 99% de la semana, no el 83% que daba la cuenta
+// de días hábiles. Lo cruzado queda afuera: esa mercadería nunca sale de la cámara.
+var DM_CURVE_WKS = 26, DM_CURVE_MIN_WKS = 8, _dmCurveCache = null;
+function _dmCurveMemo(){
+  var c = _dmCurveCache;
+  if(!c){ c = {};
+    try{ if(typeof setTimeout==='function'){ setTimeout(function(){ _dmCurveCache=null; }, 0); _dmCurveCache=c; } }catch(e){}
+  }
+  return c;
+}
+// Semanas COMPLETAS (sin la en curso) → lbs por día de la semana (getDay).
+function _dmWeekDaySeries(prod){
+  var memo=_dmCurveMemo(), key='S|'+(prod||'TODOS');
+  if(memo[key]!==undefined) return memo[key];
+  var out={};
+  try{
+    if(typeof _dmRawAll!=='undefined' && Array.isArray(_dmRawAll) && _dmRawAll.length && typeof dmWeekKey==='function'){
+      var wkNow=dmWeekKey(new Date()), cd={};
+      var prods=prod ? [prod] : ((typeof PRODUCTS==='object' && PRODUCTS) ? Object.keys(PRODUCTS) : []);
+      prods.forEach(function(p){ try{ cd[p]=(typeof mtoByCustomer==='function') ? (mtoByCustomer(p, DM_CURVE_WKS, {crossDockOnly:true})||{}) : {}; }catch(e){ cd[p]={}; } });
+      _dmRawAll.forEach(function(r){
+        if(!r || (r.type && r.type!=='Sale')) return;
+        var p=r.prod||'ginger';
+        if(prod && p!==prod) return;
+        if(typeof dmIsInternalAcct==='function' && dmIsInternalAcct(r.c)) return;
+        if(cd[p] && Object.prototype.hasOwnProperty.call(cd[p], r.c)) return;
+        var lbs=+r.lbs||0; if(!(lbs>0)) return;
+        var d=new Date(String(r.d)+'T12:00:00'); if(isNaN(d.getTime())) return;
+        var wk; try{ wk=dmWeekKey(d); }catch(e){ return; }
+        if(!wk || wk>=wkNow) return;
+        (out[wk]=out[wk]||[0,0,0,0,0,0,0])[d.getDay()]+=lbs;
+      });
+    }
+  }catch(e){ out={}; }
+  memo[key]=out; return out;
+}
+// La curva de las últimas `weeks` semanas completas, o null si no hay historia suficiente.
+function dmWeekCurve(prod, weeks){
+  var n=+weeks>0 ? +weeks : DM_CURVE_WKS;
+  var memo=_dmCurveMemo(), key='C|'+(prod||'TODOS')+'|'+n;
+  if(memo[key]!==undefined) return memo[key];
+  var S=_dmWeekDaySeries(prod);
+  var ws=Object.keys(S).sort().filter(function(wk){ return S[wk].reduce(function(a,b){ return a+b; },0)>0; }).slice(-n);
+  var q=null;
+  if(ws.length>=DM_CURVE_MIN_WKS){
+    var dias=[0,0,0,0,0,0,0], tot=0;
+    ws.forEach(function(wk){ for(var i=0;i<7;i++){ dias[i]+=S[wk][i]; tot+=S[wk][i]; } });
+    if(tot>0) q=dias.map(function(v){ return v/tot; });
+  }
+  memo[key]=q; return q;
+}
+// Fracción de la semana ya vendida ANTES de que llegue una entrega ese día (0 domingo … 6 sábado).
+// Sin historia suficiente cae a la cuenta de días hábiles, que es lo que se hacía antes.
+function dmWeekShareBefore(dow, prod){
+  var d=+dow; if(!(d>=0 && d<=6)) return null;
+  var venta=(typeof DM_SELL_DAYS==='number' && DM_SELL_DAYS>0)?DM_SELL_DAYS:6;
+  var q=null; try{ q=dmWeekCurve(prod) || (prod ? dmWeekCurve(null) : null); }catch(e){ q=null; }
+  if(!q) return Math.min((d+6)%7, venta)/venta;
+  var s=0, hasta=(d===0)?7:d;                               // domingo: ya se vendió la semana entera
+  for(var i=1;i<hasta;i++) s+=q[i];
+  return Math.max(0, Math.min(1, s));
+}
+// ── La revisión de los lunes ─────────────────────────────────────────────────────────────────────
+// Pedido de Juan (2026-09-17): esto se mira cada vez que se corre /lunes. Devuelve la curva de venta
+// por día, cuánto pesa el sábado, lo que usan los calendarios de entrega, y el backtest de las tres
+// reglas de prorrateo sobre las últimas 26 semanas —cada semana medida con una curva armada SOLO con
+// las anteriores, o el backtest se estaría probando a sí mismo—. Si el reparto parejo de 6 días deja
+// de ganar, `revisar` viene en true: hay que hablarlo antes de cambiar el prorrateo, que lo usan las
+// cinco pantallas de compra.
+function dmWeekShareReport(prod){
+  var D=['dom','lun','mar','mié','jue','vie','sáb'], pct=function(x){ return Math.round((x||0)*100); };
+  var curvas={}, sabado={};
+  [13,26,52].forEach(function(n){
+    var q=dmWeekCurve(prod||null, n);
+    curvas[n]= q ? [1,2,3,4,5,6].map(function(i){ return D[i]+' '+pct(q[i])+'%'; }).join(' · ') : 'sin datos';
+    sabado[n]= q ? (pct(q[6]+q[0])+'%') : '—';
+  });
+  var S=_dmWeekDaySeries(prod||null);
+  var ws=Object.keys(S).sort().filter(function(wk){ return S[wk].reduce(function(a,b){ return a+b; },0)>0; });
+  var hasta=function(idx, n){
+    var prev=ws.slice(Math.max(0, idx-n), idx);
+    if(prev.length<DM_CURVE_MIN_WKS) return null;
+    var dias=[0,0,0,0,0,0,0], tot=0;
+    prev.forEach(function(wk){ for(var i=0;i<7;i++){ dias[i]+=S[wk][i]; tot+=S[wk][i]; } });
+    return tot>0 ? dias.map(function(v){ return v/tot; }) : null;
+  };
+  var restante=function(q, dia){ var s=0; for(var i=dia;i<=6;i++) s+=q[i]; return s; };
+  var REGLAS=['6 días','5 días','curva 13','curva 26','curva 52'];
+  var err={}, nWk=0;
+  ws.slice(-26).forEach(function(wk){
+    var idx=ws.indexOf(wk), w=S[wk], tot=w.reduce(function(a,b){ return a+b; },0);
+    if(!(tot>0)) return;
+    var q=w.map(function(v){ return v/tot; }), cajas=tot/30; nWk++;
+    [2,3,4,5].forEach(function(dia){                                  // conteo de mar, mié, jue o vie
+      var real=restante(q, dia);
+      REGLAS.forEach(function(nombre){
+        var pred;
+        if(nombre==='6 días') pred=(6-(dia-1))/6;
+        else if(nombre==='5 días') pred=Math.max(0,(5-(dia-1)))/5;
+        else { var c=hasta(idx, +nombre.split(' ')[1]); if(!c) return; pred=restante(c, dia); }
+        err[nombre]=(err[nombre]||0)+Math.abs(pred-real)*cajas;
+        err[nombre+'|n']=(err[nombre+'|n']||0)+1;
+      });
+    });
+  });
+  var tabla={}, mejor=null;
+  REGLAS.forEach(function(nombre){
+    var n=err[nombre+'|n']||0; if(!n) return;
+    var e=err[nombre]/n*4;                                            // error medio por semana
+    tabla[nombre]=Math.round(e);
+    if(mejor===null || e<tabla[mejor]) mejor=nombre;
+  });
+  var pre={};
+  [2,6].forEach(function(dow){ pre[D[dow]]=pct(dmWeekShareBefore(dow, prod||null))+'%'; });
+  var revisar=!!(mejor && mejor!=='6 días');
+  return { prod:(prod||'todos'), semanas:nWk, curva:curvas, sabado:sabado, antesDeLaEntrega:pre,
+           backtest:tabla, mejor:mejor, revisar:revisar,
+           text: 'Semana (26 sem): '+curvas[26]+'. Sábado+domingo '+sabado[26]+'. '
+               + 'Antes de una entrega de martes se vendió '+pre['mar']+', de sábado '+pre['sáb']+'. '
+               + 'Prorrateo del conteo: '+(mejor||'?')+' es el más preciso ('
+               + REGLAS.filter(function(r){ return tabla[r]!=null; }).map(function(r){ return r+' '+tabla[r]+' cs'; }).join(' · ')+')'
+               + (revisar ? ' — REVISAR: el reparto parejo de 6 días dejó de ganar.' : '.') };
 }
 
 // Los números de la semana en curso para el producto+origen activo. Devuelve null si todavía no hay

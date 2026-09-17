@@ -6288,6 +6288,72 @@ group('Cada lectura de ventana netea lo contra-orden con SU ventana');
 })();
 } catch (_e) { ok('neteo por ventana no tira excepción: ' + ((_e && _e.message) || _e), false); }
 
+try {
+group('La curva de venta por día sale de tus ventas, no de una convención');
+// Juan, 2026-09-17: "el sábado casi nunca llegan órdenes". Cierto —es el 1% del volumen—, pero medido
+// contra 26 semanas el reparto parejo en 6 días sigue siendo el mejor para adivinar cuánto FALTA vender
+// desde el conteo, así que eso no cambió. Lo que sí sale de la curva real es cuánto se vendió ANTES de
+// que llegue una entrega, que es la pregunta del calendario de Sbimal (martes y sábado).
+(function(){
+  var WK0 = dmWeekKey(new Date()), LUN0 = new Date(WK0 + 'T12:00:00');
+  var filas = [];
+  for(var k = 1; k <= 12; k++){                                  // 12 semanas COMPLETAS hacia atrás
+    var lun = new Date(LUN0.getTime() - k*7*86400000);
+    var vie = new Date(lun.getTime() + 4*86400000);
+    filas.push({ prod:'turmeric', c:"Earl's", type:'Sale', d:dmISOLocal(lun), lbs:100 });
+    filas.push({ prod:'turmeric', c:"Earl's", type:'Sale', d:dmISOLocal(vie), lbs:300 });
+  }
+  PRODUCTS = { turmeric:{ label:'Turmeric', caseLb:30, suppliers:[
+    { name:'Sbimal LLC', origin:'Fiji', mode:'air', leadDays:10, deliveryDays:[2,6] } ] } };
+  getOrders = function(){ return []; };
+  mtoByCustomer = function(){ return {}; };
+  _dmRawAll = filas; _dmCurveCache = null;
+
+  var q = dmWeekCurve('turmeric');
+  check('mide el lunes', Math.round(q[1]*100), 25);
+  check('y el viernes', Math.round(q[5]*100), 75);
+  check('el sábado no vende', Math.round(q[6]*100), 0);
+  check('antes de una entrega de martes ya se vendió el lunes', Math.round(dmWeekShareBefore(2,'turmeric')*100), 25);
+  check('antes de una de sábado, la semana entera', Math.round(dmWeekShareBefore(6,'turmeric')*100), 100);
+  check('antes de una de lunes, nada', Math.round(dmWeekShareBefore(1,'turmeric')*100), 0);
+
+  var C = invmDeliveryCalendars({ name:'Sbimal LLC', leadDays:10, deliveryDays:[2,6] }, 'turmeric');
+  check('el calendario del martes usa la curva', Math.round(C[0].preDeliveryShare*100), 25);
+  check('y el del sábado también, en vez de 5 de 6', Math.round(C[1].preDeliveryShare*100), 100);
+
+  // La semana en curso va por la mitad: no entra en la curva.
+  _dmRawAll = filas.concat([{ prod:'turmeric', c:"Earl's", type:'Sale',
+    d:dmISOLocal(new Date(LUN0.getTime() + 5*86400000)), lbs:99999 }]);
+  _dmCurveCache = null;
+  check('la semana en curso no cuenta', Math.round(dmWeekCurve('turmeric')[6]*100), 0);
+
+  // Lo cruzado nunca sale de la cámara: no describe cómo se vacía.
+  var conSolti = filas.concat([]);
+  for(var j = 1; j <= 12; j++){ var sab = new Date(LUN0.getTime() - j*7*86400000 + 5*86400000);
+    conSolti.push({ prod:'turmeric', c:'Sol-ti', type:'Sale', d:dmISOLocal(sab), lbs:9000 }); }
+  _dmRawAll = conSolti; _dmCurveCache = null;
+  mtoByCustomer = function(p, w, o){ return (o && o.crossDockOnly) ? { 'Sol-ti':100 } : {}; };
+  check('lo cruzado queda afuera de la curva', Math.round(dmWeekCurve('turmeric')[6]*100), 0);
+  mtoByCustomer = function(){ return {}; };
+
+  // Con poca historia vuelve a la cuenta de días hábiles, que es lo que se hacía antes.
+  _dmRawAll = filas.slice(0, 6); _dmCurveCache = null;          // 3 semanas
+  check('con poca historia el martes vuelve a 1 de 6', Math.round(dmWeekShareBefore(2,'turmeric')*1000), Math.round(1/6*1000));
+  check('y el sábado a 5 de 6', Math.round(dmWeekShareBefore(6,'turmeric')*1000), Math.round(5/6*1000));
+
+  // El informe del lunes: con una semana que se repite clavada, la curva le gana al reparto parejo y lo dice.
+  _dmRawAll = filas; _dmCurveCache = null;
+  var R = dmWeekShareReport('turmeric');
+  ok('el informe trae la curva de 13, 26 y 52', !!(R.curva[13] && R.curva[26] && R.curva[52]));
+  check('y cuánto pesa el sábado', R.sabado[26], '0%');
+  check('dice lo que usa el calendario del sábado', R.antesDeLaEntrega['sáb'], '100%');
+  ok('backtestea las tres reglas', R.backtest['6 días'] != null && R.backtest['5 días'] != null && R.backtest['curva 13'] != null);
+  ok('con datos que se repiten, gana la curva y lo marca para revisar', /curva/.test(R.mejor) && R.revisar === true);
+  ok('y el texto sale armado para el reporte del lunes', /Prorrateo del conteo/.test(R.text) && /Sábado/.test(R.text));
+  _dmCurveCache = null;
+})();
+} catch (_e) { ok('curva de la semana no tira excepción: ' + ((_e && _e.message) || _e), false); }
+
 // ═══ El entorno se limpia entre grupos ══════════════════════════════════════
 // Guardián del arreglo de arriba. Si alguien saca la restauración de `group()`, esto falla y
 // dice por qué — en vez de que un test futuro mida un stub ajeno y nadie se entere.
