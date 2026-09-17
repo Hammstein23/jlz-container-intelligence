@@ -1,0 +1,87 @@
+function cmWeekOrdersOpen(p, origin, wk){
+  if(typeof document === 'undefined') return;
+  var html = cmWeekOrdersHTML(p, origin, wk);
+  if(!html) return;
+  var m = document.getElementById('cm-week-modal');
+  if(!m){
+    m = document.createElement('div'); m.id = 'cm-week-modal';
+    m.setAttribute('style', 'display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.3);z-index:400;'
+      + 'align-items:flex-start;justify-content:center;padding:48px 20px;overflow-y:auto');
+    m.addEventListener('click', function(e){ if(e.target === m) cmWeekOrdersClose(); });
+    document.addEventListener('keydown', function(e){ if(e.key === 'Escape') cmWeekOrdersClose(); });
+    document.body.appendChild(m);
+  }
+  m.innerHTML = html;
+  m.style.display = 'flex';
+}
+function cmWeekOrdersClose(){
+  var m = (typeof document !== 'undefined') ? document.getElementById('cm-week-modal') : null;
+  if(m) m.style.display = 'none';
+}
+function cmWeekOrdersHTML(p, origin, wk){
+  if(typeof cmPlanEntries !== 'function') return '';
+  var esc = (typeof libEsc === 'function') ? libEsc : function(x){ return String(x == null ? '' : x); };
+  var f = function(n){ return Math.round(n || 0).toLocaleString('en-US'); };
+  var day = function(iso){ return iso ? ((typeof dmcDateLabel === 'function' && dmcDateLabel(iso)) || String(iso).slice(5)) : '—'; };
+  var caseLb = (typeof productCaseLb === 'function') ? (productCaseLb(p) || 30) : 30;
+  var snap = {};
+  try{ var ws = (typeof wlotLoadStore === 'function') ? wlotLoadStore(WLOT_SNAP_LS) : null;
+       ((ws && ws.lots) || []).forEach(function(l){ if(l && l.lot) snap[String(l.lot)] = 1; }); }catch(e){}
+  var cd = {}; try{ cd = (typeof mtoByCustomer === 'function')
+      ? (mtoByCustomer(p, (typeof dmWindow === 'function') ? dmWindow(p, origin) : 13, {crossDockOnly:true}) || {}) : {}; }catch(e){}
+  var filas = [], porSalir = 0, reemp = 0, cruz = 0;
+  cmPlanEntries().forEach(function(c){
+    if(!c || c.type !== 'inv' || c.wk !== wk) return;
+    if(((typeof _cmProd === 'function') ? _cmProd(c) : 'ginger') !== p) return;
+    if(origin && origin !== 'all' && typeof _cmOriginFor === 'function'){ var o = _cmOriginFor(c); if(o && o !== origin) return; }
+    var pk = (typeof wlotPackOf === 'function') ? wlotPackOf(c.sku) : { label:'', lb:null };
+    var chico = !!(pk.lb && Math.abs(pk.lb - caseLb) > 0.01);
+    var cs = +c.cases || 0;
+    var estado, color;
+    if(typeof _cmIsCrossDock === 'function' && _cmIsCrossDock(c, cd)){
+      estado = 'ships from the port, never in stock'; color = 'var(--gray-400)'; cruz += cs;
+    } else if(chico && c.lot && snap[String(c.lot)]){
+      estado = 'already repacked &mdash; out of the count'; color = 'var(--amber-700)'; reemp += cs;
+    } else {
+      estado = 'still to pick'; color = 'var(--jlz)'; porSalir += cs;
+    }
+    filas.push({ date: c.date || '', customer: c.customer || '(no name)', orderNo: c.orderNo || '',
+                 cs: cs, pack: pk.label || '', chico: chico,
+                 sold: chico ? Math.round(cs * caseLb / pk.lb) : null, estado: estado, color: color });
+  });
+  filas.sort(function(a, b){ return String(a.date).localeCompare(String(b.date)) || (b.cs - a.cs); });
+  var lbl = (typeof productLabel === 'function') ? productLabel(p) : p;
+  var td = 'padding:7px 10px;border-bottom:1px solid var(--gray-100);font-size:12px';
+  var html = '<div style="background:var(--white);border-radius:8px;box-shadow:0 12px 32px rgba(0,0,0,.18);width:100%;max-width:720px;font-family:var(--fb)">'
+    + '<div style="padding:15px 20px;border-bottom:1px solid var(--gray-200);display:flex;justify-content:space-between;gap:12px;align-items:flex-start">'
+    + '<div><div style="font-size:15px;font-weight:700;color:var(--gray-800)">Booked for ' + esc(bpDateWk(wk).replace(/^\d{4}-\d{2}-\d{2}\s*·\s*/, '')) + ' &middot; '
+      + esc(lbl) + (origin ? (' &middot; ' + esc(origin)) : '') + '</div>'
+    + '<div style="font-size:11.5px;color:var(--gray-500);margin-top:3px">Orders sold and not yet invoiced, in ' + caseLb + ' lb cases &mdash; week of ' + esc(day(wk)) + '</div></div>'
+    + '<button onclick="cmWeekOrdersClose()" aria-label="Close" style="border:none;background:none;cursor:pointer;color:var(--gray-400);font-size:20px;padding:0 6px;line-height:1">&times;</button>'
+    + '</div>'
+    + (filas.length
+        ? ('<table style="width:100%;border-collapse:collapse"><tbody>'
+           + filas.map(function(r){
+               return '<tr><td style="' + td + ';color:var(--gray-500);font-family:var(--fm);white-space:nowrap">' + esc(day(r.date)) + '</td>'
+                 + '<td style="' + td + ';color:var(--gray-800)">' + esc(r.customer)
+                 + (r.orderNo ? ('<span style="color:var(--gray-400);font-family:var(--fm);font-size:10.5px"> &middot; ' + esc(r.orderNo) + '</span>') : '') + '</td>'
+                 + '<td style="' + td + ';text-align:right;font-weight:700;font-family:var(--fm);white-space:nowrap">' + f(r.cs) + ' cs</td>'
+                 + '<td style="' + td + ';color:var(--gray-500);font-family:var(--fm);font-size:11px;white-space:nowrap">'
+                 + (r.sold ? (f(r.sold) + ' &times; ' + esc(r.pack)) : (r.pack ? esc(r.pack) : '')) + '</td>'
+                 + '<td style="' + td + ';color:' + r.color + ';font-size:11px">' + r.estado + '</td></tr>'; }).join('')
+           + '</tbody></table>')
+        : '<div style="padding:18px 20px;color:var(--gray-500);font-size:12.5px">No orders booked for this week.</div>')
+    + '<div style="padding:11px 20px;border-top:1px solid var(--gray-200);background:var(--gray-50);font-size:11.5px;color:var(--gray-600);line-height:1.6">'
+    + '<b>' + f(porSalir) + ' cs</b> still to leave the warehouse'
+    + (reemp > 0 ? (' &middot; <span style="color:var(--amber-700)">' + f(reemp) + ' cs already repacked, so that bulk left the '
+        + caseLb + ' lb lots before the count</span>') : '')
+    + (cruz > 0 ? (' &middot; <span style="color:var(--gray-500)">' + f(cruz) + ' cs go from the port to the customer</span>') : '')
+    + '</div></div>';
+  return html;
+}
+function bpDateWk(iso){
+  var s = String(iso == null ? '' : iso);
+  if(!/^\d{4}-\d{2}-\d{2}/.test(s)) return s;
+  var w = null; try{ w = (typeof isoWeek === 'function') ? isoWeek(s.slice(0, 10)) : null; }catch(e){}
+  return s + (w ? (' · Wk ' + w) : '');
+}
