@@ -20825,7 +20825,15 @@ function renderBuyPlanner() {
               + '" title="The container reaches port Monday and is delivered Thursday: Monday to Wednesday sells from the stock already here.">Thu before delivery: '
               + thu.toLocaleString() + ' cs</div>'; })() : '')
       + '</td>'
-      + '<td style="padding:8px 12px;text-align:right;color:var(--red-600)">−' + Math.round(r.demand).toLocaleString() + '</td>'
+      // La insignia morada del committed: la tabla de los otros cuatro productos ya la tenía y esta no,
+      // aunque la fila trae el dato desde siempre. Sin ella, "−488" no dice cuánto de esa semana ya
+      // está pedido y cuánto es estimación. Mismo formato y mismo texto que la otra tabla.
+      + '<td style="padding:8px 12px;text-align:right;color:var(--red-600)">−' + Math.round(r.demand).toLocaleString()
+        + ((+r.committed > 0)
+            ? (' <span title="' + Math.round(r.committed).toLocaleString() + ' cs already booked (unshipped, not yet invoiced)"'
+               + ' style="color:#7c3aed;font-weight:700;font-size:9px">📋' + Math.round(r.committed).toLocaleString() + '</span>')
+            : '')
+      + '</td>'
       + '<td style="padding:8px 12px;text-align:right;font-weight:700;color:' + (r.endingStock <= 0 ? 'var(--red-600)' : 'var(--gray-800)') + '">' + Math.round(r.endingStock).toLocaleString() + '</td>'
       + '<td style="padding:8px 12px;text-align:right;font-weight:600;color:' + coverColor + '">' + r.weeksOfCoverage.toFixed(1) + 'w</td>'
       + '<td style="padding:8px 12px">' + statusBadge + '</td>'
@@ -25437,7 +25445,7 @@ function simRenderProjection(realOrders, hypoOrders) {
     // de semana descontándole la semana entera, y las dos pantallas mostraban números distintos para
     // la misma semana sin que nada lo explicara.
     if (_simSnapWkKey && k === _simSnapWkKey) _d = bpSnapWeekDemand(_d, cw, _simInfl, _simSnapDate);
-    return { key: k, hypo: hw, demand: _d };
+    return { key: k, hypo: hw, demand: _d, committed: cw };
   };
   const _simDemands = futureWeeks.map(_simWkDemand).map(x => x.demand);
   let _simIdx = 0;
@@ -25454,7 +25462,7 @@ function simRenderProjection(realOrders, hypoOrders) {
     // Hybrid netting (match the Buy Planner): per-account hybrid demand — steady keep run-rate + excess,
     // order-driven (sporadic) count only committed this week — then apply shrink inflation. No model → legacy max.
     const _sw = _simWkDemand(fw);
-    const _hypoSalesWk = _sw.hypo, wkDemand = _sw.demand;
+    const _hypoSalesWk = _sw.hypo, wkDemand = _sw.demand, _commWk = _sw.committed;
     const startStock = running;
     running = running + arrivalCases - wkDemand;
     // Las mismas filas que se dibujan, guardadas para que la tarjeta de compra del Simulator conteste
@@ -25502,7 +25510,11 @@ function simRenderProjection(realOrders, hypoOrders) {
               + thu.toLocaleString() + ' cs</div>'; })() : '')
         + (downgradedArrivals.length ? '<div style="font-size:9px;color:var(--amber-700);font-weight:600;text-decoration:line-through;text-decoration-color:var(--amber-300)">' + downgradedText + '</div>' : '')
       + '</td>'
-      + '<td style="padding:8px 12px;text-align:right;color:var(--red-600)">−' + Math.round(wkDemand).toLocaleString() + ((typeof _hypoSalesWk !== 'undefined' && _hypoSalesWk > 0) ? '<div style="font-size:9px;color:#7C3AED;font-weight:600">🧪 scenario</div>' : '') + '</td>'
+      // Misma insignia del committed que el Buy Planner y la tabla de los otros productos.
+      + '<td style="padding:8px 12px;text-align:right;color:var(--red-600)">−' + Math.round(wkDemand).toLocaleString()
+        + ((+_commWk > 0) ? (' <span title="' + Math.round(_commWk).toLocaleString() + ' cs already booked (unshipped, not yet invoiced)"'
+             + ' style="color:#7c3aed;font-weight:700;font-size:9px">📋' + Math.round(_commWk).toLocaleString() + '</span>') : '')
+        + ((typeof _hypoSalesWk !== 'undefined' && _hypoSalesWk > 0) ? '<div style="font-size:9px;color:#7C3AED;font-weight:600">🧪 scenario</div>' : '') + '</td>'
       + '<td style="padding:8px 12px;text-align:right;font-weight:700;color:' + (running <= 0 ? 'var(--red-600)' : 'var(--gray-800)') + '">' + Math.round(running).toLocaleString() + '</td>'
       + '<td style="padding:8px 12px;text-align:right;font-weight:600;color:' + coverColor + '">' + cover.toFixed(1) + 'w</td>'
       + '<td style="padding:8px 12px">' + statusBadge + '</td>'

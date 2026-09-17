@@ -67,6 +67,16 @@ elif (re.search(r'o\.buy\s*=\s*Math\.max\(0,\s*Math\.ceil\(upTo-\(alLlegar', m.g
 else:
     bad('la cantidad ya no sale de objetivo menos lo proyectado a la llegada')
 
+# ── La insignia del committed esta en las TRES tablas ─────────────────────────────────────────
+# La de los otros cuatro productos la tenia desde siempre y las dos de ginger no, aunque sus filas
+# traian el dato: "-488" no decia cuanto de esa semana ya estaba pedido. Juan lo noto mirando las dos
+# tablas juntas.
+_badge = len(re.findall(r"cs already booked \(unshipped, not yet invoiced\)", src))
+if _badge >= 3:
+    ok('las tres proyecciones muestran cuanto de la semana ya esta pedido')
+else:
+    bad('solo %d tabla(s) muestran el committed de la semana: tienen que ser 3' % _badge)
+
 # ── El lead time de mar por defecto es el real ────────────────────────────────────────────────
 # 36 dias, no 37: con 37 la cuenta caia un martes y el calendario la corria al miercoles ANTERIOR,
 # o sea pedia una semana antes (7-oct en vez de 14-oct para la entrega del 19-nov). El default manda
