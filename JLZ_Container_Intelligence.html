@@ -29263,13 +29263,81 @@ function dmWeekStatus(){
     var a = new Date(lastLoaded + 'T00:00:00'), n = new Date();
     staleDays = Math.max(0, Math.round((new Date(n.getFullYear(), n.getMonth(), n.getDate()) - a) / 864e5));
   }
-  var ahead = Math.round(est * pace.aheadPct);
+  // ── Lo que falta salir, con la MISMA regla que el plan de compra ──────────────────────────────
+  // Un pedido con fecha sale ENTERO: no se prorratea. Solo lo que todavía nadie pidió se reparte por
+  // los días que quedan — `bpSnapWeekDemand`, la misma función que consume la proyección. Este panel
+  // prorrateaba TODO, incluidos los pedidos firmes, así que decía 49 cs donde el plan consumía 69
+  // para la misma semana (turmeric-Fiji, 2026-09-17). Dos números para la misma pregunta.
+  var _infl = (function(){ try{ var sp=((typeof PRODUCTS==='object' && PRODUCTS[prod])||{}).shrinkPct||0;
+                                return sp>0 ? 1/(1-Math.min(0.6, sp/100)) : 1; }catch(e){ return 1; } })();
+  var weekly = Math.max(0, salesBase * _infl);                  // lo que sale de cámara en una semana entera
+  var firm = Math.max(0, namedCs);
+  var demW = Math.max(firm, weekly);
+  var ahead = (typeof bpSnapWeekDemand === 'function') ? bpSnapWeekDemand(demW, firm, 1, new Date())
+                                                       : demW * pace.aheadPct;
+  // Cada orden ya pedida, con su día y su pack. La conversión no se veía en ningún lado: 60 cajas de
+  // 5 lb son 10 de las de 30 que se compran, y así es como entran a la cuenta.
+  var lines = [], excluded = [], byDay = {};
+  if(typeof cmPlanEntries === 'function'){
+    cmPlanEntries().forEach(function(c){
+      if(!c || c.type !== 'inv' || c.wk !== wk) return;
+      if(((typeof _cmProd === 'function') ? _cmProd(c) : 'ginger') !== prod) return;
+      var _o = (typeof _cmOriginFor === 'function') ? (_cmOriginFor(c) || '') : '';
+      if(_org && _o && _o !== _org) return;
+      var pk = (typeof wlotPackOf === 'function') ? wlotPackOf(c.sku) : { label:'', lb:null };
+      var row = { date: c.date || '', customer: c.customer || '(no name)', cs: +c.cases || 0,
+                  pack: pk.label || '', origin: _o,
+                  sold: (pk.lb && Math.abs(pk.lb - caseLb) > 0.01) ? Math.round((+c.cases || 0) * caseLb / pk.lb) : null };
+      if(_isDS(c.customer) && !c.fromCooler){ excluded.push(row); return; }      // cruzado: no toca el almacén
+      lines.push(row);
+      if(row.date) byDay[row.date] = (byDay[row.date] || 0) + row.cs;
+    });
+  }
+  lines.sort(function(a, b){ return String(a.date).localeCompare(String(b.date)) || (b.cs - a.cs); });
+  // Lo ya FACTURADO de esta semana: el contraste contra lo que el modelo da por consumido. Llega con el
+  // atraso de la carga, así que se muestra con esa marca y nunca reemplaza al modelo.
+  var invoiced = 0;
+  (typeof _dmRawAll !== 'undefined' ? (_dmRawAll || []) : []).forEach(function(r){
+    if(!r || (r.type && r.type !== 'Sale')) return;
+    if((r.prod || 'ginger') !== prod) return;
+    if(typeof dmIsInternalAcct === 'function' && dmIsInternalAcct(r.c)) return;
+    if(_isDS(r.c)) return;
+    if(_org){ var mt = false; try{ mt = (typeof invmOriginMatch === 'function') ? invmOriginMatch(r, _org) : true; }catch(e){ mt = false; } if(!mt) return; }
+    var w; try{ w = dmWeekKey(new Date(String(r.d) + 'T12:00:00')); }catch(e){ return; }
+    if(w !== wk) return;
+    invoiced += (+r.lbs || 0) / caseLb;
+  });
+  // Primero el producto y después el origen (Juan, 2026-09-17): con "todos los orígenes" elegido, cada
+  // origen con su ritmo y lo suyo pedido, porque la compra se decide por origen.
+  var byOrigin = [];
+  if(!_org){
+    var _os = []; try{ _os = (typeof invmOriginsFor === 'function') ? (invmOriginsFor(prod) || []) : []; }catch(e){ _os = []; }
+    _os.slice(0, 4).forEach(function(o){
+      var rr = 0; try{ var mo = invmProductModel(prod, o); rr = mo ? (invmRunRateLbs(mo, _win) / caseLb) : 0; }catch(e){}
+      var fo = 0; try{ fo = (typeof invmCommittedByWeek === 'function') ? (invmCommittedByWeek(prod, o)[wk] || 0) : 0; }catch(e){}
+      var wo = Math.max(fo, rr * _infl);
+      if(wo <= 0 && fo <= 0) return;
+      byOrigin.push({ origin:o, weekly:wo, firm:fo,
+                      ahead:(typeof bpSnapWeekDemand === 'function') ? bpSnapWeekDemand(wo, fo, 1, new Date()) : wo * pace.aheadPct });
+    });
+  }
   // `rrAll` y `ds` explican un est en cero. Shallots vende 3,9 cs/semana pero 3,45 son direct-ship:
   // la demanda de STOCK es 0,45 y redondea a 0. Sin esta distinción el panel muestra una tabla de
   // ceros y se lee como si estuviera roto, cuando el número es correcto.
-  return { prod: prod, origin: _org, wk: wk, pace: pace, est: est, ahead: ahead,
+  return { prod: prod, origin: _org, wk: wk, pace: pace, est: est, ahead: Math.round(ahead),
+           weekly: Math.round(weekly), soldWk: Math.round(salesBase), infl: _infl, caseLb: caseLb,
+           firm: Math.round(firm), unbooked: Math.max(0, Math.round(ahead - firm)),
+           behind: Math.max(0, Math.round(demW - ahead)), invoiced: Math.round(invoiced),
+           lines: lines, excluded: excluded, byDay: byDay, byOrigin: byOrigin,
            named: named, namedCs: Math.round(namedCs), rrAll: _rrW / caseLb, ds: _ds,
            lastLoaded: lastLoaded, staleDays: staleDays, win: _win };
+}
+// El detalle de las órdenes va plegado (Juan, 2026-09-17): un lunes con veinte pedidos lo haría
+// interminable, y el total ya está a la vista. La preferencia es por dispositivo, como las otras.
+function dmWeekOrdersOpen(){ try{ return localStorage.getItem('dm_week_orders') === '1'; }catch(e){ return false; } }
+function dmWeekToggleOrders(){
+  try{ localStorage.setItem('dm_week_orders', dmWeekOrdersOpen() ? '0' : '1'); }catch(e){}
+  try{ if(typeof renderWeekPanel === 'function') renderWeekPanel(); }catch(e){}
 }
 
 function renderWeekPanel(){
@@ -29284,9 +29352,16 @@ function renderWeekPanel(){
   var pl = (typeof productLabel === 'function') ? productLabel(s.prod) : s.prod;
   var scope = E(pl) + (s.origin ? ' &middot; ' + E(s.origin) : ' &middot; all origins');
   var pctDone = Math.round(s.pace.done / DM_SELL_DAYS * 100);
-  var unnamed = Math.max(0, s.ahead - s.namedCs);
-  // El committed puede superar lo que el ritmo dice que falta: son órdenes reales, mandan ellas.
-  var over = s.namedCs > s.ahead;
+  // Ya no hace falta la fila de "over the pace": los pedidos firmes se cuentan enteros, así que lo que
+  // falta nunca puede quedar por debajo de ellos.
+  // Cada campo nuevo con su respaldo: si un día `dmWeekStatus` deja de devolver uno, el panel muestra de
+  // menos, no se queda en blanco. El caller lo envuelve en try/catch y un error acá se traga en silencio.
+  var _byDay = s.byDay || {}, _lines = s.lines || [], _exc = s.excluded || [], _byOrg = s.byOrigin || [];
+  var _weekly  = (s.weekly   != null) ? s.weekly   : s.est;
+  var _soldWk  = (s.soldWk   != null) ? s.soldWk   : s.est;
+  var _firm    = (s.firm     != null) ? s.firm     : s.namedCs;
+  var _unbook  = (s.unbooked != null) ? s.unbooked : Math.max(0, s.ahead - s.namedCs);
+  var _behind  = (s.behind   != null) ? s.behind   : Math.max(0, _weekly - s.ahead);
 
   var h = '<div class="dwk">';
   h += '<div class="dwk-hd"><div class="dwk-t">This week &middot; ' + scope + '</div>'
@@ -29313,23 +29388,79 @@ function renderWeekPanel(){
        + (s.staleDays > 0 ? ' (' + s.staleDays + 'd behind)' : '') + '.</div></div>';
     host.innerHTML = h; return;
   }
-  h += '<table class="dwk-tbl">';
-  h += '<tr><td>A typical week</td><td class="n">' + N(s.est) + ' cs</td>'
-     + '<td class="m">run-rate &middot; ' + s.win + '-wk window</td></tr>';
-  h += '<tr class="hi"><td>Still ahead</td><td class="n">' + N(s.ahead) + ' cs</td>'
-     + '<td class="m">' + Math.round(s.pace.aheadPct * 100) + '% of the week &mdash; today counts as ahead</td></tr>';
-  if(s.named.length){
-    var who = s.named.slice(0, 3).map(function(x){ return E(x.c) + ' ' + N(x.cs); }).join(' &middot; ')
-            + (s.named.length > 3 ? ' &middot; +' + (s.named.length - 3) + ' more' : '');
-    h += '<tr class="sub"><td>&mdash; already ordered</td><td class="n">' + N(s.namedCs) + ' cs</td>'
-       + '<td class="m">' + who + '</td></tr>';
+  // ── La tira de días ───────────────────────────────────────────────────────────────────────────
+  // Qué días cerraron y qué hay pedido en cada uno. Los pedidos entran con cero o un día de
+  // anticipación, así que un jueves el viernes está vacío: verlo evita leerlo como un hueco de venta.
+  var _mon = new Date(s.wk + 'T12:00:00');
+  var _DN = ['MON','TUE','WED','THU','FRI','SAT'];
+  var _todayISO = (typeof dmISOLocal === 'function') ? dmISOLocal(today) : '';
+  h += '<div style="display:flex;gap:5px;margin:10px 0 2px">';
+  for(var _i = 0; _i < DM_SELL_DAYS && _i < 6; _i++){
+    var _d = new Date(_mon.getTime() + _i * 86400000);
+    var _iso = (typeof dmISOLocal === 'function') ? dmISOLocal(_d) : '';
+    var _cerrado = _i < s.pace.done, _hoy = (_iso === _todayISO), _cs = _byDay[_iso] || 0;
+    h += '<div style="flex:1;min-width:0;padding:6px 7px 7px;border-radius:4px;background:'
+       + (_hoy ? 'var(--jlz-light)' : (_cerrado ? 'var(--gray-100)' : 'var(--white)')) + ';border:1px '
+       + (_hoy ? 'solid var(--jlz)' : (_cerrado ? 'solid var(--gray-200)' : 'dashed var(--gray-200)')) + '">'
+       + '<div style="font-family:var(--fm);font-size:9.5px;font-weight:' + (_hoy ? '700' : '500')
+       + ';color:' + (_hoy ? 'var(--jlz)' : 'var(--gray-400)') + '">' + _DN[_i] + ' ' + _d.getDate()
+       + (_hoy ? ' &middot; TODAY' : '') + '</div>'
+       + '<div style="font-size:10.5px;margin-top:2px;color:'
+       + (_cs > 0 ? (_hoy ? 'var(--jlz)' : 'var(--gray-600)') : 'var(--gray-400)') + '">'
+       + (_cs > 0 ? (N(_cs) + ' cs booked') : (_cerrado ? 'closed' : 'nothing booked')) + '</div></div>';
   }
-  if(!over){
-    h += '<tr class="sub"><td>&mdash; not ordered yet</td><td class="n">' + N(unnamed) + ' cs</td>'
-       + '<td class="m">expected from the run-rate</td></tr>';
-  } else {
-    h += '<tr class="sub warn"><td>&mdash; over the pace</td><td class="n">+' + N(s.namedCs - s.ahead) + ' cs</td>'
-       + '<td class="m">real orders already exceed what the pace expected &mdash; the week is running hot</td></tr>';
+  h += '</div>';
+
+  var abierto = (typeof dmWeekOrdersOpen === 'function') && dmWeekOrdersOpen();
+  h += '<table class="dwk-tbl">';
+  h += '<tr><td>A typical week</td><td class="n">' + N(_weekly) + ' cs</td>'
+     + '<td class="m">' + N(_soldWk) + ' cs sold/wk'
+     + (s.infl > 1.001 ? (' &times; ' + (Math.round(s.infl * 100) / 100) + ' shrink') : '')
+     + ' &middot; ' + s.win + '-wk window</td></tr>';
+  h += '<tr><td>Behind you already</td><td class="n">&minus;' + N(_behind) + ' cs</td>'
+     + '<td class="m">' + (s.pace.done ? ('the ' + s.pace.done + ' day' + (s.pace.done === 1 ? '' : 's') + ' already closed')
+                                       : 'the selling week has not started')
+     + (s.invoiced > 0 ? (' &middot; invoiced so far <b>' + N(s.invoiced) + ' cs</b>'
+         + (s.staleDays > 1 ? (', loaded through ' + E(s.lastLoaded)) : '')) : '')
+     + '</td></tr>';
+  h += '<tr class="hi"><td>Still ahead</td><td class="n">' + N(s.ahead) + ' cs</td>'
+     + '<td class="m">what still has to leave the warehouse</td></tr>';
+  // Plegado sigue nombrando a los clientes: es lo que se lee de un vistazo. Desplegado, cada orden con
+  // su día y su pack, así que los nombres ya están abajo y arriba va la regla.
+  var _quien = s.named.slice(0, 3).map(function(x){ return E(x.c) + ' ' + N(x.cs); }).join(' &middot; ')
+             + (s.named.length > 3 ? (' &middot; +' + (s.named.length - 3) + ' more') : '');
+  h += '<tr class="sub"><td>&mdash; booked orders</td><td class="n">' + N(_firm) + ' cs</td>'
+     + '<td class="m">' + ((!abierto && _quien) ? _quien : 'counted whole &mdash; they have a delivery date')
+     + (_lines.length ? (' <button type="button" onclick="dmWeekToggleOrders()" style="border:0;background:none;'
+         + 'padding:0 0 0 5px;color:var(--jlz);font-family:var(--fm);font-size:10.5px;cursor:pointer;text-decoration:underline">'
+         + (abierto ? 'hide' : 'show') + ' the ' + _lines.length + ' order' + (_lines.length === 1 ? '' : 's') + '</button>') : '')
+     + '</td></tr>';
+  if(abierto){
+    _lines.forEach(function(l){
+      var dia = (typeof dmcDateLabel === 'function' && dmcDateLabel(l.date)) || l.date || '';
+      h += '<tr class="sub"><td style="padding-left:22px">' + E(dia) + ' &middot; ' + E(l.customer) + '</td>'
+         + '<td class="n">' + N(l.cs) + ' cs</td>'
+         + '<td class="m">' + (l.sold
+              ? (N(l.sold) + ' cases of ' + E(l.pack) + ' &rarr; ' + N(l.cs) + ' of ' + N(s.caseLb) + ' lb')
+              : (l.pack ? (E(l.pack) + ' case') : '')) + '</td></tr>';
+    });
+  }
+  if(_exc.length){
+    var exCs = _exc.reduce(function(t, x){ return t + x.cs; }, 0);
+    var exWho = _exc.slice(0, 2).map(function(x){ return E(x.customer); }).join(' &middot; ')
+              + (_exc.length > 2 ? (' &middot; +' + (_exc.length - 2)) : '');
+    h += '<tr class="sub"><td>&mdash; not counted here</td><td class="n">' + N(exCs) + ' cs</td>'
+       + '<td class="m">' + exWho + ' &mdash; ships from the port, never enters the warehouse</td></tr>';
+  }
+  h += '<tr class="sub"><td>&mdash; not booked yet</td><td class="n">' + N(_unbook) + ' cs</td>'
+     + '<td class="m">' + N(Math.max(0, _weekly - _firm)) + ' cs unbooked &times; '
+     + Math.round(s.pace.aheadPct * 100) + '% of the week left (' + s.pace.ahead + ' of ' + DM_SELL_DAYS + ' days)</td></tr>';
+  if(_byOrg.length > 1){
+    h += '<tr><td colspan="3" style="padding-top:9px"><span class="m">By origin &mdash; each one buys on its own</span></td></tr>';
+    _byOrg.forEach(function(o){
+      h += '<tr class="sub"><td>&mdash; ' + E(o.origin) + '</td><td class="n">' + N(o.ahead) + ' cs</td>'
+         + '<td class="m">' + N(o.weekly) + ' cs/wk &middot; ' + N(o.firm) + ' booked</td></tr>';
+    });
   }
   h += '</table>';
   var ft = 'Sunday is not counted &mdash; it never invoices.';
@@ -29337,7 +29468,10 @@ function renderWeekPanel(){
     ft += ' &middot; Sales loaded through ' + E(s.lastLoaded)
         + (s.staleDays > 0 ? ' <b>(' + s.staleDays + ' day' + (s.staleDays === 1 ? '' : 's') + ' behind)</b>' : ' (current)');
   }
-  ft += ' &middot; This is a pacing view &mdash; the buying plan always uses full weeks.';
+  // Antes decía "the buying plan always uses full weeks", y dejó de ser cierto (ni lo era del todo):
+  // el plan consume esta misma semana con esta misma regla, medida desde el conteo de inventario.
+  ft += ' &middot; Booked orders count whole; only what nobody ordered yet is split by the days left'
+      + ' &mdash; the same rule the buying plan uses.';
   h += '<div class="dwk-ft">' + ft + '</div></div>';
   host.innerHTML = h;
 }

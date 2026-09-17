@@ -2840,15 +2840,41 @@ function balanceOK(html){
   var o = (html.match(/<div\b/g) || []).length, c = (html.match(/<\/div>/g) || []).length;
   return o === c && o > 0;
 }
-var _base = { prod:'ginger', origin:'Peru', wk:'2026-08-31', pace:dmWeekPace(new Date(2026,8,3)),
-              named:[{c:"Albert's",cs:42}], namedCs:42, rrAll:900, ds:0,
-              lastLoaded:'2026-09-01', staleDays:2, win:6 };
+var _base = { prod:'ginger', origin:'', wk:'2026-08-31', pace:dmWeekPace(new Date(2026,8,3)),
+              named:[{c:"Albert's",cs:42}], namedCs:42, rrAll:900, ds:0, caseLb:30,
+              lastLoaded:'2026-09-01', staleDays:2, win:6,
+              // Lo que agregó el panel detallado (2026-09-17): la semana con merma, los pedidos firmes
+              // enteros, el detalle de cada orden con su pack, lo cruzado y el desglose por origen.
+              weekly:1000, soldWk:892, infl:1.16, firm:42, unbooked:479, behind:479, invoiced:510,
+              byDay:{ '2026-08-31':42 },
+              lines:[{ date:'2026-08-31', customer:"Albert's", cs:42, pack:'5 lb', sold:252, origin:'Peru' }],
+              excluded:[{ date:'2026-09-02', customer:'Sol-ti', cs:700, pack:'30 lb', sold:null, origin:'Peru' }],
+              byOrigin:[{ origin:'Peru', weekly:990, firm:42, ahead:516 }, { origin:'Hawaii', weekly:10, firm:0, ahead:5 }] };
 
 dmWeekStatus = function(){ var o = {}; for(var k in _base) o[k] = _base[k];
-                           o.est = 892; o.ahead = 446; return o; };
+                           o.est = 892; o.ahead = 521; return o; };
 renderWeekPanel();
 check('rama normal: los div cierran', balanceOK(_painted), true);
-ok('y muestra el número de la semana', _painted.indexOf('892') >= 0);
+ok('y muestra la semana con merma', _painted.indexOf('1,000') >= 0 && _painted.indexOf('892 cs sold/wk') >= 0);
+ok('los pedidos firmes van enteros y lo demás prorrateado', /booked orders/.test(_painted) && /not booked yet/.test(_painted));
+ok('la tira de días marca el que ya cerró y lo pedido en él', /MON 31/.test(_painted) && /42 cs booked/.test(_painted));
+ok('dice lo ya facturado, para contrastar', _painted.indexOf('invoiced so far') >= 0);
+ok('lo cruzado se nombra y se deja afuera', /Sol-ti/.test(_painted) && /never enters the warehouse/.test(_painted));
+ok('y con todos los orígenes, cada uno con lo suyo', /By origin/.test(_painted) && /Hawaii/.test(_painted));
+
+// El detalle va PLEGADO (Juan): el total se ve siempre, las órdenes solo si se piden.
+var _lsReal = localStorage;
+localStorage = { _v:{}, getItem:function(k){ return (this._v[k] == null) ? null : this._v[k]; },
+                 setItem:function(k, v){ this._v[k] = String(v); } };
+ok('plegado: el detalle no está, pero se ofrece', _painted.indexOf('show the 1 order') >= 0 && _painted.indexOf('252 cases of 5 lb') < 0);
+ok('y plegado igual se lee quién pidió', _painted.indexOf("Albert's 42") >= 0);
+dmWeekToggleOrders();
+ok('desplegado: cada orden con su conversión de pack', _painted.indexOf('252 cases of 5 lb') >= 0 && _painted.indexOf('hide the 1 order') >= 0);
+check('y sigue cerrando bien', balanceOK(_painted), true);
+dmWeekToggleOrders();
+ok('y vuelve a plegarse', _painted.indexOf('252 cases of 5 lb') < 0);
+localStorage = _lsReal;
+renderWeekPanel();
 ok('y nombra a quien ya ordenó', _painted.indexOf("Albert's") >= 0);
 
 dmWeekStatus = function(){ var o = {}; for(var k in _base) o[k] = _base[k];
@@ -2914,14 +2940,34 @@ group('dmWeekStatus no revienta · el panel de la semana tiene que dibujar algo'
   _dmModel  = { runRate3:600, runRate6:600, runRate13:600, runRate26:600,
                 customers:[{ c:'Alberts', rrCases:20, rr6Cases:20 }] };
 
+  PRODUCTS = { garlic:{ label:'Garlic', caseLb:30, shrinkPct:0 } };
   var s=null, err=null;
   try{ s = dmWeekStatus(); }catch(e){ err = e.name+': '+e.message; }
   check('no lanza', err, null);
   ok('devuelve algo que el panel pueda dibujar', !!s);
+  // ── Lo pedido va ENTERO; solo lo que nadie pidió se reparte por los días que faltan ────────────
+  // El panel prorrateaba TODO y decía 49 cs donde el plan consumía 69 para la misma semana.
+  if(s){
+    check('lo firme son Alberts + el reempaque de Whole Foods', s.firm, 160);
+    check('y falta salir esa cantidad entera, no la mitad', s.ahead, 160);
+    check('no hay nada estimado que agregar', s.unbooked, 0);
+    check('cada orden queda listada con su día', (s.lines||[]).length, 2);
+    check('y el cruzado, aparte', (s.excluded||[]).length, 1);
+  }
   if(s){
     check('ds es el total contra orden', Math.round(s.ds), 123);
     var nombres = (s.named||[]).map(function(x){ return x.c; });
     ok('el cruzado no figura como salida de camara', nombres.indexOf('Sol-ti') < 0);
+    // Y al revés: con el ritmo por encima de lo pedido, se prorratea solo la diferencia.
+    cmPlanEntries = function(){ return [
+      { type:'inv', product:'garlic', wk:'2026-09-07', customer:'Alberts', cases:20 } ]; };
+    _dmModel = { runRate3:3000, runRate6:3000, runRate13:3000, runRate26:3000,
+                 customers:[{ c:'Alberts', rrCases:100, rr6Cases:100 }] };
+    var s2 = dmWeekStatus();
+    check('una semana típica son 100 cajas', s2.weekly, 100);
+    check('20 pedidas enteras + la mitad de las 80 que faltan pedir', s2.ahead, 60);
+    check('y eso último es lo estimado', s2.unbooked, 40);
+    check('lo que ya quedó atrás es el resto', s2.behind, 40);
     ok('el reempacado SI figura',                   nombres.indexOf('Whole Foods') > -1);
     check('y su volumen cuenta', s.namedCs, 160);
   }

@@ -72,6 +72,7 @@ PROJECTORS = {
     'renderBuyPlanner':    'proyección de ginger-Perú',
     'invmWeekDemands':     'lo que sale cada semana en turmeric/garlic/shallots + ginger-Hawaii (tabla y sugerencia)',
     'simRenderProjection': 'proyección del Simulator',
+    'dmWeekStatus':        'panel "This week" de Demand',
 }
 # La tabla de proyección y la sugerencia de compra de esos cuatro productos no calculan la semana por su
 # cuenta: leen invmWeekDemands. El 2026-09-17 la sugerencia restaba la semana del conteo entera y la tabla
@@ -94,18 +95,23 @@ def body_of(name):
         p2 += 1
     return None
 
+def sin_comentarios(txt):
+    # Un comentario que NOMBRA la función no la llama. Sin esto el guardián daba verde con el panel
+    # de Demand prorrateando todo de nuevo: su comentario citaba bpSnapWeekDemand y alcanzaba.
+    return '\n'.join(l for l in (txt or '').split('\n') if not l.lstrip().startswith('//'))
+
 missing = []
 for fn, what in PROJECTORS.items():
     b = body_of(fn)
     if b is None:
         missing.append((fn, what, 'no se encontró la función'))
-    elif 'bpSnapWeekDemand' not in b:
+    elif 'bpSnapWeekDemand(' not in sin_comentarios(b):
         missing.append((fn, what, 'no llama a bpSnapWeekDemand'))
 for fn, what in SHARED_WEEKS.items():
     b = body_of(fn)
     if b is None:
         missing.append((fn, what, 'no se encontró la función'))
-    elif 'invmWeekDemands(' not in b:
+    elif 'invmWeekDemands(' not in sin_comentarios(b):
         missing.append((fn, what, 'no lee la semana de invmWeekDemands: vuelve a haber dos cuentas'))
 
 if missing:
